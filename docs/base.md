@@ -6,6 +6,8 @@
 - `docs/agent-gate-sft-plan.md` — датасет, обучение моделей, бенчмарк, план по дням
 - `docs/agent-gate-artifacts.md` — бенчмарки, датасеты, RL-среды со ссылками
 - `docs/coding-agent-security-market-2026.html` — обзор рынка (закрытые и OSS-решения, инциденты, стандарты)
+- `docs/auto-mode-industry-review-2026.md` — обзор auto mode и гейтов у вендоров: приёмы, метрики, обходы, источники
+- `docs/best-practices.md` — что из обзора берём в AgentGate, с дельтами к спеке v1
 
 Если что-то в этом файле расходится с `docs/`, прав этот файл: он короче и обновляется чаще.
 
