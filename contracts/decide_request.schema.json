@@ -1,0 +1,152 @@
+{
+  "$defs": {
+    "ActionArgs": {
+      "properties": {
+        "cwd": {
+          "minLength": 1,
+          "title": "Cwd",
+          "type": "string"
+        },
+        "paths": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Paths",
+          "type": "array"
+        },
+        "domains": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Domains",
+          "type": "array"
+        },
+        "mcp": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/McpArgs"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "cwd"
+      ],
+      "title": "ActionArgs",
+      "type": "object"
+    },
+    "McpArgs": {
+      "properties": {
+        "server": {
+          "title": "Server",
+          "type": "string"
+        },
+        "tool": {
+          "title": "Tool",
+          "type": "string"
+        },
+        "arguments": {
+          "additionalProperties": true,
+          "title": "Arguments",
+          "type": "object"
+        }
+      },
+      "required": [
+        "server",
+        "tool"
+      ],
+      "title": "McpArgs",
+      "type": "object"
+    },
+    "Tool": {
+      "enum": [
+        "shell",
+        "file_write",
+        "file_read",
+        "network",
+        "mcp_call"
+      ],
+      "title": "Tool",
+      "type": "string"
+    }
+  },
+  "properties": {
+    "session_id": {
+      "anyOf": [
+        {
+          "maxLength": 128,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Session Id"
+    },
+    "harness": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Harness",
+      "type": "string"
+    },
+    "tool": {
+      "$ref": "#/$defs/Tool"
+    },
+    "raw": {
+      "default": "",
+      "title": "Raw",
+      "type": "string"
+    },
+    "args": {
+      "$ref": "#/$defs/ActionArgs"
+    },
+    "user_request": {
+      "title": "User Request",
+      "type": "string"
+    },
+    "profile_id": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Profile Id"
+    },
+    "model": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Model"
+    },
+    "metadata": {
+      "additionalProperties": true,
+      "title": "Metadata",
+      "type": "object"
+    }
+  },
+  "required": [
+    "harness",
+    "tool",
+    "args",
+    "user_request"
+  ],
+  "title": "DecideRequest",
+  "type": "object"
+}
