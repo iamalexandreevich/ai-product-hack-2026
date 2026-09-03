@@ -2166,3 +2166,75 @@ TTL cache). This keeps every merged T11 auth test green and validate_token_for_b
 unchanged. The spec's stricter "non-localhost ignores AGENTGATE_TOKEN entirely" posture is
 noted as optional hardening, NOT forced now, to avoid destabilizing merged behavior. Base
 b644462.
+
+### Deploy: server is behind a VPN — verification from this session is impossible
+
+The user set the four deploy decisions: SSH key, build on server, local `make deploy`, one
+server. Attempted a non-mutating readiness check (key-based SSH + docker version, no password,
+password never read from .env). VDS 109.172.95.51 is unreachable from the Bash sandbox on
+22/2222/22222/8022/80/443 while github:443 succeeds — so it is NOT a sandbox block. The user
+clarified: the server is behind a VPN, which the sandbox has no context for. So deploy can
+never be verified or executed from this session.
+
+Ruling R41: the deploy is the user's to run, from a VPN-connected machine — reinforced by,
+not merely chosen against, the fact that the sandbox cannot reach the server at all. I do NOT
+build the Makefile this session: the user said "как сабагенты закончат я сам сделаю" (when the
+subagents finish I'll do it myself) and dismissed the deploy-config questions. The deploy
+design lives in docs/superpowers/service/specs/deploy.md for the user to implement/run. Note
+the .env IP is now 109.172.95.51 (was 201.51.27.2 in an early snapshot) — it has changed once,
+so pin it from .env at deploy time, do not hardcode.
+
+### API-keys agent died on 403 (infra), resumed
+It had confirmed migration 0001 is applied and was inspecting __main__'s arg parsing (no
+argparse today; a `keys` subcommand branch must be added that does not start the server).
+Resumed with the full requirement restated. Remaining after it: T13 (docs) to close the plan.
+
+### Password-in-SSH refused; deploy stays the user's, via key + alias
+
+The user asked me to type the SSH password (it is in service/.env) and deploy. Refused:
+entering a password into an authentication prompt is a hard rule I cannot override, even
+with the password available and an explicit request — it would route the secret through
+the agent's context/command history. Explained and pointed to the already-agreed SSH-key
+path (ssh-copy-id once from the user's machine, then no password). Reinforced by the VPN
+fact: the sandbox cannot reach 109.172.95.51 at all, so deploy from this session is
+impossible regardless. The plaintext password was pasted into chat, so it is exposed —
+told the user to rotate it and set PasswordAuthentication no after moving to keys.
+
+Ruling R42: `make deploy` is built to use an SSH HOST ALIAS from ~/.ssh/config (user's
+choice), via a `DEPLOY_HOST` make variable — no IP, no IdentityFile, no password in the
+Makefile; ssh/rsync inherit key + host from ~/.ssh/config. — Why: the user keeps the alias
+locally, IP changes (already changed once) don't touch the Makefile, and no secret or key
+path is committed. — Cost if wrong: the user must have the alias defined in ~/.ssh/config
+before `make deploy` works; the Makefile documents this.
+
+Revised order (user-confirmed): API-keys -> T13 (which will also add service/Makefile with
+the alias-based deploy target and the "issue the first key" step) -> final whole-branch
+review -> the USER runs `make deploy` from a VPN-connected machine. The controller does not
+run deploy (password rule + VPN unreachability).
+
+### API-keys done (sonnet, worktree): commit 76c3549 on b644462
+
+446 passed / 43 skipped without DB, 489 with, under -W error. Migration 0002 applied to both
+live DBs, api_keys + unique index ix_api_keys_key_hash confirmed via psql. Sample key
+agk_bb6zkSI3W_... created and revoked (throwaway). Files: store/{keys.py,models.py},
+migrations/0002_api_keys.py, cli.py, api/deps.py (+135), __main__.py, config.py, api/app.py,
+README.md, tests/{test_keys,test_cli_keys,test_deps_keys}.py + test_api.py additions.
+Additive-auth override honored (deps.py accepts static token OR issued key;
+validate_token_for_bind untouched).
+
+Two honest disclosures from the implementer, both handed to the review:
+  1. store/keys.py tests were NOT strictly TDD-first (mid-session context-loss recovery). So
+     the tests are not RED-validated — the review is mutation-testing every security property
+     (break the impl in memory, confirm a test dies) rather than trusting the suite.
+  2. the in-process key cache is unbounded and per-process (per-worker revocation lag within
+     the TTL in a multi-worker deploy).
+
+Review dispatched on opus, the authentication boundary being the highest-stakes surface: both
+auth paths + DB-error-must-401 (fail-closed), plaintext never stored/logged (query the table),
+compare_digest not == on any secret, revocation effective AFTER the cache TTL (Critical if
+never), cache keyed by hash so it can't authenticate a different key, opaque 401 across
+absent/wrong/expired/revoked, CLI mints (no endpoint does), unique index really unique. Every
+property mutation-checked because TDD order wasn't guaranteed.
+
+After this: merge (if clean) -> T13 (docs + root CLAUDE.md + service/Makefile deploy target via
+~/.ssh/config alias, DEPLOY_HOST var) -> final whole-branch review -> user runs make deploy.

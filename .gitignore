@@ -1,3 +1,4 @@
 .env
 .claude
 .superpowers
+__pycache__/
