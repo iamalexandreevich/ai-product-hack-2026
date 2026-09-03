@@ -1,8 +1,10 @@
+from pathlib import Path
+
 import pytest
 
 from agentgate.api.schemas import DecisionKind, DecideRequest
 from agentgate.normalize import normalize
-from agentgate.profiles.loader import with_workspace
+from agentgate.profiles.loader import load_profiles, with_workspace
 from agentgate.profiles.schema import Profile
 from agentgate.stage1.chain import run_stage1
 
@@ -23,6 +25,13 @@ def make_profile(**over):
 
 
 P = make_profile()
+
+# The shipped default profile (service/profiles/default-dev.yaml) protects
+# several bare-name files (AGENTS.md, SKILL.md, .cursorrules) that are NOT
+# slash-bearing and NOT hard-coded "sensitive basenames" in normalize/paths.py
+# — see fix round 2, task 6.
+_SHIPPED_PROFILES_DIR = Path(__file__).resolve().parents[1] / "profiles"
+DEFAULT = with_workspace(load_profiles(_SHIPPED_PROFILES_DIR)["default"], WS)
 
 
 def req(tool="shell", raw="", paths=(), domains=()):
@@ -119,3 +128,48 @@ def test_allowlist_still_allows_ordinary_reads():
 
 def test_allowlist_protected_read_falls_through_like_outside_workspace():
     assert run_stage1(req(raw="cat /etc/hosts"), P) is None
+
+
+# Fix round 2: the round-1 guard only consulted NormalizedAction.paths, which
+# the normalizer populates from a narrower rule (PATH_COMMANDS membership or
+# looks_like_path) than "every path argument a command has". A READONLY
+# command NOT in PATH_COMMANDS (sort, cut, diff, uniq are all in READONLY but
+# none are in normalize/shell.py's PATH_COMMANDS) reading a bare-name
+# protected path (no leading '/', no '/', not a hard-coded sensitive
+# basename) produced action.paths=[] and slipped through as `allow`. Uses the
+# shipped default profile, whose protected_paths include exactly such
+# bare-name entries (AGENTS.md, SKILL.md, .cursorrules).
+@pytest.mark.parametrize("raw", [
+    "sort AGENTS.md",
+    "cut -d: -f1 AGENTS.md",
+    "diff AGENTS.md README.md",
+    "uniq SKILL.md",
+    "sort .cursorrules",
+])
+def test_allowlist_readonly_bare_name_protected_path_outside_path_commands(raw):
+    from agentgate.stage1.allowlist import check_allowlist
+
+    a = req(raw=raw)
+    assert check_allowlist(a, DEFAULT) is None, raw
+    d = run_stage1(a, DEFAULT)
+    assert d is None or d.decision is not DecisionKind.allow, raw
+
+
+def test_allowlist_prefix_bare_name_protected_path_outside_path_commands():
+    from agentgate.stage1.allowlist import check_allowlist
+
+    a = req(raw="pytest AGENTS.md")
+    assert check_allowlist(a, DEFAULT) is None
+    d = run_stage1(a, DEFAULT)
+    assert d is None or d.decision is not DecisionKind.allow
+
+
+@pytest.mark.parametrize("raw,rule", [
+    ("sort data.txt", "allowlist.readonly"),
+    ("cut -f1 report.csv", "allowlist.readonly"),
+    ("diff data.txt report.csv", "allowlist.readonly"),
+    ("pytest data.txt", "allowlist.prefix"),
+])
+def test_allowlist_bare_name_non_protected_path_still_allowed(raw, rule):
+    d = run_stage1(req(raw=raw), DEFAULT)
+    assert d is not None and d.decision is DecisionKind.allow and d.rule_id == rule, raw

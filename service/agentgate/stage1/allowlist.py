@@ -21,19 +21,33 @@ stage 2, exactly like a read outside the workspace already does.
 Deleting or overwriting a protected path is a separate concern already
 covered by Task 5's hard-deny protected-write rule, upstream of this
 check in the chain.
+
+The protected-path guard enumerates each command's own argv tokens via
+``agentgate.stage1.argv_paths.command_argv_paths`` rather than reading
+``NormalizedAction.paths`` (fix round 2, task 6): the normalizer only
+populates ``paths`` for a command in ``normalize/shell.py``'s
+PATH_COMMANDS or a token that independently looks like a path, so a
+READONLY command outside that list (``sort``, ``cut``, ``diff``,
+``uniq``) reading a bare-name protected file (no leading ``/``, no
+``/`` at all, not a hard-coded sensitive basename) previously left
+``action.paths`` empty and slipped past the guard as ``allow``. The
+shared enumeration is the same one ``check_profile`` uses for mutating
+targets — one implementation, so the two checks cannot drift into two
+different opinions of what path a command touches.
 """
 
 from agentgate.api.schemas import DecisionKind, Tool
 from agentgate.normalize.model import NormalizedAction, SimpleCommand
 from agentgate.normalize.paths import is_within, matches_any
 from agentgate.profiles.schema import Profile
+from agentgate.stage1.argv_paths import command_argv_paths
 from agentgate.stage1.types import Stage1Decision
 
 READONLY = {"ls", "cat", "head", "tail", "wc", "grep", "rg", "pwd", "which", "stat", "du", "file", "tree", "sort", "uniq", "cut", "tr", "less", "more", "diff"}
 GIT_READONLY = {"status", "diff", "log", "show", "branch", "rev-parse", "remote", "blame"}
 
 
-def _is_readonly(cmd: SimpleCommand, cwd_paths_ok: bool) -> bool:
+def _is_readonly(cmd: SimpleCommand) -> bool:
     exe = cmd.argv[0]
     if any(r.op.endswith(">") or r.op.endswith(">>") for r in cmd.redirects):
         return False
@@ -73,14 +87,21 @@ def check_allowlist(action: NormalizedAction, profile: Profile) -> Stage1Decisio
         return None
     if action.paths and not all(is_within(p, allowed) for p in action.paths):
         return None
-    if action.paths and any(matches_any(p, protected, profile.workspace) for p in action.paths):
-        # A referenced path (readonly command argument, or a safe-prefix
-        # command's argument) is protected — see the module docstring:
-        # neither allowlist.readonly nor allowlist.prefix may bless a
-        # protected-path read. Fall through to stage 2 rather than deny.
+    if any(
+        matches_any(p, protected, profile.workspace)
+        for c in action.commands
+        for p in command_argv_paths(c, action.cwd)
+    ):
+        # An argv token of some command resolves to a protected path —
+        # see the module docstring: neither allowlist.readonly nor
+        # allowlist.prefix may bless a protected-path read. Enumerated
+        # per-command via command_argv_paths, not via
+        # NormalizedAction.paths — see the docstring for why that
+        # distinction matters (fix round 2). Fall through to stage 2
+        # rather than deny.
         return None
     if all(_matches_prefix(c, profile.safe_prefixes) for c in action.commands):
         return Stage1Decision(DecisionKind.allow, "allowlist.prefix", "")
-    if all(_is_readonly(c, True) or _matches_prefix(c, profile.safe_prefixes) for c in action.commands):
+    if all(_is_readonly(c) or _matches_prefix(c, profile.safe_prefixes) for c in action.commands):
         return Stage1Decision(DecisionKind.allow, "allowlist.readonly", "")
     return None

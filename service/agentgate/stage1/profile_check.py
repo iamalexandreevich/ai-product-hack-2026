@@ -21,8 +21,9 @@ escaped there like any other attacker-influenced content.
 
 from agentgate.api.schemas import DecisionKind, Tool
 from agentgate.normalize.model import NormalizedAction
-from agentgate.normalize.paths import is_within, resolve_path
+from agentgate.normalize.paths import is_within
 from agentgate.profiles.schema import NetworkMode, Profile
+from agentgate.stage1.argv_paths import command_argv_paths
 from agentgate.stage1.types import Stage1Decision
 
 MUTATING = {"rm", "mv", "cp", "mkdir", "rmdir", "touch", "chmod", "chown", "tee", "install", "ln", "truncate", "dd", "shred"}
@@ -32,11 +33,14 @@ def _mutating_targets(action: NormalizedAction) -> list[str]:
     out: list[str] = []
     for c in action.commands:
         exe = c.argv[0]
-        args = [a for a in c.argv[1:] if not a.startswith("-")]
+        argv_paths = command_argv_paths(c, action.cwd)
         if exe in MUTATING:
-            out += [resolve_path(a, action.cwd) for a in args]
+            out += argv_paths
         elif exe == "sed" and any(a.startswith("-i") for a in c.argv[1:]):
-            out += [resolve_path(a, action.cwd) for a in args[1:]]
+            # sed's first non-flag argument is the substitution script,
+            # not a target — skip it. command_argv_paths already
+            # dropped the flags themselves.
+            out += argv_paths[1:]
         for r in c.redirects:
             if r.op.endswith(">") or r.op.endswith(">>"):
                 if not r.target.startswith("/dev/"):
