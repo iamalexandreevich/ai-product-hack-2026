@@ -201,16 +201,18 @@ def test_load_profiles_applies_env_interpolation_default(tmp_path, monkeypatch):
     assert profiles["t"].models.configs["m"].model == "fallback"
 
 
-def test_shipped_default_profile_default_model_is_gemini(monkeypatch):
+def test_shipped_default_profile_default_model_is_gpt_4_1_mini(monkeypatch):
     monkeypatch.delenv("OPENROUTER_MODEL_NAME", raising=False)
     shipped = Path(__file__).resolve().parents[1] / "profiles"
     profiles = load_profiles(shipped)
-    assert profiles["default"].models.default == "gemini"
+    assert profiles["default"].models.default == "primary"
     key, cfg = profiles["default"].models.model_config_for(None)
-    assert key == "gemini"
-    assert cfg.model == "google/gemini-3.8-flash"
+    assert key == "primary"
+    assert cfg.model == "openai/gpt-4.1-mini"
     assert cfg.base_url == "https://openrouter.ai/api/v1"
     assert cfg.api_key_env == "OPENROUTER_API_KEY"
+    # stage 2 is not on the 1 ms budget; a hosted model needs real headroom
+    assert cfg.timeout_ms >= 8000
 
 
 def test_shipped_default_profile_model_override_via_env(monkeypatch):

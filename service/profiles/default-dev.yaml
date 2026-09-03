@@ -25,13 +25,13 @@ safe_prefixes:
   - ["pytest"]
   - ["cargo", "test"]
 models:
-  default: gemini
+  default: primary
   configs:
-    gemini:
+    primary:
       base_url: "https://openrouter.ai/api/v1"
-      model: "${OPENROUTER_MODEL_NAME:-google/gemini-3.8-flash}"
+      model: "${OPENROUTER_MODEL_NAME:-openai/gpt-4.1-mini}"
       api_key_env: OPENROUTER_API_KEY
-      timeout_ms: 3000
+      timeout_ms: 8000
       structured_output: true
     sonnet:
       base_url: "https://openrouter.ai/api/v1"
