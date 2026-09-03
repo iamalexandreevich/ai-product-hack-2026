@@ -221,3 +221,10 @@ def test_shipped_default_profile_model_override_via_env(monkeypatch):
     profiles = load_profiles(shipped)
     _, cfg = profiles["default"].models.model_config_for(None)
     assert cfg.model == "google/gemini-2.0-flash"
+
+
+def test_interpolate_env_default_used_when_empty(monkeypatch):
+    # shell `:-` semantics: an empty value (compose passes ${VAR:-} as "")
+    # must fall back to the default, not blank the field.
+    monkeypatch.setenv("OPENROUTER_MODEL_NAME", "")
+    assert interpolate_env("${OPENROUTER_MODEL_NAME:-openai/gpt-4.1-mini}") == "openai/gpt-4.1-mini"

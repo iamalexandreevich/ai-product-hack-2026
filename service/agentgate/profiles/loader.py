@@ -26,9 +26,15 @@ def _interpolate_string(text: str) -> str:
         if name in _RESERVED_PLACEHOLDERS:
             return match.group(0)
         default = match.group("default")
-        if name in os.environ:
-            return os.environ[name]
-        return default if default is not None else ""
+        value = os.environ.get(name)
+        if default is not None:
+            # ${VAR:-default}: shell `:-` semantics — the default applies when
+            # VAR is unset OR empty. Compose passes `${VAR:-}` through as an
+            # empty string, so treating empty as "use default" is what keeps
+            # an unset OPENROUTER_MODEL_NAME from blanking the model.
+            return value if value else default
+        # ${VAR}: the value if set (even empty), else empty.
+        return value if value is not None else ""
 
     return _ENV_VAR_PATTERN.sub(_replace, text)
 
