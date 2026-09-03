@@ -87,7 +87,7 @@ import re
 from agentgate.api.schemas import DecisionKind, Tool
 from agentgate.normalize.model import NormalizedAction, SimpleCommand
 from agentgate.normalize.paths import is_within, looks_like_path, looks_unresolved, matches_any, resolve_path
-from agentgate.normalize.shell import _WRAPPER_CMDS, resolve_effective_argv
+from agentgate.normalize.shell import _ENV_ASSIGNMENT, _WRAPPER_CMDS, _WRAPPER_VALUE_FLAGS, resolve_effective_argv
 from agentgate.profiles.schema import Profile
 from agentgate.stage1.types import Stage1Decision
 
@@ -149,16 +149,64 @@ def _effective(argv: list[str]) -> list[str]:
     return resolve_effective_argv(argv, _EFFECTIVE_WRAPPERS)
 
 
-def _wrapper_chain_unresolved(argv: list[str]) -> bool:
-    """True if resolving ``argv`` through _EFFECTIVE_WRAPPERS still
-    leaves a wrapper command as argv[0] — i.e. resolve_effective_argv's
-    bound (8) was exhausted before the chain bottomed out at a real
-    command (an adversarially deep chain, e.g. nine or more nested
-    `env`). When this is true, no rule below can meaningfully evaluate
-    this command at all; see check_hard_deny.
+def _wrapper_chain_unresolved(argv: list[str]) -> str | None:
+    """Return a short description of WHY ``argv`` could not be resolved to
+    a real command through _EFFECTIVE_WRAPPERS, or None if it resolved
+    fine. Two distinct failures, both meaning "no rule below can
+    meaningfully evaluate this command at all" (see check_hard_deny):
+
+    - "depth": resolve_effective_argv's bound (8) was exhausted before
+      the chain bottomed out, so a wrapper is still argv[0] — an
+      adversarially deep chain, e.g. nine or more nested `env`.
+    - "opaque": resolution consumed everything and came back empty, even
+      though there WERE tokens after the wrapper name. `env -S 'rm -rf
+      /'` and `env --split-string='rm -rf /'` are the real cases: -S is
+      correctly a mandatory-value flag, so the entire command lands
+      inside the flag's value and nothing survives as argv (fix round 3,
+      Important 2 — previously this fell through to None, i.e. silence,
+      because argv[0] was no longer a wrapper either).
+
+      A wrapper that consumed no possible COMMAND also resolves to empty
+      — a bare `env`/`xargs`/`nice`, or one carrying only boolean flags
+      (`env -i`, `stdbuf -o0`). There is nothing we failed to determine
+      in those, and asking would be pure friction on ordinary commands,
+      so _consumed_a_possible_command gates them out.
     """
+    if not argv or os.path.basename(argv[0]) not in _EFFECTIVE_WRAPPERS:
+        return None
     effective = _effective(argv)
-    return bool(effective) and os.path.basename(effective[0]) in _EFFECTIVE_WRAPPERS
+    if effective:
+        return "depth" if os.path.basename(effective[0]) in _EFFECTIVE_WRAPPERS else None
+    return "opaque" if _consumed_a_possible_command(argv) else None
+
+
+def _consumed_a_possible_command(argv: list[str]) -> bool:
+    """True if ``argv[1:]`` holds a token that could have carried the
+    wrapped command: a plain word, a "--flag=value", or a flag whose
+    value is a separate token. Boolean flags (`-i`) and env's own
+    NAME=VALUE assignments carry no command, so an argv made only of
+    those has lost nothing when it resolves to empty.
+
+    Reads _WRAPPER_VALUE_FLAGS and _ENV_ASSIGNMENT straight from
+    normalize/shell.py rather than restating which options take values —
+    the same single-source discipline _EFFECTIVE_WRAPPERS follows, and
+    for the same reason: a second copy would drift, and this one decides
+    between silence and friction.
+    """
+    if not argv:
+        return False
+    name = os.path.basename(argv[0])
+    value_flags = _WRAPPER_VALUE_FLAGS.get(name, frozenset())
+    for tok in argv[1:]:
+        if not tok.startswith("-"):
+            if name == "env" and _ENV_ASSIGNMENT.match(tok):
+                continue  # an assignment is not a command
+            return True
+        if tok.startswith("--") and "=" in tok:
+            return True
+        if tok in value_flags:
+            return True
+    return False
 
 
 def _deny(rule: str, reason: str, suggest: str = "") -> Stage1Decision:
@@ -221,11 +269,25 @@ _UPLOAD_FLAGS = {
     "-F", "--form",
     "--post-file", "--post-data",
 }
-# Single-dash upload flags that curl also accepts with an ATTACHED value
-# (`-T.env` == `-T .env`) rather than a separate argv token — fix round
-# 2, Important D. Long-form flags already handle the attached case via
-# "--flag=value" in _flag_value.
-_SHORT_UPLOAD_FLAGS = tuple(f for f in _UPLOAD_FLAGS if len(f) == 2 and f[0] == "-" and f[1] != "-")
+# Single-dash upload flags, indexed by their option LETTER. curl accepts
+# these with an ATTACHED value (`-T.env` == `-T .env` — fix round 2,
+# Important D) and also BUNDLED into a short-option cluster where the
+# upload letter need not come first (`-sT .env`, `-sT.env`,
+# `-sSfF file=@.env` — fix round 3, Important 1; round 2 matched only on
+# the first character after the dash, so prefixing `-s`, about the most
+# commonly typed curl flag there is, defeated the check entirely).
+# Long-form flags handle their attached case via "--flag=value" in
+# _flag_value.
+_SHORT_UPLOAD_LETTERS = {f[1]: f for f in _UPLOAD_FLAGS if len(f) == 2 and f[0] == "-" and f[1] != "-"}
+# Cluster scanning is scoped to curl, the only command for which -T/-d/-F
+# mean "upload". Scanning clusters for every network command would
+# misread unrelated short options as sends — `rsync -avzd` (-d is
+# --dirs), `ssh -T` (disable pty), `wget -qT 5` (-T is a timeout) — and a
+# false positive in an unescalatable rule permanently blocks ordinary
+# work. The attached-value form below stays command-agnostic: it was
+# already accepted in round 2 and requires the upload letter to LEAD the
+# token, which no unrelated cluster does by accident.
+_CLUSTERING_UPLOAD_COMMANDS = {"curl"}
 # Flags whose value is read locally (an identity/credential file used to
 # authenticate, or a CA bundle used to verify the peer) or is itself a
 # local write target (an output/download destination). Neither is a
@@ -289,21 +351,36 @@ def _positional_args(argv: list[str], value_flags: set[str]) -> list[str]:
     return out
 
 
-def _match_upload_flag(tok: str) -> tuple[str, str | None] | None:
+def _match_upload_flag(tok: str, exe: str = "") -> tuple[str, str | None] | None:
     """Return (flag_name, inline_value_or_None) if ``tok`` names an
-    upload flag, else None. Handles "--flag=value", curl's attached
-    short-flag form ("-T.env" == "-T .env" — fix round 2, Important D),
-    and the bare "--flag"/"-T" form (value follows as the next argv
-    token, handled by the caller).
+    upload flag, else None. Handles "--flag=value", the attached
+    short-flag form ("-T.env" == "-T .env"), the bare "--flag"/"-T" form
+    (value follows as the next argv token, handled by the caller), and —
+    for ``exe`` in _CLUSTERING_UPLOAD_COMMANDS — an upload letter bundled
+    anywhere inside a short-option cluster ("-sT .env", "-sT.env",
+    "-sSfF file=@.env"; fix round 3, Important 1).
     """
     name, inline_val = _flag_value(tok)
     if name in _UPLOAD_FLAGS:
         return name, inline_val
-    for short in _SHORT_UPLOAD_FLAGS:
-        if tok.startswith(short) and len(tok) > len(short):
-            return short, tok[len(short):]
+    if not tok.startswith("-") or tok.startswith("--"):
+        return None
+    body = tok[1:]
+    if body and body[0] in _SHORT_UPLOAD_LETTERS:
+        return _SHORT_UPLOAD_LETTERS[body[0]], body[1:] or None
+    if exe not in _CLUSTERING_UPLOAD_COMMANDS:
+        return None
+    for k, ch in enumerate(body):
+        if ch in _SHORT_UPLOAD_LETTERS:
+            # Everything after the upload letter is its attached value if
+            # non-empty; otherwise the value is the next argv token and
+            # the caller consumes it.
+            return _SHORT_UPLOAD_LETTERS[ch], body[k + 1:] or None
+        if not ch.isalpha():
+            # Not a plain option cluster (e.g. "-4", "-w@fmt") — stop
+            # rather than guessing at a letter sitting inside a value.
+            break
     return None
-
 
 def _upload_flag_value_paths(val: str, cwd: str) -> list[str]:
     """Resolve an upload flag's value into the path(s) it actually
@@ -339,7 +416,7 @@ def _sent_secret_paths(cmd: SimpleCommand, cwd: str) -> list[str]:
     i = 1
     while i < len(argv):
         tok = argv[i]
-        matched = _match_upload_flag(tok)
+        matched = _match_upload_flag(tok, exe)
         if matched:
             name, val = matched
             consumed_next = False
@@ -467,7 +544,7 @@ def _consumes_piped_stdin(argv: list[str]) -> bool:
     i = 1
     while i < len(argv):
         tok = argv[i]
-        matched = _match_upload_flag(tok)
+        matched = _match_upload_flag(tok, exe)
         if matched:
             name, val = matched
             if val is None and i + 1 < len(argv):
@@ -531,23 +608,24 @@ def _rule_pipe_exec(action: NormalizedAction, profile: Profile) -> Stage1Decisio
     return None
 
 
-# find predicates that narrow -delete to a specific pattern (as opposed
-# to "every entry under the search root") — see _rule_destructive.
-# -type/-size/-mtime were REMOVED here (fix round 2, Important F,
-# reviewer's own correction of a round 1 error): they narrow the file
-# TYPE or metadata, not the PATH SET — "find . -type f -delete" at the
-# workspace root still deletes every file, "find . -size +0 -delete"
-# every non-empty one, "find . -mtime +0 -delete" everything not
-# modified today. Their presence must not exempt the command from the
-# same treatment as "find . -delete" with no predicate at all.
-_FIND_NARROWING_PREDICATES = {"-name", "-iname", "-path", "-ipath", "-regex", "-iregex", "-newer"}
-# Of the predicates above, these take a glob/regex PATTERN value, which
-# can itself be trivially universal — "*", "**" (glob), ".*", ".**"
+# find predicates that narrow -delete to a specific set of PATHS (as
+# opposed to "every entry under the search root") — see
+# _rule_destructive. -type/-size/-mtime were removed in fix round 2
+# (Important F) and -newer in fix round 3 (Minor 4), all four for the
+# same reason: they bound the file's TYPE or METADATA, not the path set.
+# "find . -type f -delete" at the workspace root still deletes every
+# file, "find . -size +0 -delete" every non-empty one, "find . -mtime +0
+# -delete" everything not modified today, and "find . -newer ref
+# -delete" everything touched since ref. Round 2 kept -newer on the
+# grounds that it takes a file reference rather than a pattern — true,
+# but that answers a different question than the one that matters here.
+# None of them may exempt the command from the same treatment as
+# "find . -delete" with no predicate at all.
+_FIND_NARROWING_PREDICATES = {"-name", "-iname", "-path", "-ipath", "-regex", "-iregex"}
+# Every remaining predicate takes a glob/regex PATTERN value, which can
+# itself be trivially universal — "*", "**" (glob), ".*", ".**"
 # (regex-ish) all match everything just as thoroughly as no predicate
-# would (fix round 2, Important F). -newer takes a file reference, not
-# a pattern, so it has no equivalent "trivial value" and narrows on
-# presence alone.
-_FIND_PATTERN_PREDICATES = {"-name", "-iname", "-path", "-ipath", "-regex", "-iregex"}
+# would (fix round 2, Important F).
 _FIND_TRIVIAL_VALUES = {"*", "**", ".*", ".**"}
 
 
@@ -555,8 +633,6 @@ def _find_has_narrowing_predicate(rest: list[str]) -> bool:
     for i, tok in enumerate(rest):
         if tok not in _FIND_NARROWING_PREDICATES:
             continue
-        if tok not in _FIND_PATTERN_PREDICATES:
-            return True  # e.g. -newer: presence alone narrows
         value = rest[i + 1] if i + 1 < len(rest) else None
         if value is not None and value not in _FIND_TRIVIAL_VALUES:
             return True
@@ -719,6 +795,13 @@ def _is_force_flag(a: str) -> bool:
     return False
 
 
+# Refspecs that name a branch only indirectly: whatever the local
+# checkout currently points at, which may well be a protected branch.
+# Not literal branch names, so they cannot be matched against
+# protected_branches at all (fix round 3, Important 3).
+_SYMBOLIC_REFS = {"HEAD", "@"}
+
+
 def _normalize_branch_ref(ref: str) -> str:
     branch = ref[1:] if ref.startswith("+") else ref  # leading "+" is per-ref force syntax
     branch = branch.split(":")[-1]  # src:dest refspec — the destination is what's overwritten
@@ -728,6 +811,14 @@ def _normalize_branch_ref(ref: str) -> str:
 
 
 def _rule_git_force(action: NormalizedAction, profile: Profile) -> Stage1Decision | None:
+    # A determinable protected branch anywhere in the action is a
+    # certainty and outranks any ambiguity found elsewhere in it, so an
+    # ask is held back until every command has been scanned rather than
+    # returned on the spot (fix round 3, Important 3: without this,
+    # `git push --force origin main HEAD` would be softened to ask by the
+    # HEAD standing next to a ref we can positively identify as
+    # protected).
+    pending_ask: Stage1Decision | None = None
     for c in action.commands:
         push_argv = _git_push_argv(_effective(c.argv))
         if push_argv is None:
@@ -741,12 +832,30 @@ def _rule_git_force(action: NormalizedAction, profile: Profile) -> Stage1Decisio
         positionals = [a for a in rest if not a.startswith("-")]
         flag_force = any(_is_force_flag(a) for a in rest if a.startswith("-"))
         if len(positionals) >= 2:
-            # First positional is the remote, the rest are refspecs —
-            # this shape is fully determinable, so a non-protected
-            # branch here is a genuine None, not an ask.
+            # First positional is the remote, the rest are refspecs. This
+            # shape is determinable EXCEPT when a refspec names the
+            # current checkout indirectly.
             for ref in positionals[1:]:
                 if not (flag_force or ref.startswith("+")):
                     continue  # this particular ref isn't being force-pushed
+                bare = ref[1:] if ref.startswith("+") else ref
+                if ":" not in bare and bare in _SYMBOLIC_REFS:
+                    # "HEAD" / "@" with no explicit destination: git
+                    # pushes whatever branch is checked out, which may be
+                    # protected. Two positionals make the command LOOK
+                    # determinable, but arity is not knowledge — this is
+                    # the same undeterminability the single-positional
+                    # case below routes to ask (fix round 3, Important
+                    # 3). A "HEAD:branch" form is NOT ambiguous: the
+                    # destination is what gets overwritten, and it is
+                    # spelled out, so it falls through to the match below.
+                    pending_ask = pending_ask or _ask(
+                        "git-force",
+                        f"force push of '{bare}' — the branch it currently points at is repo state, "
+                        "not something the command line states",
+                        "Name the target branch explicitly, e.g. `git push --force origin <branch>`",
+                    )
+                    continue
                 branch = _normalize_branch_ref(ref)
                 if any(fnmatch.fnmatchcase(branch, pat) for pat in profile.protected_branches):
                     return _deny("git-force", f"force push to protected branch {branch}", "Push to a feature branch")
@@ -768,12 +877,12 @@ def _rule_git_force(action: NormalizedAction, profile: Profile) -> Stage1Decisio
             # round 1 hard-deny here and this fixer's own round 1
             # widening of it, which the reviewer found blocked a routine
             # rebase-and-force workflow with no matching safety gain).
-            return _ask(
+            pending_ask = pending_ask or _ask(
                 "git-force",
                 "force push with no identifiable refspec — cannot determine whether the current branch is protected",
                 "Specify the target branch explicitly, e.g. `git push --force origin <branch>`",
             )
-    return None
+    return pending_ask
 
 
 RULES = [_rule_exfil, _rule_pipe_exec, _rule_destructive, _rule_protected_write, _rule_privilege, _rule_git_force]
@@ -782,21 +891,32 @@ RULES = [_rule_exfil, _rule_pipe_exec, _rule_destructive, _rule_protected_write,
 def check_hard_deny(action: NormalizedAction, profile: Profile) -> Stage1Decision | None:
     """Run the six hard-deny rules in order; the first non-None result
     wins. As a fallback (after all six find nothing to say), also check
-    whether any command's wrapper chain was too deep to resolve at all
-    (see _wrapper_chain_unresolved) — if so, none of the six rules could
-    have meaningfully evaluated that command in the first place, so its
-    silence is not evidence of safety, and this returns ask rather than
-    None (fix round 2, mid-round amendment).
+    whether any command's wrapper chain could not be resolved to a real
+    command at all — either too deep to follow, or consumed whole into an
+    option value (see _wrapper_chain_unresolved). In both cases none of
+    the six rules could have meaningfully evaluated that command in the
+    first place, so its silence is not evidence of safety, and this
+    returns ask rather than None (fix round 2, mid-round amendment;
+    extended to the empty resolution in fix round 3, Important 2).
     """
     for rule in RULES:
         d = rule(action, profile)
         if d is not None:
             return d
     for c in action.commands:
-        if _wrapper_chain_unresolved(c.argv):
+        why = _wrapper_chain_unresolved(c.argv)
+        if why == "depth":
             return _ask(
                 "wrapper-depth",
                 f"command wraps its target through more layers than can be safely resolved: {' '.join(c.argv[:4])} ...",
                 "Run the command directly, without stacking wrapper commands",
+            )
+        if why == "opaque":
+            return _ask(
+                "wrapper-opaque",
+                f"wrapper consumed its entire command into an option value, leaving nothing to inspect: "
+                f"{' '.join(c.argv[:4])}",
+                "Write the command directly, without passing it as a string to the wrapper "
+                "(e.g. use `env FOO=bar <command>` rather than `env -S '<command>'`)",
             )
     return None
