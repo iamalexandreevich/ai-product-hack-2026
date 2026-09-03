@@ -45,8 +45,12 @@ _SHELL_NAMES = {"sh", "bash", "zsh", "dash"}
 # being a shell themselves: `env bash <<EOF`, `sudo bash <<EOF`. Looked
 # past (one level, plus its leading option flags) when deciding whether
 # a command ultimately reaches a shell — fix round 2, Critical 2
-# residual part 3.
-_WRAPPER_CMDS = {"env", "command", "nohup", "timeout", "sudo", "doas"}
+# residual part 3. nice/setsid/stdbuf added (stage 1 fix round 2,
+# Important C): all three exec their remaining argv with stdin passed
+# through unchanged, exactly like env/nohup/timeout/sudo/doas, so
+# `nice bash <<EOF` reaches the shell's stdin just as much as
+# `env bash <<EOF` does.
+_WRAPPER_CMDS = {"env", "command", "nohup", "timeout", "sudo", "doas", "nice", "setsid", "stdbuf"}
 
 # Bound on our OWN recursive descent into heredoc/here-string bodies and
 # command/process substitutions (fix round 2, New Important B). Each
@@ -74,19 +78,27 @@ def _is_shell_exe(argv0: str) -> bool:
 
 def _shell_after_wrappers(tokens: list[str]) -> bool:
     """True if ``tokens`` (an argv-shaped list of literal words) ultimately
-    names a shell, looking past at most one leading wrapper command
-    (env, sudo, ...) and that wrapper's leading option flags.
+    names a shell, looking past leading wrapper commands (env, sudo, ...)
+    and everything those wrappers consume before the command they run.
+
+    Delegates to ``resolve_effective_argv`` rather than repeating the
+    skip loop (stage 1 fix round 2, Important C). The private copy this
+    replaced skipped only leading "-" flags at one wrapper level, so it
+    missed every form ``resolve_effective_argv`` already knew about:
+    ``nice -n 10 bash <<EOF``, ``stdbuf -o 0 bash <<EOF`` (a wrapper
+    option whose value is a separate token), ``timeout 30 bash <<EOF``
+    (the duration positional) and ``env FOO=bar bash <<EOF`` (env's own
+    NAME=VALUE syntax) all resolved to a non-shell word, so the heredoc
+    body was filed as inert data and its commands were never parsed —
+    each one a silent bypass of every rule that reads
+    ``action.commands``, confirmed by direct reproduction. Two divergent
+    copies of the same "what does this argv really run" logic is exactly
+    the drift this consolidation removes.
     """
-    if not tokens:
+    resolved = resolve_effective_argv(tokens)
+    if not resolved:
         return False
-    idx = 0
-    if os.path.basename(tokens[0]) in _WRAPPER_CMDS:
-        idx = 1
-        while idx < len(tokens) and tokens[idx].startswith("-"):
-            idx += 1
-    if idx >= len(tokens):
-        return False
-    return _is_shell_exe(tokens[idx])
+    return _is_shell_exe(resolved[0])
 
 
 # "timeout [OPTIONS] DURATION COMMAND [ARG]..." carries one required
@@ -97,11 +109,44 @@ def _shell_after_wrappers(tokens: list[str]) -> bool:
 # too — see resolve_effective_argv.
 _TIMEOUT_DURATION = re.compile(r"^\d+(\.\d+)?[smhd]?$")
 
+# env's OWN primary syntax is "env [OPTIONS] [NAME=VALUE]... COMMAND
+# [ARG]...", not just flags — `env FOO=bar rm -rf /` is standard env
+# usage, and "FOO=bar" is a plain word token in argv (not a bashlex
+# assignment part, since it's an argument TO env, not a shell-level
+# assignment prefix on the command). resolve_effective_argv must skip
+# these too, or `env FOO=bar <anything>` resolves to "FOO=bar" as the
+# (bogus) effective command instead of unwrapping to <anything> — stage
+# 1 fix round 2, Important C.
+_ENV_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+# Wrapper options whose value is a SEPARATE argv token, per wrapper.
+# Without these, the leading-flag skip below stops on the option's own
+# value — `nice -n 10 rm -rf /` resolved to argv ["10", "rm", "-rf", "/"]
+# and every stage 1 rule then saw an effective command named "10" and
+# said nothing at all (verified by direct reproduction; stage 1 fix round
+# 2, Important C). Only options whose argument is MANDATORY are listed:
+# an optional-argument option (xargs -i/-l/-e, env -i) must not consume
+# the following token, which may be the wrapped command itself.
+# Attached forms ("-n10", "--signal=KILL") carry their value inside the
+# token and are already handled by the plain flag skip.
+_WRAPPER_VALUE_FLAGS: dict[str, frozenset[str]] = {
+    "env": frozenset({"-u", "--unset", "-C", "--chdir", "-S", "--split-string"}),
+    "nice": frozenset({"-n", "--adjustment"}),
+    "stdbuf": frozenset({"-i", "--input", "-o", "--output", "-e", "--error"}),
+    "timeout": frozenset({"-s", "--signal", "-k", "--kill-after"}),
+    "xargs": frozenset({"-n", "--max-args", "-P", "--max-procs", "-I", "-d", "--delimiter",
+                        "-a", "--arg-file", "-E", "-s", "--max-chars", "-L", "--max-lines"}),
+    "sudo": frozenset({"-u", "--user", "-g", "--group", "-p", "--prompt", "-C", "--close-from",
+                       "-h", "--host", "-r", "--role", "-t", "--type", "-U", "--other-user"}),
+    "doas": frozenset({"-u", "-C", "-a"}),
+}
+
 
 def resolve_effective_argv(argv: list[str], wrapper_cmds: frozenset[str] = frozenset(_WRAPPER_CMDS)) -> list[str]:
     """Return the argv of whatever ``argv`` ultimately executes, skipping
-    past leading wrapper commands (env, sudo, timeout, ...) and their
-    leading option flags.
+    past leading wrapper commands (env, sudo, timeout, ...), their
+    leading option flags, and (for env specifically) any NAME=VALUE
+    assignment tokens.
 
     Generalizes ``_shell_after_wrappers`` (which only answers "is the
     resolved command a shell") into "what IS the resolved command", for
@@ -112,22 +157,36 @@ def resolve_effective_argv(argv: list[str], wrapper_cmds: frozenset[str] = froze
 
     Chains multiple wrapper levels (e.g. `env sudo rm -rf /` peels off
     `env` and leaves `sudo rm -rf /`, whose own argv[0] a caller can
-    still recognize as privileged) up to a small bound; a bare command
-    with no leading wrapper is returned unchanged. ``wrapper_cmds``
+    still recognize as privileged) up to a bound of 8 (stage 1 fix round
+    2, Important C — raised from 4, which `env env env env env rm -rf /`
+    could still clear without fully resolving); a bare command with no
+    leading wrapper is returned unchanged. If the bound is exhausted
+    before the chain bottoms out, the returned argv still starts with a
+    wrapper command — callers that need to tell "fully resolved" from
+    "gave up at the bound" apart can check
+    ``os.path.basename(result[0]) in wrapper_cmds``. ``wrapper_cmds``
     defaults to the same set ``_shell_after_wrappers`` uses, but a
     caller may pass a wider set — kept as a parameter rather than a
-    second constant so nothing needs to duplicate the six-item list
+    second constant so nothing needs to duplicate the list
     ``_shell_after_wrappers`` already owns.
     """
     tokens = list(argv)
-    for _ in range(4):  # bound: no legitimate script chains wrappers this deep
+    for _ in range(8):  # bound: no legitimate script chains wrappers this deep
         if not tokens or os.path.basename(tokens[0]) not in wrapper_cmds:
             break
+        name = os.path.basename(tokens[0])
+        value_flags = _WRAPPER_VALUE_FLAGS.get(name, frozenset())
         idx = 1
         while idx < len(tokens) and tokens[idx].startswith("-"):
+            flag = tokens[idx]
             idx += 1
-        if os.path.basename(tokens[0]) == "timeout" and idx < len(tokens) and _TIMEOUT_DURATION.match(tokens[idx]):
+            if flag in value_flags and idx < len(tokens):
+                idx += 1  # this option's value is a separate token, not the command
+        if name == "timeout" and idx < len(tokens) and _TIMEOUT_DURATION.match(tokens[idx]):
             idx += 1
+        if name == "env":
+            while idx < len(tokens) and _ENV_ASSIGNMENT.match(tokens[idx]):
+                idx += 1
         if idx >= len(tokens):
             return []
         tokens = tokens[idx:]
