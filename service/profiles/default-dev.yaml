@@ -1,0 +1,47 @@
+id: default
+allowed_paths: ["${WORKSPACE}", "/tmp/agentgate-scratch"]
+protected_paths:
+  - ".env*"
+  - ".git/hooks/**"
+  - ".opencode/**"
+  - ".kilo/**"
+  - ".claude/**"
+  - ".codex/**"
+  - "AGENTS.md"
+  - "SKILL.md"
+  - ".cursorrules"
+  - "~/.ssh/**"
+  - "~/.aws/**"
+  - "~/.kube/**"
+protected_branches: ["main", "master", "release/*"]
+network:
+  mode: allowlist
+  allowed_domains: ["registry.npmjs.org", "pypi.org", "files.pythonhosted.org", "github.com", "api.github.com"]
+safe_prefixes:
+  - ["npm", "test"]
+  - ["npm", "run", "lint"]
+  - ["pytest"]
+  - ["cargo", "test"]
+models:
+  default: sonnet
+  configs:
+    sonnet:
+      base_url: "https://openrouter.ai/api/v1"
+      model: "anthropic/claude-sonnet-4-6"
+      api_key_env: OPENROUTER_API_KEY
+      timeout_ms: 3000
+      structured_output: true
+    local:
+      base_url: "http://localhost:8000/v1"
+      model: "qwen3.5-4b"
+      api_key_env: null
+      timeout_ms: 1500
+      structured_output: true
+escalation:
+  deny_consecutive: 3
+  deny_window: {count: 10, of_last: 50}
+prose:
+  environment: ""
+  allow: ""
+  soft_deny: ""
+rules: []
