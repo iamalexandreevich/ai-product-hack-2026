@@ -6,14 +6,14 @@ decision here — this module only produces facts for later stages.
 
 Fail-closed: if bashlex cannot parse the input (or anything raised while
 walking the parsed tree — including a nested bashlex.parse of a heredoc
-or process-substitution body, or any other unexpected exception), we do
-not silently return "nothing found" — we set flags.unparseable=True with
-empty commands/paths/domains so stage 1/2 can escalate on the
-unparseable flag instead of treating it as a safe no-op. The entire
-post-initial-parse pipeline (AST walk, path collection, domain
-extraction) runs inside one try/except for exactly this reason: a
-partial result that silently omits the one construct we failed on is a
-bypass, not a best-effort answer.
+or process-substitution body, our own nesting-depth bound tripping, or
+any other unexpected exception), we do not silently return "nothing
+found" — we set flags.unparseable=True with empty commands/paths/domains
+so stage 1/2 can escalate on the unparseable flag instead of treating it
+as a safe no-op. The entire post-initial-parse pipeline (AST walk, path
+collection, domain extraction) runs inside one try/except for exactly
+this reason: a partial result that silently omits the one construct we
+failed on is a bypass, not a best-effort answer.
 """
 
 import os
@@ -41,9 +41,62 @@ _BRACE_EXPANSION = re.compile(r"\{[^{}]*,[^{}]*\}")
 # see _is_shell_exe.
 _SHELL_NAMES = {"sh", "bash", "zsh", "dash"}
 
+# Common wrappers that run their remaining argv as a command without
+# being a shell themselves: `env bash <<EOF`, `sudo bash <<EOF`. Looked
+# past (one level, plus its leading option flags) when deciding whether
+# a command ultimately reaches a shell — fix round 2, Critical 2
+# residual part 3.
+_WRAPPER_CMDS = {"env", "command", "nohup", "timeout", "sudo", "doas"}
+
+# Bound on our OWN recursive descent into heredoc/here-string bodies and
+# command/process substitutions (fix round 2, New Important B). Each
+# heredoc level forces a fresh bashlex.parse() call on a body that
+# contains every level below it, so unbounded nesting is quadratic-ish
+# in wall time — measured ~270ms at depth 400 on a few KB of input, well
+# under the 32KB raw cap, before this bound existed. Eight is far past
+# any legitimate script.
+_MAX_NESTING_DEPTH = 8
+
+
+class _MaxNestingDepthExceeded(Exception):
+    """Internal signal only — never surfaces to callers. Raised when our
+    own recursive descent (heredoc/here-string body reparse, or
+    command/process substitution walk) would exceed _MAX_NESTING_DEPTH.
+    Caught by normalize_shell's fail-closed wrapper exactly like any
+    other unparseable input, so bounding depth costs no extra plumbing
+    beyond the fail-closed mechanism Critical 1/2 already established.
+    """
+
 
 def _is_shell_exe(argv0: str) -> bool:
     return os.path.basename(argv0) in _SHELL_NAMES
+
+
+def _shell_after_wrappers(tokens: list[str]) -> bool:
+    """True if ``tokens`` (an argv-shaped list of literal words) ultimately
+    names a shell, looking past at most one leading wrapper command
+    (env, sudo, ...) and that wrapper's leading option flags.
+    """
+    if not tokens:
+        return False
+    idx = 0
+    if os.path.basename(tokens[0]) in _WRAPPER_CMDS:
+        idx = 1
+        while idx < len(tokens) and tokens[idx].startswith("-"):
+            idx += 1
+    if idx >= len(tokens):
+        return False
+    return _is_shell_exe(tokens[idx])
+
+
+def _peek_words(command_node) -> list[str]:
+    """Lightweight, non-mutating extraction of a raw bashlex 'command'
+    node's literal word tokens (no substitution applied, no flags set).
+    Used to decide, ahead of actually processing it, whether a pipeline
+    sibling we have not built yet ultimately runs a shell — see
+    _shell_after_wrappers and the "pipeline" branch of _Walker.walk.
+    """
+    return [p.word for p in getattr(command_node, "parts", []) if p.kind == "word"]
 
 
 def _strip_heredoc_delimiter(body: str, delimiter: str) -> str:
@@ -67,21 +120,73 @@ class _Walker:
         self.flags = Flags()
         self.assignments: dict[str, str] = {}
         self._pipeline_counter = 0
+        self.depth = 0
 
     def _next_pipeline(self) -> int:
         self._pipeline_counter += 1
         return self._pipeline_counter
 
+    def _push_nesting(self) -> None:
+        self.depth += 1
+        if self.depth > _MAX_NESTING_DEPTH:
+            raise _MaxNestingDepthExceeded(
+                f"nested heredoc/substitution depth exceeded {_MAX_NESTING_DEPTH}"
+            )
+
+    def _pop_nesting(self) -> None:
+        self.depth -= 1
+
+    def _parse_and_walk_bodies(self, bodies: list[str]) -> None:
+        """Reparse each heredoc/here-string body as a fresh shell script
+        and walk the result, exactly like a top-level normalize_shell
+        call — used when the body is executable code (see the "command"
+        and "pipeline" branches of walk() for when that applies). Each
+        body counts as one level of our own nesting-depth bound; if the
+        nested bashlex.parse itself fails, the exception propagates out
+        to normalize_shell's fail-closed wrapper like any other parse
+        failure.
+        """
+        for body in bodies:
+            self._push_nesting()
+            try:
+                for tree in bashlex.parse(body):
+                    self.walk(tree)
+            finally:
+                self._pop_nesting()
+
     def walk(self, node, pipeline_id: int | None = None) -> None:
         kind = node.kind
         if kind == "pipeline":
             pid = self._next_pipeline()
-            for part in node.parts:
-                if part.kind != "pipe":
+            parts = [p for p in node.parts if p.kind != "pipe"]
+            # Any command anywhere in this pipeline being a (possibly
+            # wrapped) shell means a heredoc/here-string body attached
+            # to ANY command in the same pipe is executable code once it
+            # reaches that shell's stdin — not only when the heredoc
+            # syntax and the shell happen to be the same command, e.g.
+            # `cat <<EOF | bash` (fix round 2, Critical 2 residual
+            # part 2). This pre-scan only looks at direct "command"
+            # siblings; a subshell/compound piped into a shell is not
+            # specially detected here and simply keeps its heredoc body
+            # opaque, a narrow, disclosed limitation.
+            pipeline_has_shell = any(
+                _shell_after_wrappers(_peek_words(p)) for p in parts if p.kind == "command"
+            )
+            pending_bodies: list[str] = []
+            for part in parts:
+                if part.kind == "command":
+                    bodies, _argv = self._command(part, pid)
+                    pending_bodies.extend(bodies)
+                else:
                     self.walk(part, pid)
+            if pipeline_has_shell:
+                self._parse_and_walk_bodies(pending_bodies)
             return
         if kind == "command":
-            self._command(node, pipeline_id if pipeline_id is not None else self._next_pipeline())
+            pid = pipeline_id if pipeline_id is not None else self._next_pipeline()
+            bodies, argv = self._command(node, pid)
+            if bodies and _shell_after_wrappers(argv):
+                self._parse_and_walk_bodies(bodies)
             return
         if kind == "compound":
             for part in node.list:
@@ -108,7 +213,11 @@ class _Walker:
                 # same walk() so the inner command surfaces in
                 # self.commands exactly like a piped or substituted one.
                 self.flags.has_subst = True
-                self.walk(part.command)
+                self._push_nesting()
+                try:
+                    self.walk(part.command)
+                finally:
+                    self._pop_nesting()
             elif part.kind == "parameter":
                 m = _VAR.match(value)
                 if m and m.group(1) in self.assignments:
@@ -134,7 +243,15 @@ class _Walker:
             self.flags.has_unresolved_expansion = True
         return value
 
-    def _command(self, node, pipeline_id: int) -> None:
+    def _command(self, node, pipeline_id: int) -> tuple[list[str], list[str]]:
+        """Build one SimpleCommand from a bashlex 'command' node.
+
+        Returns (heredoc_bodies, argv) rather than deciding itself
+        whether to parse the bodies as code: that decision depends on
+        context this method doesn't have (whether a *sibling* command in
+        the same pipeline is a shell — fix round 2, Critical 2 residual
+        part 2), so it's made by the caller in walk().
+        """
         argv: list[str] = []
         redirects: list[Redirect] = []
         stdin_from: str | None = None
@@ -170,6 +287,12 @@ class _Walker:
                 elif looks_unresolved(target):
                     # Don't fabricate an absolute path from a redirect
                     # target we can't actually resolve (e.g. `> $OUT`).
+                    # _word_value above only sets has_unresolved_expansion
+                    # from a bashlex parameter/tilde *part*, which quoting
+                    # or escaping suppresses — set it here too so a
+                    # dropped target is never silent (fix round 2, New
+                    # Important A).
+                    self.flags.has_unresolved_expansion = True
                     target_path = target
                 else:
                     target_path = resolve_path(target, self.cwd)
@@ -181,23 +304,24 @@ class _Walker:
             self.flags.has_eval = True
         if argv:
             self.commands.append(
-                SimpleCommand(argv=argv, redirects=redirects, stdin_from=stdin_from, pipeline_id=pipeline_id)
+                SimpleCommand(
+                    argv=argv,
+                    redirects=redirects,
+                    stdin_from=stdin_from,
+                    pipeline_id=pipeline_id,
+                    # Recorded unconditionally, whether or not this body
+                    # ends up being parsed as code below — action_hash()
+                    # must differ between two actions whose heredoc
+                    # bodies differ, even when neither is understood
+                    # structurally (fix round 2, Critical 2 residual
+                    # part 1).
+                    heredoc_bodies=list(heredoc_bodies),
+                )
             )
-        if heredoc_bodies and argv and _is_shell_exe(argv[0]):
-            # argv[0] is a shell: the heredoc/here-string body is code
-            # that shell will execute, not inert data (contrast `cat
-            # <<EOF > file`, where the body is data and stays opaque
-            # except for the has_heredoc flag). Parse it exactly like the
-            # raw script and walk the result so its commands, paths and
-            # domains surface. If this nested parse fails, the exception
-            # propagates out of walk() and is caught by normalize_shell's
-            # fail-closed wrapper, same as a top-level parse failure.
-            for body in heredoc_bodies:
-                for tree in bashlex.parse(body):
-                    self.walk(tree)
+        return heredoc_bodies, argv
 
 
-def _collect_paths(commands: list[SimpleCommand], cwd: str) -> list[str]:
+def _collect_paths(commands: list[SimpleCommand], cwd: str, flags: Flags) -> list[str]:
     paths: list[str] = []
 
     def add(p: str) -> None:
@@ -209,9 +333,13 @@ def _collect_paths(commands: list[SimpleCommand], cwd: str) -> list[str]:
         args = cmd.argv[1:]
         for i, tok in enumerate(args):
             if looks_unresolved(tok):
-                # Flagged (Flags.has_unresolved_expansion) during word
-                # construction already; do not also fabricate a resolved
-                # path for it here.
+                # May already be flagged (via a bashlex parameter/tilde
+                # part in _word_value), but a quoted/escaped "$"/"~"
+                # produces no such part — bashlex hands us plain literal
+                # text — so set it here too rather than assuming
+                # upstream already did (fix round 2, New Important A:
+                # dropping a path must never be silent).
+                flags.has_unresolved_expansion = True
                 continue
             if exe in PATH_COMMANDS:
                 if tok.startswith("-"):
@@ -227,6 +355,7 @@ def _collect_paths(commands: list[SimpleCommand], cwd: str) -> list[str]:
             if r.target.startswith("/dev/"):
                 continue
             if looks_unresolved(r.target):
+                flags.has_unresolved_expansion = True
                 continue
             add(r.target)
     return paths
@@ -241,7 +370,7 @@ def normalize_shell(raw: str, cwd: str) -> NormalizedAction:
             walker.walk(tree)
         commands = walker.commands
         flags = walker.flags
-        paths = _collect_paths(commands, cwd)
+        paths = _collect_paths(commands, cwd, flags)
         domains: list[str] = []
         for c in commands:
             for d in extract_domains(c.argv):
@@ -252,8 +381,9 @@ def normalize_shell(raw: str, cwd: str) -> NormalizedAction:
         # parse, AND any exception raised while walking the tree or
         # collecting paths/domains afterwards — including a nested
         # bashlex.parse() failure on a heredoc or process-substitution
-        # body, or a urllib ValueError that slipped past extract_domains'
-        # own guard. Any of these must fail closed as a whole: a partial
+        # body, our own _MaxNestingDepthExceeded bound tripping, or a
+        # urllib ValueError that slipped past extract_domains' own
+        # guard. Any of these must fail closed as a whole: a partial
         # commands/paths/domains result built before the failure is
         # discarded rather than returned, so we never claim "nothing
         # suspicious" about an action we only partially understood.

@@ -25,6 +25,14 @@ class SimpleCommand:
     redirects: list[Redirect] = field(default_factory=list)
     stdin_from: str | None = None
     pipeline_id: int = 0
+    # Literal text of every heredoc (<<, <<-) or here-string (<<<) body
+    # attached to this command, whether or not it was ever parsed as
+    # code (see shell.py's Flags.has_heredoc). Included unconditionally
+    # so action_hash() cannot collide between two actions that differ
+    # only in heredoc content (fix round 2, Critical 2 residual) — a
+    # cached allow for a benign body must not replay for a destructive
+    # one just because we don't structurally understand the body.
+    heredoc_bodies: list[str] = field(default_factory=list)
 
 
 @dataclass

