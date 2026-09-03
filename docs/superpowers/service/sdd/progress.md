@@ -1856,3 +1856,148 @@ ONE full T6 review (the task has had none complete) will cover both the fix and 
 
 Task 6 also produces action-derived reason strings (resolved path/domain interpolated) that
 Task 10 must escape into the stage-2 prompt per Task 7's discipline — carried to T10.
+
+### Task 6 fix round 1 done (sonnet): commit 181a648
+
+RED confirmed (4 protected-read cases returned allow before the fix), 6 new tests GREEN,
+full suite 366 passed / 19 skipped under -W error. p50 0.122 ms (was 0.124), unchanged
+within noise. check_allowlist now returns None for a command reading a path matching
+resolved_protected_paths(). Implementer flagged: allowlist.prefix shares the same guard
+clause but has no dedicated test because the fixture's safe_prefixes (npm test, pytest)
+take no path args — flagged for a synthetic case in review.
+
+Full T6 review dispatched on opus over e53e1ac..181a648 (the whole task + fix; no complete
+review had run). Told to CONSTRUCT the synthetic prefix case (a profile whose safe_prefixes
+includes a path-taking command like cat/grep) to confirm the guard is not merely moved,
+and to enumerate every interpolated reason/suggest string for Task 10's escaping.
+
+### Task 6 full review (OPUS, e53e1ac..181a648): Spec ✅ mostly, Task quality NEEDS FIXES
+
+Everything verified by execution against the worktree. Correct: contract surface for Task 10,
+chain order (hard-deny first, verified hard-deny beats allowlist for a write to .env),
+domain modes, helper reuse (is_within/matches_any, no hand-rolled path comparison), the
+round-1 fix (cat .env/head/grep/.git-hooks all None; README/src still allow; /etc/hosts
+None) with a discriminating guard-removal test. Latency test asserts p50<=1.0 as a real
+bound; measured 0.122 ms. The synthetic prefix case the report skipped: for prefix commands
+IN PATH_COMMANDS the hole did not move.
+
+CRITICAL, and it fires on the shipped default profile. The protected-read guard is coupled
+to action.paths, which is NOT the set of every path the command touches: the normalizer only
+collects a token as a path for PATH_COMMANDS or looks_like_path tokens (slash-bearing or
+sensitive basename). So a READONLY-but-not-PATH_COMMANDS command (sort, cut, uniq, diff,
+file, tree) reading a BARE-NAME protected path yields action.paths=[] and the guard never
+fires -> allow. Live on default-dev.yaml, whose protected_paths include the bare names
+AGENTS.md, SKILL.md, .cursorrules:
+  sort AGENTS.md -> allow allowlist.readonly paths=[]   (cat AGENTS.md -> None, cat is in
+  PATH_COMMANDS; sort .env -> None, .env is a sensitive basename)
+Same on the prefix branch. .env/keys/~/.ssh are covered (sensitive basenames or
+slash-bearing), so blast radius is the agent-instruction/config files, but it is an allow
+that ends the cascade with no downstream catch and contradicts the module's own docstring.
+The round-1 report's premise — action.paths carries every referenced path token — is false,
+and that is what left this open.
+
+Ruling R40: check_allowlist must not rely solely on action.paths; for readonly/prefix
+commands it enumerates the command's own non-flag argv tokens, resolves each against cwd,
+and tests each against resolved_protected_paths(), returning None (not deny) on a match.
+Reuse profile_check._mutating_targets' token enumeration via a shared helper, not a second
+copy — a second copy of path-target enumeration is how these gates drift (the exact hazard
+R26 was about). — Why: the protected-paths guarantee must not depend on the normalizer
+having decided to collect a token; over-matching a coincidental arg only sends it to stage 2,
+which is acceptable, whereas relying on action.paths silently under-denies. — Cost if wrong:
+a readonly command with an argument coincidentally equal to a protected bare name prompts via
+stage 2 instead of being allowed.
+
+Interpolated reason/suggest strings for Task 10 (COMPLETE list from the review): exactly two
+action-derived values — profile_check.py:38 `write outside allowed paths: {p}` (p = resolved
+path) and profile_check.py:45-47 `domain {d} is not in the allowlist` (d = domain). allowlist.py
+interpolates nothing (all reason=""). Neither leaks rule mechanics. Task 10 must escape p and d.
+
+Minor: _is_readonly(cmd, cwd_paths_ok) — cwd_paths_ok is dead, always True. Remove or wire.
+
+Task 6: fix round 2 dispatched — resumed a37f5852b7d9da7c1, FIX_BASE 181a648.
+
+### Task 6 fix round 2 done (sonnet): commit 3020bec, 376 passed
+
+RED confirmed on the shipped default-dev.yaml (6/10 new cases returned allow pre-fix),
+GREEN after. p50 0.141 ms (up from 0.122 — the real cost of per-command argv enumeration),
+~7x under budget. The fix extracted a shared helper argv_paths.py and refactored BOTH
+allowlist.py and profile_check.py onto it — the shared-helper route R40 required, not a
+second copy. profile_check therefore changed, so the re-review must confirm no regression
+there. Implementer corrected the two false action.paths claims in the round-1 report
+sections with explicit CORRECTION markers rather than silently rewriting.
+
+Round-2 re-review dispatched on opus over 181a648..3020bec, told to: run the shipped
+profile's real bare names (sort AGENTS.md etc.) to confirm they now return None; sweep
+ordinary readonly commands with flags/non-path args (sort -u -k2 data.txt, cut -d: -f1,
+tr a-z A-Z with no file, grep -r pattern .) for OVER-denial from greedy argv enumeration;
+re-run profile_check's mutating-target cases since the shared refactor touched it; read
+argv_paths.py for flag-skipping and cwd-resolution correctness; and mutation-check the new
+guard.
+
+### Task 6 round-2 re-review (OPUS, 181a648..3020bec): ADDRESSED, merged
+
+Critical closed on the shipped default-dev.yaml — sort/cut/uniq/diff of AGENTS.md/SKILL.md/
+.cursorrules and a prefix `pytest AGENTS.md` all return None from check_allowlist and
+run_stage1; mutant (command_argv_paths -> []) kills all 5 readonly + prefix + the git-hooks
+case while the 4 non-protected safety tests still pass. NO over-denial: sort -u -k2 data.txt,
+cut -d: -f1 file, diff --color a b, tr a-z A-Z, grep -r pattern . all still allow (flags and
+attached-value flags like -d: correctly skipped). profile_check NOT regressed by the shared
+refactor — mutating targets still found (rm subdir/../../etc/x -> deny, sed -i s/a/b/ /etc/hosts
+-> deny with the script arg dropped), cat /etc/hosts still None not deny. argv_paths.py is one
+genuine implementation imported by both modules, conservative by design (every non-flag arg a
+potential path, result only ever used to fall to a LESS permissive outcome). Latency 0.141 ms,
+test asserts p50<=1.0. Dead cwd_paths_ok removed. 376 passed.
+
+Task 6: fix rounds 1-2 (readonly auto-allow of protected reads + the bare-name coupling to
+action.paths, both closed; shared argv helper extracted). Task 6: complete
+(commits e53e1ac..3020bec, review clean).
+Task 6 merged as 925e1f3 (--no-ff). Integrated suite: 395 passed with the database under -W error.
+
+Branch state: feat/agentgate-task-1 at 925e1f3. Merged: T1-T9 + OpenAPI. Remaining on the
+critical path: T10 -> T11 -> T12 -> deploy -> T13. T9's parked minors and T5's parked
+`curl -so`/`.env*`-glob items ride to the final whole-branch review.
+
+### CARRY-FORWARDS INTO TASK 10 (the assembly point, consumes tasks 2-9)
+
+1. SECURITY — escape stage1_note into the stage-2 prompt. Task 7's build_user_message
+   escapes every field EXCEPT [STAGE1], which was the one deferred unescaped interpolation.
+   Task 6 confirmed Stage1Decision.reason embeds exactly two action-derived values: a path p
+   (profile_check "write outside allowed paths: {p}") and a domain d ("domain {d} is not in
+   the allowlist"). When Gate.decide builds stage1_note from the stage1 result and passes it
+   to build_user_message, that note is attacker-influenced text on the last prompt line. It
+   MUST be escaped (json.dumps / newline-stripped) or built from fixed vocabulary, or line
+   injection reopens exactly as Task 7 proved for paths/domains.
+2. NO RETRIES at the transport layer. Task 7's LLMClient takes an injected httpx.AsyncClient
+   and never retries; httpx defaults retries=0, but T10 constructs that client, so it must not
+   set transport retries and must keep one call / one timeout.
+3. FK ORDERING (Task 9). The post-response write MUST do SessionRepo.upsert BEFORE
+   DecisionRepo.insert (decisions.session_id -> sessions.id), and cache_put after the decision
+   row exists. A violation is a swallowed IntegrityError and a silently missing feed row.
+4. WRITE-AFTER-RESPONSE. Persist to Postgres and JSONL AFTER sending the response; a write
+   failure must not change or delay the decision. Task 9's repos are structured for this.
+5. allow-only cache; deny/ask never cached. unparseable -> ask short-circuit already lives in
+   run_stage2; Gate.decide orchestrates hard-deny (never cached, never escalated away),
+   stage1, cache lookup, stage2, escalation, in the spec's order.
+
+### Task 10 done (sonnet, worktree): commit a482247 on 925e1f3
+
+The assembly point. 391 passed / 19 skipped without DB, 410 with, under -W error. Files:
+log/{__init__,jsonl}.py, pipeline.py (204 lines), tests/test_{log,pipeline}.py. Base wrong
+again (a9a0edd), fast-forwarded. [STAGE1] note built from fixed constants _NOTE_PASSED /
+_NOTE_SKIPPED, never Stage1Decision.reason — carry-forward #1 honored.
+
+Two deliberate deviations, both plausibly correct, sent to the reviewer to adjudicate:
+  1. renamed test_unparseable_goes_to_llm -> test_unparseable_skips_llm, llm.calls 1 -> 0,
+     because Task 7's merged fix (2d3cc47) makes run_stage2 refuse unparseable actions
+     before calling the LLM. The brief assumed unparseable reaches the LLM — stale against
+     the merged code. The implementer caught the plan/code contradiction (the recurring
+     pattern on this plan).
+  2. added try/except in _do_persist (the brief's sample lacked it) to satisfy the brief's
+     OWN constraint that persist failures be swallowed, with RED/GREEN proof.
+
+Review dispatched on opus, told to run collisions rather than read: a cache-hit-allow that
+is also a hard-deny (hard-deny must win / must never be cached); a hard-deny under an
+escalating session (must stay deny, not ask); every fail-closed path (stage2 raises,
+persist raises, jsonl raises, unknown profile/model) must yield ask and never allow and
+never let decide raise; cache discipline (allow cached, deny/ask never, user_request in the
+key); and that the [STAGE1] note is the fixed constant, never reason/suggest.
