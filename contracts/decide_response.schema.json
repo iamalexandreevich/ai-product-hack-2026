@@ -1,0 +1,113 @@
+{
+  "$defs": {
+    "DecisionKind": {
+      "enum": [
+        "allow",
+        "deny",
+        "ask"
+      ],
+      "title": "DecisionKind",
+      "type": "string"
+    },
+    "LatencyMs": {
+      "properties": {
+        "stage1": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Stage1"
+        },
+        "stage2": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Stage2"
+        },
+        "total": {
+          "title": "Total",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "total"
+      ],
+      "title": "LatencyMs",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "decision": {
+      "$ref": "#/$defs/DecisionKind"
+    },
+    "reason": {
+      "default": "",
+      "title": "Reason",
+      "type": "string"
+    },
+    "suggest": {
+      "default": "",
+      "title": "Suggest",
+      "type": "string"
+    },
+    "stage": {
+      "title": "Stage",
+      "type": "integer"
+    },
+    "rule_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Rule Id"
+    },
+    "model": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Model"
+    },
+    "latency_ms": {
+      "$ref": "#/$defs/LatencyMs"
+    },
+    "cached": {
+      "default": false,
+      "title": "Cached",
+      "type": "boolean"
+    },
+    "decision_id": {
+      "title": "Decision Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "decision",
+    "stage",
+    "latency_ms",
+    "decision_id"
+  ],
+  "title": "DecideResponse",
+  "type": "object"
+}
