@@ -67,11 +67,11 @@ deploy: check-clean
 		if [ -n "$$PREV_IMAGE" ]; then echo "$$PREV_IMAGE" > .previous_gate_image; fi; \
 		docker compose up -d --build && \
 		docker compose exec -T gate uv run alembic upgrade head'
-	@echo "==> health check"
-	@if ssh $(DEPLOY_HOST) 'curl -fsS http://localhost:$(HEALTHZ_PORT)/healthz >/dev/null'; then \
+	@echo "==> health check (polling /healthz up to 30s)"
+	@if ssh $(DEPLOY_HOST) 'for i in $$(seq 1 30); do curl -fsS http://localhost:$(HEALTHZ_PORT)/healthz >/dev/null 2>&1 && exit 0; sleep 1; done; exit 1'; then \
 		echo "==> deploy OK"; \
 	else \
-		echo "error: /healthz check failed after deploy -- deploy considered FAILED." >&2; \
+		echo "error: /healthz did not come up within 30s -- deploy considered FAILED." >&2; \
 		echo "       inspect with 'make logs' / 'make ps'; consider 'make rollback'." >&2; \
 		exit 1; \
 	fi
