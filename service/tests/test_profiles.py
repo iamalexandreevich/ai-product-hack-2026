@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pytest
@@ -44,6 +45,28 @@ def test_resolved_allowed_paths(tmp_path):
     assert p.resolved_allowed_paths() == [str(tmp_path)]
 
 
+def test_resolved_allowed_paths_workspace_and_tilde(tmp_path):
+    ws = str(tmp_path)
+    p = Profile.model_validate(
+        dict(MINIMAL, allowed_paths=["${WORKSPACE}/src", "~/.cache/agentgate"])
+    ).model_copy(update={"workspace": ws})
+    assert p.resolved_allowed_paths() == [
+        os.path.normpath(f"{ws}/src"),
+        os.path.normpath(os.path.expanduser("~/.cache/agentgate")),
+    ]
+
+
+def test_resolved_protected_paths_workspace_and_tilde(tmp_path):
+    ws = str(tmp_path)
+    p = Profile.model_validate(
+        dict(MINIMAL, protected_paths=["${WORKSPACE}/.env*", "~/.ssh/**"])
+    ).model_copy(update={"workspace": ws})
+    assert p.resolved_protected_paths() == [
+        f"{ws}/.env*",
+        os.path.expanduser("~/.ssh/**"),
+    ]
+
+
 def test_detect_workspace(tmp_path):
     (tmp_path / "repo" / ".git").mkdir(parents=True)
     (tmp_path / "repo" / "src" / "pkg").mkdir(parents=True)
@@ -61,7 +84,7 @@ def test_load_profiles_dir(tmp_path):
 def test_load_profiles_duplicate_id(tmp_path):
     (tmp_path / "a.yaml").write_text(yaml.safe_dump(MINIMAL))
     (tmp_path / "b.yaml").write_text(yaml.safe_dump(MINIMAL))
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="b.yaml"):
         load_profiles(tmp_path)
 
 
