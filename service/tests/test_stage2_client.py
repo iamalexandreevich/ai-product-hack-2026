@@ -89,3 +89,25 @@ async def test_missing_choices_is_empty():
     with pytest.raises(Stage2Error) as e:
         await make_client(handler).classify("s", "u")
     assert e.value.kind == "empty"
+
+
+async def test_content_as_list_of_parts_is_invalid_schema_not_unexpected():
+    # A real OpenAI-compatible shape some providers use: content as a list of
+    # typed parts instead of a plain string. content.strip() on a list raises
+    # AttributeError, which must not escape classify() as an "unexpected"
+    # failure — it is a response that violates our schema expectation.
+    def handler(request):
+        return httpx.Response(200, json={"choices": [{"message": {"content": [{"type": "text", "text": "hi"}]}}]})
+
+    with pytest.raises(Stage2Error) as e:
+        await make_client(handler).classify("s", "u")
+    assert e.value.kind == "invalid_schema"
+
+
+async def test_redirect_status_is_http_not_invalid_json():
+    def handler(request):
+        return httpx.Response(302, headers={"location": "https://elsewhere"})
+
+    with pytest.raises(Stage2Error) as e:
+        await make_client(handler).classify("s", "u")
+    assert e.value.kind == "http"

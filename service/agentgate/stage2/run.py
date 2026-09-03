@@ -4,6 +4,15 @@ Every Stage2Error, and every other exception the client did not
 anticipate, resolves to DecisionKind.ask — never allow, never deny.
 Only the happy path (a valid A/D/U from the model) can produce anything
 else.
+
+An action bashlex could not structurally parse (`flags.unparseable`) is
+refused before any prompt is built and before the LLM is ever called:
+`commands`/`paths`/`domains` are empty by construction for such an
+action (see normalize/shell.py), so nothing about it was actually
+verified, and _MAP has no cross-check that would stop a classifier
+from answering "A" about an action it never saw. Short-circuiting here,
+rather than trusting the model to notice `unparseable=true` in the
+flags line, is what makes that unreachable.
 """
 
 from dataclasses import dataclass
@@ -35,6 +44,16 @@ async def run_stage2(
     client: LLMClient,
     stage1_note: str,
 ) -> Stage2Result:
+    if action.flags.unparseable:
+        return Stage2Result(
+            DecisionKind.ask,
+            "action could not be structurally parsed and was never verified",
+            "",
+            model_name,
+            None,
+            None,
+        )
+
     system = build_system_prompt(profile)
     user = build_user_message(action, user_request, stage1_note)
     try:

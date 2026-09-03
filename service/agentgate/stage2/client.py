@@ -73,7 +73,10 @@ class LLMClient:
         except httpx.HTTPError as exc:
             raise Stage2Error("http", str(exc)) from exc
 
-        if resp.status_code >= 400:
+        if resp.status_code != 200:
+            # Not just >= 400: a redirect or any other non-200 status is not
+            # a completions response either, and letting it fall through to
+            # the JSON parser below would misreport it as invalid_json.
             raise Stage2Error("http", f"status {resp.status_code}")
 
         try:
@@ -82,9 +85,20 @@ class LLMClient:
             raise Stage2Error("invalid_json", "response body is not JSON") from exc
 
         try:
-            content = raw["choices"][0]["message"]["content"] or ""
+            content = raw["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as exc:
             raise Stage2Error("empty", "no choices in response") from exc
+
+        if content is None:
+            content = ""
+        elif not isinstance(content, str):
+            # Some OpenAI-compatible providers emit content as a list of
+            # typed parts (e.g. [{"type": "text", "text": "..."}]) instead
+            # of a plain string. That's a response that doesn't match the
+            # shape we require, not an empty one — content.strip() below
+            # would raise AttributeError and escape as "unexpected" instead
+            # of a proper Stage2Error kind.
+            raise Stage2Error("invalid_schema", "content is not a string")
 
         if not content.strip():
             raise Stage2Error("empty", "empty content")
