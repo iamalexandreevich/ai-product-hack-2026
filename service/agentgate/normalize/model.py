@@ -33,6 +33,8 @@ class Flags:
     has_eval: bool = False
     has_subst: bool = False
     has_env_assign: bool = False
+    has_heredoc: bool = False
+    has_unresolved_expansion: bool = False
 
 
 @dataclass

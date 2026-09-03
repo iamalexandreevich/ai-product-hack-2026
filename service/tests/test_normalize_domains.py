@@ -15,3 +15,12 @@ def test_git_and_ssh_forms():
 def test_dedup_and_none():
     assert extract_domains(["curl", "http://x", "http://x/y"]) == ["x"]
     assert extract_domains(["ls", "-la"]) == []
+
+
+# --- Fix round 1: Critical 1 — a malformed URL must not raise ---
+
+
+def test_malformed_ipv6_url_does_not_raise():
+    assert extract_domains(["curl", "http://[evil"]) == []
+    # a well-formed token later in argv is still extracted
+    assert extract_domains(["curl", "http://[evil", "http://ok.example"]) == ["ok.example"]

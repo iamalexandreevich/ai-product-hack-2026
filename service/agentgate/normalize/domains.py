@@ -20,7 +20,17 @@ def extract_domains(argv: list[str]) -> list[str]:
     for token in argv:
         host = None
         if "://" in token:
-            host = urlsplit(token).hostname
+            try:
+                host = urlsplit(token).hostname
+            except ValueError:
+                # e.g. "http://[evil" (unbalanced IPv6-literal bracket)
+                # raises ValueError("Invalid IPv6 URL"); a malformed URL
+                # yields no domain rather than propagating the exception —
+                # this function must never raise on attacker-controlled
+                # input (see shell.py's fail-closed wrapping for the
+                # complementary rule: any exception AFTER this point
+                # still makes the whole action unparseable).
+                host = None
         else:
             m = _SCP_LIKE.match(token)
             if m and ("/" in token or "@" in token):
