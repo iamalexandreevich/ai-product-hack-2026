@@ -74,3 +74,68 @@ n=200 p50=0.1237ms p90=0.1937ms p99=0.2621ms max=1.0382ms
 ### Исправление базового коммита worktree
 
 Worktree был создан харнессом от `a9a0edd` (docs: план на 13 задач), а не от требуемого `e53e1ac` (merge task 5). Рабочее дерево было чистым, `git merge-base --is-ancestor HEAD e53e1ac` подтвердил чистый fast-forward — выполнен `git reset --hard e53e1ac`. После сброса подтверждено: `service/agentgate/stage1/hard_deny.py`, `service/agentgate/normalize/__init__.py`, `service/agentgate/profiles/schema.py` существуют, `uv run pytest -q` даёт `332 passed, 19 skipped` до начала работы над задачей — совпадает с ожиданием брифа дословно.
+
+---
+
+## Fix round 1 — auto-allow чтения защищённого пути через readonly-allowlist
+
+**База фикса:** `3a806b5` (коммит этой задачи).
+
+### Находка
+
+Ревью координатора (частично потеряно из-за инфраструктурной ошибки 403, но воспроизведено напрямую) обнаружило: `check_allowlist` возвращал жёсткий `allow` для `cat .env` при профиле с `protected_paths=[".env*", ".git/hooks/**"]`, правило `allowlist.readonly`. `.env` — защищённый путь; `curl -T .env` перехватывается `hard-deny.exfil`, но обычные `cat .env`/`head .env`/`grep X .env` проходили через readonly-ветку allowlist с явным благословением `allow`, поскольку короткое замыкание readonly-команды в `check_allowlist` вообще не сверялось с `resolved_protected_paths()`. Воспроизведено до любых правок:
+
+```
+cat .env                    -> allow  allowlist.readonly  hard=False
+head .env                   -> allow  allowlist.readonly  hard=False
+grep X .env                 -> allow  allowlist.readonly  hard=False
+cat .git/hooks/pre-commit   -> allow  allowlist.readonly  hard=False
+```
+
+### Решение координатора
+
+Чтение защищённого пути не должно возвращать `allow` из `check_allowlist` — должно возвращать `None`, и действие уходит в ступень 2 (то же обращение, что уже получает `cat /etc/hosts` — вне `allowed_paths`). Не эскалировано до `deny`: у чтения защищённого файла есть легитимные случаи (инструмент, инспектирующий конфиг), а `deny` здесь было бы избыточным запретом. `rm .env`/удаление защищённых путей явно вынесено за пределы этой правки — территория `hard-deny.protected-write` задачи 5, отдельный сквозной вопрос, который координатор отслеживает отдельно; `hard_deny.py` не тронут.
+
+### Фикс
+
+`service/agentgate/stage1/allowlist.py`:
+- Ветка `Tool.file_read`: добавлено `and not matches_any(p, protected, profile.workspace)` к существующему условию `is_within(p, allowed)` — зеркально тому, что уже было у `file_write`.
+- Shell-ветка: добавлена одна проверка между существующей проверкой «все пути внутри workspace» и ветками allow для prefix/readonly — `if action.paths and any(matches_any(p, protected, profile.workspace) for p in action.paths): return None`. Одна проверка закрывает и `allowlist.readonly`, и `allowlist.prefix`, так как стоит выше обеих точек возврата, а `action.paths` (заполняется нормализатором для shell-действий через `PATH_COMMANDS`, куда входят `cat`/`head`/`grep`) уже несёт все пути, упомянутые командой, независимо от роли чтения/записи.
+- Использованы только `matches_any`/`is_within` из `agentgate.normalize.paths` (задача 4) — без ручного сравнения путей.
+- Докстринг модуля обновлён: защищённый путь никогда не благословляется этим модулем ни на чтение, ни на запись, и это осознанный `None` (уход в ступень 2), а не `deny`.
+
+### TDD
+
+- **RED:** добавлен `test_allowlist_does_not_bless_protected_reads` (параметризован: `cat .env`, `head .env`, `grep X .env`, `cat .git/hooks/pre-commit`, каждый проверяет `check_allowlist(...) is None` и что `run_stage1(...)` не `allow`), плюс два теста-страховки от переисправления, в `service/tests/test_stage1_chain.py`, затем запуск:
+  ```
+  uv run pytest tests/test_stage1_chain.py -v -k "protected_reads or ordinary_reads or falls_through_like"
+  ```
+  Результат: `4 failed, 2 passed` — все четыре кейса защищённого пути упали на `assert Stage1Decision(decision=<DecisionKind.allow: 'allow'>, rule_id='allowlist.readonly', ...) is None`, подтверждая ровно ту находку, что описал координатор; два теста-страховки уже проходили на дефектном коде — как и задумано, они ловят переисправление, а не саму находку.
+- **GREEN:** тот же запуск после фикса → `6 passed, 27 deselected`.
+- Полный набор: `uv run pytest -q -W error` → `366 passed, 19 skipped in 0.94s` (360 + 6 новых), варнингов нет.
+
+### Покрытие
+
+- `cat .env`, `head .env`, `grep X .env`, `cat .git/hooks/pre-commit` — каждый даёт `None` и от `check_allowlist` напрямую, и от `run_stage1` (никакое другое правило не срабатывает: у hard-deny нет правила на просто чтение dotfile, `check_profile` не срабатывает — это чтение, а не мутирующая команда).
+- Страховка от переисправления: `cat README.md`, `ls src/` (незащищённые пути внутри workspace) по-прежнему дают `allow`/`allowlist.readonly` — обычные чтения не запрещены избыточно.
+- `cat /etc/hosts` по-прежнему даёт `None`, без изменений (вне `allowed_paths`, было `None` и до фикса — этот путь вообще не доходит до новой проверки защищённых путей, так как отсекается более ранней проверкой containment по workspace).
+
+### Латентность — повторный замер
+
+Фикс добавляет один проход `matches_any` по `action.paths` на горячем пути shell (плюс уже существовавший вызов `matches_any` для `file_read`/`file_write`, теперь применённый и к `file_read`). Повторный замер тем же скриптом (прогрев 10, 200 замеров, корпус 10 команд × 20 повторов):
+
+```
+n=200 p50=0.1219ms p90=0.2059ms p99=0.2399ms max=0.9573ms
+```
+
+**p50 = 0.122 мс** — статистически неотличимо от 0.124 мс до фикса, с большим запасом в бюджете 1 мс. `tests/test_stage1_latency.py::test_stage1_p50_under_1ms` перезапущен отдельно и проходит.
+
+### Дисциплина по scope
+
+Исправлена ровно одна находка по решению координатора; `hard_deny.py` не тронут, `rm .env` не переведён в `deny` (сознательно оставлено координатору). Использованы только `is_within`/`matches_any`. `None`, а не `deny` — подтверждено ассертами в новых тестах. `git status --short` после фикса показывает только `service/agentgate/stage1/allowlist.py` и `service/tests/test_stage1_chain.py` — без расширения scope.
+
+### Изменённые файлы, fix round 1
+
+- `service/agentgate/stage1/allowlist.py` — проверка защищённого пути добавлена в `file_read` и в общую shell-ветку; докстринг обновлён.
+- `service/tests/test_stage1_chain.py` — 6 новых тестов (4 параметризованных + 2 страховки).
+- `reports/task-6-stage1-chain.md` — этот раздел.

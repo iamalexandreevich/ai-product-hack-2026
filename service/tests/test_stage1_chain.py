@@ -95,3 +95,27 @@ def test_unparseable_falls_through():
     a = req(raw='echo "unterminated')
     assert a.flags.unparseable
     assert run_stage1(a, P) is None
+
+
+@pytest.mark.parametrize("raw", [
+    "cat .env",
+    "head .env",
+    "grep X .env",
+    "cat .git/hooks/pre-commit",
+])
+def test_allowlist_does_not_bless_protected_reads(raw):
+    from agentgate.stage1.allowlist import check_allowlist
+
+    a = req(raw=raw)
+    assert check_allowlist(a, P) is None, raw
+    d = run_stage1(a, P)
+    assert d is None or d.decision is not DecisionKind.allow, raw
+
+
+def test_allowlist_still_allows_ordinary_reads():
+    assert run_stage1(req(raw="cat README.md"), P).rule_id == "allowlist.readonly"
+    assert run_stage1(req(raw="ls src/"), P).rule_id == "allowlist.readonly"
+
+
+def test_allowlist_protected_read_falls_through_like_outside_workspace():
+    assert run_stage1(req(raw="cat /etc/hosts"), P) is None

@@ -3,11 +3,24 @@
 Recognizes a fixed set of read-only commands, a fixed set of read-only
 git subcommands, and operator-configured safe command prefixes
 (``profile.safe_prefixes``), and allows them outright when every
-referenced path (if any) stays inside the workspace and no unresolved
-expansion (``eval``, command substitution) is present. Also allows
-file_read/file_write tool calls whose paths are inside
-``resolved_allowed_paths()`` (file_write additionally must not touch a
-protected path — that stays reserved for hard-deny).
+referenced path (if any) stays inside the workspace, none of them is a
+protected path, and no unresolved expansion (``eval``, command
+substitution) is present. Also allows file_read/file_write tool calls
+whose paths are inside ``resolved_allowed_paths()`` and outside
+``resolved_protected_paths()``.
+
+A protected path is never auto-allowed here, for reads or writes alike
+(fix round 1, task 6): the readonly allowlist and protected_paths are
+two independent mechanisms, and letting a readonly command (``cat``,
+``head``, ``grep``, ...) bypass protection because reading isn't
+mutation would hand an agent the gate's explicit blessing to put a
+secret's contents into the model's context. This does not escalate to
+deny — a tool legitimately inspecting protected config is not
+inherently malicious — it returns None so the read falls through to
+stage 2, exactly like a read outside the workspace already does.
+Deleting or overwriting a protected path is a separate concern already
+covered by Task 5's hard-deny protected-write rule, upstream of this
+check in the chain.
 """
 
 from agentgate.api.schemas import DecisionKind, Tool
@@ -45,7 +58,9 @@ def check_allowlist(action: NormalizedAction, profile: Profile) -> Stage1Decisio
     allowed = profile.resolved_allowed_paths()
     protected = profile.resolved_protected_paths()
     if action.tool is Tool.file_read:
-        if action.paths and all(is_within(p, allowed) for p in action.paths):
+        if action.paths and all(
+            is_within(p, allowed) and not matches_any(p, protected, profile.workspace) for p in action.paths
+        ):
             return Stage1Decision(DecisionKind.allow, "allowlist.file_read", "")
         return None
     if action.tool is Tool.file_write:
@@ -57,6 +72,12 @@ def check_allowlist(action: NormalizedAction, profile: Profile) -> Stage1Decisio
     if action.flags.has_eval or action.flags.has_subst:
         return None
     if action.paths and not all(is_within(p, allowed) for p in action.paths):
+        return None
+    if action.paths and any(matches_any(p, protected, profile.workspace) for p in action.paths):
+        # A referenced path (readonly command argument, or a safe-prefix
+        # command's argument) is protected — see the module docstring:
+        # neither allowlist.readonly nor allowlist.prefix may bless a
+        # protected-path read. Fall through to stage 2 rather than deny.
         return None
     if all(_matches_prefix(c, profile.safe_prefixes) for c in action.commands):
         return Stage1Decision(DecisionKind.allow, "allowlist.prefix", "")
