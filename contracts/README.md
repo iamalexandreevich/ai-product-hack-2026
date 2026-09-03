@@ -2,8 +2,38 @@
 
 Единственная общая точка трёх направлений. Здесь лежат:
 
-- `decide_request.schema.json`, `decide_response.schema.json` — JSON-схемы `POST /v1/decide`. Генерируются из pydantic-моделей сервиса (`service/agentgate/api/schemas.py`); тест в `service/` проверяет, что закоммиченные схемы совпадают со сгенерированными.
+- `openapi.yaml` — OpenAPI 3.1 всего HTTP-контракта v1: `POST /v1/decide`, `GET /v1/decisions`, `GET /v1/profiles/{id}`, `GET /healthz`. Это документ, который отдают внешнему разработчику. Генерируется `service/scripts/export_openapi.py`, правка руками бессмысленна — перезатрётся (и тест `test_openapi_matches_generated_document` это проверяет). **Известная неточность:** на момент этой ревизии генератор всё ещё помечает `GET /v1/decisions`, `GET /v1/profiles/{id}` и `GET /healthz` как `provisional`/«ещё не реализовано» в прозе документа, хотя в коде (`service/agentgate/api/app.py`) все четыре маршрута реализованы. Исправление — в `service/scripts/export_openapi.py`, вне зоны задачи, породившей этот README.
+- `decide_request.schema.json`, `decide_response.schema.json` — JSON-схемы `POST /v1/decide`. Генерируются из pydantic-моделей сервиса (`service/agentgate/api/schemas.py`); тест `test_contracts.py` проверяет, что закоммиченные схемы совпадают со сгенерированными.
 - `deny_message_template.md` — шаблон текста, который адаптер отдаёт агенту при `deny`.
-- `hook_client.py` — эталонный клиент: JSON хука на stdin → запрос к сервису → решение на stdout, код выхода `0` allow, `2` deny, `3` ask.
+- `hook_client.py` — эталонный клиент, зависимостей кроме stdlib нет: JSON хука харнесса на stdin → запрос `POST /v1/decide` → решение на stdout. Fail-closed: недоступность сервиса, таймаут или любая ошибка разбора хука дают `ask`, никогда не падают трейсбеком (что под семантикой кодов выхода Claude Code PreToolUse читалось бы как fail-open).
 
-Изменения здесь — только PR-ом с упоминанием направлений service, adapters и benchmark. Описание полей — в спеке `docs/superpowers/specs/2026-09-03-agentgate-v1-design.md`, раздел 4.
+Изменения здесь — только PR-ом с упоминанием направлений service, adapters и benchmark. Описание полей — в спеке `docs/superpowers/service/specs/2026-09-03-agentgate-v1-design.md`, раздел 4.
+
+## hook_client.py — пример вызова
+
+Поддерживает hook-форматы Claude Code (`PreToolUse`, ключ `tool_name`) и OpenCode (`tool.execute.before`, ключ `sessionID`); формат выбирается автоматически по форме входного JSON.
+
+```bash
+echo '{"tool_name": "Bash", "tool_input": {"command": "rm -rf /"}, "session_id": "s1", "cwd": "/repo"}' \
+  | AGENTGATE_URL=http://127.0.0.1:8400 AGENTGATE_TOKEN=dev-token \
+    python3 contracts/hook_client.py --user-request "clean up temp files" --profile default
+```
+
+Печатает JSON-решение в stdout (`{"decision": "...", "reason": "...", "suggest": "..."}` и т.п.) и завершается с кодом, который харнесс использует как вердикт:
+
+| код выхода | решение | значение для харнесса |
+|---|---|---|
+| `0` | `allow` | действие разрешено |
+| `2` | `deny` | действие заблокировано; `reason`/`suggest` — агенту |
+| `3` | `ask` | решение не принято (в т.ч. сервис недоступен, невалидный хук) — харнесс решает сам, обычно как «не блокировать» |
+
+`--url`/`AGENTGATE_URL`, `--profile`/`AGENTGATE_PROFILE`, `--user-request`/`AGENTGATE_USER_REQUEST` — флаг или переменная окружения, флаг приоритетнее. `AGENTGATE_TOKEN`, если задан, идёт в `Authorization: Bearer <token>` — работает как со статическим токеном, так и с выданным API-ключом (`agk_...`, см. `service/README.md`, раздел «API-ключи»).
+
+Регенерация сгенерированных файлов:
+
+```
+cd service
+uv run python scripts/export_contracts.py
+uv run python scripts/export_openapi.py
+uv run pytest tests/test_contracts.py
+```

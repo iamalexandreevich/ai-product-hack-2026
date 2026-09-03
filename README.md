@@ -4,6 +4,10 @@
 
 Зачем это нужно, если Auto Mode уже есть в Claude Code и Codex: [docs/why-agentgate.md](docs/why-agentgate.md).
 
+Как устроены auto mode у вендоров и что из этого мы берём:
+[docs/auto-mode-industry-review-2026.md](docs/auto-mode-industry-review-2026.md) — обзор индустрии (Claude Code, Codex, Cursor, Kilo, Goose, OpenHands, CARE, Progent), приёмы, метрики-ориентиры, ограничения данных.
+[docs/best-practices.md](docs/best-practices.md) — решения по каждому приёму: что уже есть в v1, какие дельты внести в спеку, что в roadmap и что мы сознательно не берём.
+
 ## Структура репозитория
 
 | Папка | Направление | Что внутри |
