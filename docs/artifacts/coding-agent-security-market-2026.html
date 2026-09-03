@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Безопасность ИИ-кодинг-агентов: обзор рынка и артефакты (сентябрь 2026)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#EEF2F5;
+    --paper:#FFFFFF;
+    --ink:#14213D;
+    --ink-2:#4A5568;
+    --line:#CBD5DF;
+    --link:#0F6E7E;
+    --link-hover:#0A4F5B;
+    --det:#2F7A4A;   /* детерминированный контроль */
+    --det-bg:#E3F1E7;
+    --heur:#B8621B;  /* эвристический контроль */
+    --heur-bg:#FBEBDD;
+    --tag-product:#DCE7F5; --tag-product-ink:#1F3F73;
+    --tag-oss:#E3F1E7;     --tag-oss-ink:#22603A;
+    --tag-paper:#EFE6F7;   --tag-paper-ink:#5B3A85;
+    --tag-bench:#FFF3D6;   --tag-bench-ink:#7A5200;
+    --tag-incident:#FBE0E0;--tag-incident-ink:#8A2A2A;
+    --tag-std:#E4E8ED;     --tag-std-ink:#3A4757;
+    --tag-issue:#DFF1F3;   --tag-issue-ink:#0F5A66;
+    --max:78ch;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  @media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+  body{
+    margin:0;background:var(--bg);color:var(--ink);
+    font-family:"IBM Plex Sans",system-ui,sans-serif;font-size:16px;line-height:1.55;
+  }
+  a{color:var(--link);text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:2px;word-break:break-word}
+  a:hover{color:var(--link-hover)}
+  a:focus-visible,summary:focus-visible{outline:2px solid var(--link);outline-offset:2px}
+  code{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:.9em;background:#E6EBF0;padding:.05em .3em;border-radius:3px}
+
+  .shell{display:grid;grid-template-columns:260px minmax(0,1fr);gap:40px;max-width:1240px;margin:0 auto;padding:40px 28px 80px}
+  nav.toc{position:sticky;top:24px;align-self:start;font-size:.92rem}
+  nav.toc h2{font-size:.95rem;font-weight:600;margin:0 0 10px}
+  nav.toc ol{list-style:none;margin:0;padding:0}
+  nav.toc li{margin:0 0 6px;padding-left:12px;border-left:2px solid var(--line)}
+  nav.toc li a{text-decoration:none;color:var(--ink-2)}
+  nav.toc li a:hover{color:var(--link)}
+  nav.toc li.sub{margin-left:12px;font-size:.86rem}
+  main{max-width:var(--max);min-width:0}
+
+  header.hero{margin-bottom:44px;padding-bottom:28px;border-bottom:1px solid var(--line)}
+  header.hero .kicker{color:var(--ink-2);margin:0 0 10px;font-size:.95rem}
+  header.hero h1{font-size:2.15rem;line-height:1.15;font-weight:600;margin:0 0 18px;letter-spacing:-.01em}
+  header.hero p.lead{font-size:1.08rem;margin:0 0 14px;color:var(--ink)}
+  header.hero .meta{color:var(--ink-2);font-size:.92rem}
+
+  h2{font-size:1.5rem;font-weight:600;margin:52px 0 16px;letter-spacing:-.005em;scroll-margin-top:24px}
+  h3{font-size:1.12rem;font-weight:600;margin:30px 0 10px;scroll-margin-top:24px}
+  p{margin:0 0 14px}
+  ul,ol{margin:0 0 16px;padding-left:22px}
+  li{margin-bottom:6px}
+
+  .tldr{background:var(--paper);border:1px solid var(--line);border-left:4px solid var(--ink);padding:18px 22px;margin:0 0 8px}
+  .tldr h2{margin:0 0 12px;font-size:1.15rem}
+  .tldr ul{margin-bottom:0}
+
+  .findings{counter-reset:f;list-style:none;padding:0}
+  .findings li{counter-increment:f;position:relative;padding-left:40px;margin-bottom:14px}
+  .findings li::before{content:counter(f);position:absolute;left:0;top:2px;width:26px;height:26px;border-radius:50%;background:var(--ink);color:#fff;font-size:.85rem;font-weight:600;display:flex;align-items:center;justify-content:center}
+
+  .state{background:var(--paper);border:1px solid var(--line);padding:14px 18px;margin:0 0 18px;color:var(--ink)}
+  .state strong{font-weight:600}
+
+  .art{list-style:none;padding:0;margin:0 0 18px}
+  .art li{background:var(--paper);border:1px solid var(--line);padding:12px 16px;margin:0 0 8px}
+  .art .t{font-weight:600}
+  .art .d{color:var(--ink-2);margin:4px 0 6px;font-size:.95rem}
+  .art .l{font-size:.9rem}
+  .art .l a + a::before{content:" · ";color:var(--ink-2);text-decoration:none;display:inline-block;margin:0 .1em}
+  .tag{display:inline-block;font-size:.74rem;font-weight:500;padding:.1em .55em;border-radius:999px;margin-left:8px;vertical-align:middle;white-space:nowrap}
+  .tag.product{background:var(--tag-product);color:var(--tag-product-ink)}
+  .tag.oss{background:var(--tag-oss);color:var(--tag-oss-ink)}
+  .tag.paper{background:var(--tag-paper);color:var(--tag-paper-ink)}
+  .tag.bench{background:var(--tag-bench);color:var(--tag-bench-ink)}
+  .tag.incident{background:var(--tag-incident);color:var(--tag-incident-ink)}
+  .tag.std{background:var(--tag-std);color:var(--tag-std-ink)}
+  .tag.issue{background:var(--tag-issue);color:var(--tag-issue-ink)}
+  .tag.det{background:var(--det-bg);color:var(--det)}
+  .tag.heur{background:var(--heur-bg);color:var(--heur)}
+
+  .legend{display:flex;flex-wrap:wrap;gap:6px 4px;margin:0 0 18px;font-size:.9rem;color:var(--ink-2)}
+  .legend .tag{margin-left:0}
+
+  .tablewrap{overflow-x:auto;margin:0 0 22px;border:1px solid var(--line);background:var(--paper)}
+  table{border-collapse:collapse;width:100%;font-size:.9rem}
+  th,td{padding:9px 11px;border-bottom:1px solid var(--line);vertical-align:top;text-align:left}
+  th{background:#F4F7FA;font-weight:600}
+  tr:last-child td{border-bottom:none}
+  td .tag{margin-left:0}
+
+  .split{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:0 0 20px}
+  .split > div{background:var(--paper);border:1px solid var(--line);padding:14px 18px}
+  .split > div.det{border-top:4px solid var(--det)}
+  .split > div.heur{border-top:4px solid var(--heur)}
+  .split h3{margin:0 0 10px;font-size:1rem}
+  .split ul{margin:0}
+
+  .stages{list-style:none;padding:0;margin:0 0 20px}
+  .stages li{background:var(--paper);border:1px solid var(--line);padding:14px 18px;margin-bottom:10px}
+  .stages li strong{display:block;margin-bottom:6px}
+
+  .caveats{background:#F7F3E8;border:1px solid #E5D9B8;padding:14px 18px}
+  .caveats ul{margin:0}
+
+  footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line);color:var(--ink-2);font-size:.88rem}
+
+  @media (max-width:960px){
+    .shell{grid-template-columns:1fr;gap:20px;padding:24px 16px 60px}
+    nav.toc{position:static}
+    nav.toc ol{columns:2;column-gap:20px}
+    header.hero h1{font-size:1.7rem}
+    .split{grid-template-columns:1fr}
+  }
+  @media print{
+    body{background:#fff}
+    nav.toc{display:none}
+    .shell{display:block;padding:0}
+    a{color:var(--ink)}
+    .art li,.state,.tldr,.split>div{break-inside:avoid}
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+
+<nav class="toc" aria-label="Содержание">
+  <h2>Содержание</h2>
+  <ol>
+    <li><a href="#tldr">Кратко</a></li>
+    <li><a href="#findings">Ключевые выводы</a></li>
+    <li><a href="#s1">1. Разрешения и auto mode</a></li>
+    <li><a href="#s2">2. Sandboxing</a></li>
+    <li><a href="#s3">3. Prompt injection</a></li>
+    <li><a href="#s4">4. Slopsquatting</a></li>
+    <li><a href="#s5">5. Бенчмарки</a></li>
+    <li><a href="#s6">6. Approval fatigue</a></li>
+    <li><a href="#s7">7. Стандарты и обзоры</a></li>
+    <li><a href="#s8">8. Kilo Code</a></li>
+    <li><a href="#ta">Таблица: permission-системы</a></li>
+    <li class="sub"><a href="#arch">Архитектуры auto mode</a></li>
+    <li><a href="#tb">Таблица: бенчмарки</a></li>
+    <li><a href="#tc">Детерминированные vs эвристики</a></li>
+    <li><a href="#td">Пробелы и план на хакатон</a></li>
+    <li><a href="#caveats">Оговорки</a></li>
+  </ol>
+</nav>
+
+<main>
+
+<header class="hero">
+  <p class="kicker">Исследование рынка под хакатонный кейс «безопасность ИИ-кодинг-агентов»</p>
+  <h1>Кто и как сегодня защищает кодинг-агентов: закрытые продукты, open source, бенчмарки и пробелы</h1>
+  <p class="lead">Обзор механизмов разрешений, изоляции выполнения, защиты от prompt injection (внедрения вредоносных инструкций через контент) и slopsquatting (подмены галлюцинированных пакетов), с полным списком артефактов и ссылками. Точка отсчёта — Claude Code Auto Mode, цель — воспроизвести сопоставимый движок в Kilo Code.</p>
+  <p class="meta">Актуальность: 2 сентября 2026. Ссылки приведены только на реально найденные источники; там, где источник не подтверждён, это отмечено в оговорках.</p>
+</header>
+
+<section class="tldr" id="tldr">
+  <h2>Кратко</h2>
+  <ul>
+    <li>Рынок разделился на две модели контроля. Закрытые вендоры (Claude Code, Cursor, OpenAI Codex, GitHub Copilot) поставили LLM-классификатор («auto mode») поверх детерминированного OS-сэндбокса. В open source (Kilo Code, Cline, Roo Code, OpenHands) по-прежнему ручное подтверждение каждого шага либо бинарный YOLO-режим (полное отключение проверок). Сопоставимого auto-mode-движка в OSS пока нет, и именно этот пробел закрывает кейс.</li>
+    <li>Архитектурно неуязвимы к prompt injection только детерминированные контроли уровня ОС и сети: sandbox (<code>@anthropic-ai/sandbox-runtime</code>, Codex Seatbelt/Landlock, gVisor, Firecracker) и egress-фильтрация (ограничение исходящего трафика по allowlist доменов). LLM-классификаторы и гардрейлы остаются эвристикой: Anthropic сам подчёркивает, что auto mode не даёт гарантии безопасности, а заявленный Trajectory Labs нулевой ASR был опровергнут ручным обходом (Johann Rehberger, 60–80 % успешных инъекций).</li>
+    <li>Реалистичный план на хакатон: двухступенчатый reasoning-blind классификатор в Kilo Code (архитектура уже описана в issue #9138 / #10248 / #10249), обёртка агента в <code>@anthropic-ai/sandbox-runtime</code> как контроль, до которого инъекции не доходят, slopsquatting-хук на базе DepScope MCP и эвристик возраста/загрузок, бенчмарк с метриками ASR / Utility / FP / Friction / Latency на базе RedCode-Exec (bash) и CARE.</li>
+  </ul>
+</section>
+
+<h2 id="findings">Ключевые выводы</h2>
+<ol class="findings">
+  <li><strong>Claude Code Auto Mode стал режимом по умолчанию 14 августа 2026</strong> (анонс Anthropic — 7 августа 2026). Классификатор на Claude Sonnet 4.6 блокирует необратимые, разрушительные и направленные наружу действия. В слепом исследовании на 1 053 платных тестировщиках люди заметили подброшенную опасную команду в 13,6 % случаев, классификатор — в 89 %; при этом доля пойманных человеком команд падала с ~17 % до ~5 % после 50+ промптов в сессии.</li>
+  <li><strong>Approval fatigue (усталость от подтверждений) подтверждена производственными данными.</strong> По данным Anthropic, пользователи одобряют 97 % всех запросов на разрешение, включая 86 % запросов с опасными командами; сессии с ручным одобрением давали серьёзный непреднамеренный вред в 6,3 % случаев против 2,4 % у auto mode.</li>
+  <li><strong>Auto mode как защита от prompt injection переоценён.</strong> Trajectory Labs (по заказу Anthropic, 72 сценария × 10 прогонов): 0 из 720 попыток против Claude в auto mode, 5,83 % у GPT-5.6 на Codex Auto-review, 19,03 % у Codex Full Access. Однако Johann Rehberger (Embrace The Red, 26 августа 2026) обошёл Opus 5 Auto Mode с 60–80 % ASR через простой запрос на суммаризацию URL: цепочка WebFetch → HTTP 415 → откат на curl → ZIP с вредоносным <code>struct.py</code>, перекрывающим модуль стандартной библиотеки. Anthropic признаёт: реальная граница безопасности — OS-изоляция и egress-контроль.</li>
+  <li><strong>В open source auto-mode-движка нет, но Kilo Code его активно проектирует:</strong> issue #9138 (детальный дизайн двухступенчатого reasoning-blind классификатора), #10248 (rollout), #10249 (runtime foundation). Аналогичный запрос открыт в Kiro (#10364).</li>
+  <li><strong>TRAP</strong> (arXiv:2512.23128, Korgul et al., декабрь 2025, ICLR 2026) — источник цифр 13 % (GPT-5) и 43 % (DeepSeek-R1). Важно: бенчмарк рассчитан на веб-агентов, не на кодинг-агентов. Средний ASR 25 % по шести frontier-моделям, 3 780 прогонов, 948 успешных атак.</li>
+  <li><strong>Slopsquatting подтверждён академически:</strong> 19,7 % пакетов, предлагаемых LLM, — галлюцинации (Spracklen et al., USENIX Security 2025, Best Paper). Защита «внутри агента до установки, против zero-day» через сравнение имён невозможна (имена галлюцинаций новые). Работают эвристики (возраст пакета, загрузки, наличие репозитория), проверка существования в реальном времени (DepScope MCP) и release-age cooldown (минимальный возраст релиза перед установкой).</li>
+</ol>
+
+<div class="legend" aria-label="Легенда типов артефактов">
+  Типы артефактов:
+  <span class="tag product">продукт</span>
+  <span class="tag oss">OSS-репозиторий</span>
+  <span class="tag paper">статья</span>
+  <span class="tag bench">бенчмарк / датасет</span>
+  <span class="tag incident">инцидент</span>
+  <span class="tag std">стандарт</span>
+  <span class="tag issue">issue</span>
+</div>
+
+<!-- ================= РАЗДЕЛ 1 ================= -->
+<h2 id="s1">1. Механизмы разрешений и auto mode в кодинг-агентах</h2>
+<div class="state"><strong>Состояние рынка.</strong> Закрытые вендоры прошли путь от бинарного «ask / bypass» к трёхуровневой модели: allowlist → сэндбокс → LLM-классификатор. Claude Code (14 августа 2026), Cursor Auto-review (v3.6, 29 мая 2026) и Codex Auto-review сходятся к одной архитектуре. Open source задержался на ручном подтверждении или YOLO; Kilo Code первым проектирует полноценный аналог.</div>
+
+<h3>Закрытые и коммерческие</h3>
+<ul class="art">
+  <li>
+    <span class="t">Claude Code Auto Mode</span><span class="tag product">продукт</span>
+    <div class="d">Классификатор Sonnet 4.6. Многоуровневый short-circuit: Tier 1 — read-only allowlist (чтение, grep, glob, планы), Tier 2 — правки внутри проекта без вызова классификатора, Tier 3 — shell, webfetch, MCP, субагенты, выход за пределы проекта. Reasoning-blind вход: классификатор видит только сообщения пользователя и «голые» tool-call payload, без рассуждений модели и вывода инструментов. Deny-and-continue (3 отказа подряд или 20 всего → эскалация к человеку), hard denies для эксфильтрации данных. Двухстадийная схема: Stage 1 — single-token yes/no (8,5 % FPR, 6,6 % FNR), Stage 2 — chain-of-thought только на флагах (0,4 % FPR, 17 % FNR end-to-end). Настройки через <code>settings.json</code> (<code>defaultMode</code>, <code>disableAutoMode</code>, <code>--dangerously-skip-permissions</code>).</div>
+    <div class="l"><a href="https://claude.com/blog/auto-mode-default-in-claude-code">Анонс (7 авг 2026)</a><a href="https://code.claude.com/docs/en/auto-mode-config">Документация по конфигурации</a><a href="https://www.anthropic.com/engineering/claude-code-auto-mode">Engineering writeup (25 марта 2026)</a><a href="https://www.helpnetsecurity.com/2026/08/10/anthropic-claude-code-auto-mode/">Обзор Help Net Security</a><a href="https://triedandtyped.com/2026/08/30/claude-code-auto-mode-default/">Что блокирует auto mode</a></div>
+  </li>
+  <li>
+    <span class="t">Cursor Run Modes / Auto-review</span><span class="tag product">продукт</span>
+    <div class="d">Режимы Allowlist / Auto-review / Run Everything; <code>sandbox.json</code> с egress-allowlist (только sandbox.json / плюс defaults / всё разрешено); <code>permissions.json</code> (allow_instructions / block_instructions); классификатор-субагент. Вендор прямо называет это best-effort гардрейлом, а не жёсткой границей безопасности.</div>
+    <div class="l"><a href="https://cursor.com/docs/agent/security/run-modes">Документация Run Modes</a><a href="https://howtoharden.com/guides/cursor/">Cursor Hardening Guide</a></div>
+  </li>
+  <li>
+    <span class="t">OpenAI Codex CLI</span><span class="tag product">продукт</span><span class="tag oss">OSS-ядро</span>
+    <div class="d">Два независимых регулятора: <code>sandbox_mode</code> (read-only / workspace-write / danger-full-access) на Seatbelt (macOS), Landlock + seccomp (Linux), restricted tokens (Windows) и <code>approval_policy</code> (on-request / never / full-auto). Сеть отключена по умолчанию в workspace-write; <code>requirements.toml</code> для enterprise-политик; флаг <code>--dangerously-bypass-approvals-and-sandbox</code> (алиас <code>--yolo</code>).</div>
+    <div class="l"><a href="https://github.com/openai/codex">github.com/openai/codex</a><a href="https://simonwillison.net/2025/Nov/9/codex-sandbox-investigation/">Разбор сэндбокса Codex (Simon Willison)</a></div>
+  </li>
+  <li>
+    <span class="t">GitHub Copilot coding agent / Copilot CLI, Google Gemini CLI / Jules, Amazon Q Developer / Kiro, Windsurf (Cascade Turbo mode), Devin, Replit Agent, JetBrains Junie, Augment, Warp</span><span class="tag product">продукты</span>
+    <div class="d">Разные approval-модели: firewall и разрешения в Copilot, режимы автоподтверждения в Gemini CLI, Turbo mode в Windsurf. Отдельного LLM-классификатора команд уровня Claude Code у большинства не заявлено. В Kiro открыт запрос на аналог auto mode (см. ниже).</div>
+    <div class="l"><a href="https://github.com/kirodotdev/Kiro/issues/10364">Kiro issue #10364</a></div>
+  </li>
+</ul>
+
+<h3>Open source</h3>
+<ul class="art">
+  <li>
+    <span class="t">Kilo Code</span><span class="tag oss">OSS-репозиторий</span>
+    <div class="d">26,9k звёзд; форк Roo Code (который форк Cline), CLI-часть основана на sst/opencode. Сейчас: rule-based permissions вида <code>{permission, pattern, action}</code>, эндпоинт <code>POST /permission/allow-everything</code> (wildcard-одобрение без гардрейлов), <code>config-paths.ts</code> (принудительный <code>ask</code> для <code>.kilo/</code>, <code>.opencode/</code>, <code>AGENTS.md</code>), TUI-команда auto-approve, VS Code AutoApproveTab (статическая матрица allow / ask / deny).</div>
+    <div class="l"><a href="https://github.com/Kilo-Org/kilocode">github.com/Kilo-Org/kilocode</a></div>
+  </li>
+  <li>
+    <span class="t">Kilo Code issue #9138 — LLM-based bash command auto-approval</span><span class="tag issue">issue</span>
+    <div class="d">Открыт 17 апреля 2026. Полный дизайн auto mode: хук в <code>Permission.ask</code>, двухступенчатый reasoning-blind классификатор, fail-closed (в отличие от legacy «gatekeeper», который одобрял при ошибке), deny-and-continue со счётчиками 3/20, tiered short-circuit, сброс широких allow-правил при входе в режим, три prose-слота конфигурации (environment / allow / soft_deny).</div>
+    <div class="l"><a href="https://github.com/Kilo-Org/kilocode/issues/9138">Issue #9138</a></div>
+  </li>
+  <li>
+    <span class="t">Kilo Code issues #10248 и #10249</span><span class="tag issue">issue</span>
+    <div class="d">Трекер выкатки auto mode и runtime foundation для него.</div>
+    <div class="l"><a href="https://github.com/Kilo-Org/kilocode/issues/10248">Issue #10248</a><a href="https://github.com/Kilo-Org/kilocode/issues/10249">Issue #10249</a></div>
+  </li>
+  <li>
+    <span class="t">Cline</span><span class="tag oss">OSS-репозиторий</span>
+    <div class="d">Per-tool auto-approve переключатели; флаг <code>requires_approval</code> выставляет сама модель (не фиксированный allowlist); YOLO mode отключает все проверки; <code>.clineignore</code>.</div>
+    <div class="l"><a href="https://docs.cline.bot/features/auto-approve">Документация auto-approve</a></div>
+  </li>
+  <li>
+    <span class="t">OpenHands</span><span class="tag oss">OSS-репозиторий</span>
+    <div class="d">MIT. Confirmation policy (AlwaysConfirm / NeverConfirm / ConfirmRisky) плюс security analyzer с уровнями LOW / MEDIUM / HIGH / UNKNOWN; Docker-изоляция; тройной анализатор (GraySwan + Invariant + LLM risk scoring); флаг <code>--llm-approve</code>.</div>
+    <div class="l"><a href="https://docs.openhands.dev/sdk/guides/security">Документация по безопасности</a></div>
+  </li>
+  <li>
+    <span class="t">Roo Code, Aider, OpenCode (sst/opencode), Goose (Block), Continue, Plandex, Amp, Crush, Qwen Code, Zed agent, Trae</span><span class="tag oss">OSS</span>
+    <div class="d">Ручное подтверждение или списки auto-approve. У Goose — pipeline из пяти инспекторов; у OpenCode есть сторонний плагин sandbox (см. раздел 2).</div>
+  </li>
+</ul>
+
+<!-- ================= РАЗДЕЛ 2 ================= -->
+<h2 id="s2">2. Sandboxing и изоляция выполнения</h2>
+<div class="state"><strong>Состояние.</strong> Единственный класс детерминированных контролей, до которых prompt injection не доходит. Anthropic и OpenAI сошлись на OS-примитивах для CLI (Seatbelt, bubblewrap, Landlock) и gVisor / microVM для облака. Граница виртуальной машины и есть граница безопасности; всё остальное — defense-in-depth (эшелонированная защита).</div>
+<ul class="art">
+  <li>
+    <span class="t"><code>@anthropic-ai/sandbox-runtime</code> (srt)</span><span class="tag oss">OSS-репозиторий</span><span class="tag det">детерминированный</span>
+    <div class="d">bubblewrap (Linux / WSL2) или Seatbelt через <code>sandbox-exec</code> (macOS) плюс socat-релей на egress-прокси с allowlist доменов. Оборачивает весь процесс Claude Code (все tools, hooks, MCP-серверы), а не только Bash.</div>
+    <div class="l"><a href="https://code.claude.com/docs/en/sandbox-environments">Выбор sandbox-среды</a><a href="https://code.claude.com/docs/en/sandboxing">Документация Sandboxing</a></div>
+  </li>
+  <li>
+    <span class="t">opencode-sandbox</span><span class="tag oss">OSS-плагин</span>
+    <div class="d">MIT. Оборачивает bash-вызовы OpenCode через <code>@anthropic-ai/sandbox-runtime</code> — готовый образец интеграции для Kilo Code (общая кодовая база с OpenCode).</div>
+    <div class="l"><a href="https://libraries.io/npm/opencode-sandbox">libraries.io/npm/opencode-sandbox</a></div>
+  </li>
+  <li>
+    <span class="t">OpenAI Codex sandbox</span><span class="tag product">продукт</span><span class="tag det">детерминированный</span>
+    <div class="d">Seatbelt / Landlock / seccomp, сеть выключена по умолчанию.</div>
+    <div class="l"><a href="https://simonwillison.net/2025/Nov/9/codex-sandbox-investigation/">Разбор Simon Willison</a></div>
+  </li>
+  <li>
+    <span class="t">Многосредовая архитектура сэндбоксов Anthropic</span><span class="tag paper">обзор</span>
+    <div class="d">Claude.ai — gVisor; Claude Code — Seatbelt + bubblewrap; Claude Cowork — VM под гипервизором.</div>
+    <div class="l"><a href="https://simonwillison.net/2026/Aug/8/auto-mode/">Заметка Simon Willison (8 авг 2026)</a><a href="https://copilot-autogent.github.io/ai-security-blog/blog/anthropic-claude-sandbox-architecture/">Разбор архитектуры</a></div>
+  </li>
+  <li>
+    <span class="t">gVisor, Firecracker / microVM, E2B, Daytona, Modal Sandboxes, Docker Sandboxes (<code>docker sandbox run</code>), nsjail, Landlock, seccomp-профили, Apple Seatbelt, Tart (Cirrus Labs), cco</span><span class="tag product">инфраструктура</span>
+    <div class="d">Варианты инфраструктурной изоляции разного веса: от ядерных примитивов до управляемых облачных сэндбоксов.</div>
+    <div class="l"><a href="https://michaellivs.com/blog/sandboxing-ai-agents-2026/">Обзор sandboxing для агентов (2026)</a><a href="https://www.infralovers.com/blog/2026-02-15-sandboxing-claude-code-macos/">Sandboxing Claude Code на macOS</a></div>
+  </li>
+</ul>
+
+<!-- ================= РАЗДЕЛ 3 ================= -->
+<h2 id="s3">3. Защита от prompt injection в источниках инструкций</h2>
+<div class="state"><strong>Состояние.</strong> Два лагеря. Первый — детерминированные архитектурные паттерны (CaMeL, design patterns, information-flow control), которые доказуемо ограничивают ущерб. Второй — эвристические гардрейлы (LlamaFirewall, Lakera, guard-модели), которые обходятся. Инциденты 2025–2026 показали, что конфиг-файлы агентов (<code>.cursorrules</code>, <code>CLAUDE.md</code>, <code>SKILL.md</code>, описания MCP-инструментов) надо трактовать как исполняемый код.</div>
+
+<h3>Исследования и инструменты</h3>
+<ul class="art">
+  <li>
+    <span class="t">CaMeL — Defeating Prompt Injections by Design</span><span class="tag paper">статья</span><span class="tag oss">код</span><span class="tag det">детерминированный</span>
+    <div class="d">Google / DeepMind / ETH, Debenedetti et al., arXiv:2503.18813, март 2025, IEEE SaTML 2026. Извлечение control- и data-flow из доверенного запроса плюс capabilities (метки прав на данные); 77 % задач AgentDojo решаются с доказуемой безопасностью против 84 % без защиты.</div>
+    <div class="l"><a href="https://arxiv.org/abs/2503.18813">arXiv</a><a href="https://github.com/google-research/camel-prompt-injection">Код</a></div>
+  </li>
+  <li>
+    <span class="t">Design Patterns for Securing LLM Agents against Prompt Injections</span><span class="tag paper">статья</span><span class="tag det">детерминированный</span>
+    <div class="d">Beurer-Kellner et al., arXiv:2506.08837, июнь 2025. Шесть паттернов: Action-Selector, Plan-Then-Execute, LLM Map-Reduce, Dual LLM, Code-Then-Execute, Context-Minimization.</div>
+    <div class="l"><a href="https://arxiv.org/abs/2506.08837">arXiv</a><a href="https://simonwillison.net/2025/Jun/13/prompt-injection-design-patterns/">Разбор Simon Willison (с «lethal trifecta»)</a></div>
+  </li>
+  <li>
+    <span class="t">Meta LlamaFirewall (PromptGuard 2 + AlignmentCheck + CodeShield)</span><span class="tag oss">OSS-фреймворк</span><span class="tag heur">эвристика</span>
+    <div class="d">arXiv:2505.03574, май 2025. PromptGuard 2 — BERT-детектор джейлбрейков (86M / 22M параметров), AlignmentCheck — аудитор цепочки рассуждений, CodeShield — онлайн статический анализ генерируемого кода.</div>
+    <div class="l"><a href="https://arxiv.org/abs/2505.03574">arXiv</a><a href="https://www.llama.com/llama-protections/">Llama Protections</a></div>
+  </li>
+  <li>
+    <span class="t">Progent: Securing AI Agents with Privilege Control</span><span class="tag paper">статья</span><span class="tag det">детерминированный</span>
+    <div class="d">arXiv:2504.11703. Программируемый privilege control (управление привилегиями) через политики на вызовы инструментов.</div>
+    <div class="l"><a href="https://arxiv.org/pdf/2504.11703">arXiv</a></div>
+  </li>
+  <li>
+    <span class="t">FIDES — Securing AI Agents with Information-Flow Control; Type-Directed Privilege Separation</span><span class="tag paper">статьи</span><span class="tag det">детерминированный</span>
+    <div class="d">Microsoft (Costa et al., arXiv:2505.23643) и arXiv:2509.25926 — контроль потоков информации и разделение привилегий на уровне типов.</div>
+    <div class="l"><a href="https://arxiv.org/abs/2505.23643">FIDES</a><a href="https://arxiv.org/abs/2509.25926">Type-Directed Privilege Separation</a></div>
+  </li>
+  <li>
+    <span class="t">Anthropic — исследование защит от prompt injection</span><span class="tag paper">статья</span>
+    <div class="d">Подход Anthropic к защитам для агентов и computer use.</div>
+    <div class="l"><a href="https://www.anthropic.com/research/prompt-injection-defenses">anthropic.com/research</a></div>
+  </li>
+  <li>
+    <span class="t">MCP-scan (Invariant Labs)</span><span class="tag oss">OSS-сканер</span>
+    <div class="d">Обнаружение tool poisoning (отравления описаний инструментов), rug pull через hash-based pinning описаний, cross-origin escalation между MCP-серверами.</div>
+    <div class="l"><a href="https://invariantlabs.ai/blog/introducing-mcp-scan">Анонс MCP-scan</a><a href="https://github.com/invariantlabs-ai/mcp-injection-experiments">Эксперименты по инъекциям</a></div>
+  </li>
+  <li>
+    <span class="t">Lakera Guard, ProtectAI / Rebuff / LLM Guard, NVIDIA NeMo Guardrails, Invariant Guardrails, Snyk (ToxicProxy, Agent Scan), Pillar Security, Prompt Security, Zenity, Noma; OpenAI instruction hierarchy, Microsoft Spotlighting</span><span class="tag product">продукты / OSS</span><span class="tag heur">эвристика</span>
+    <div class="d">Коммерческие и открытые гардрейлы и техники разделения инструкций. Полезны как второй эшелон, но не годятся в качестве единственной границы.</div>
+  </li>
+</ul>
+
+<h3>Реальные инциденты и атаки</h3>
+<ul class="art">
+  <li>
+    <span class="t">Rules File Backdoor</span><span class="tag incident">инцидент</span>
+    <div class="d">Pillar Security, март 2025. Невидимый Unicode (zero-width joiners, bidi-маркеры) в <code>.cursorrules</code> и <code>.github/copilot-instructions.md</code>; GitHub добавил предупреждения о скрытом Unicode в мае 2025.</div>
+    <div class="l"><a href="https://www.pillar.security/blog/analyzing-the-amazon-q-incident-using-the-sail-framework">Pillar Security (разбор в рамках SAIL)</a></div>
+  </li>
+  <li>
+    <span class="t">Amazon Q для VS Code — «wiper» prompt injection</span><span class="tag incident">инцидент</span>
+    <div class="d">Июль 2025. PR от внешнего аккаунта попал в aws-toolkit-vscode v1.84.0 (~964k установок) с инструкциями стереть локальную ФС и AWS-ресурсы; сработать помешала синтаксическая ошибка.</div>
+    <div class="l"><a href="https://www.scworld.com/news/amazon-q-extension-for-vs-code-reportedly-injected-with-wiper-prompt">SC World</a><a href="https://github.com/vectara/awesome-agent-failures/blob/main/docs/case-studies/amazon-q-supply-chain-attack.md">Case study (awesome-agent-failures)</a></div>
+  </li>
+  <li>
+    <span class="t">GitHub MCP exploit, Tool Poisoning, WhatsApp «sleeper» rug pull</span><span class="tag incident">инциденты</span>
+    <div class="d">Invariant Labs, апрель 2025. ASR выше 60 % на 45+ MCP-серверах; CVE-2025-54136 (rug pull, CVSS 8.8); CVE-2025-6514 (mcp-remote, CVSS 9.6).</div>
+    <div class="l"><a href="https://invariantlabs.ai/blog/introducing-mcp-scan">Invariant Labs</a><a href="https://labs.cloudsecurityalliance.org/research/csa-research-note-mcp-tool-poisoning-ai-agent-exfiltration-2/">CSA research note о MCP tool poisoning</a></div>
+  </li>
+  <li>
+    <span class="t">Cursor CurXecute (CVE-2025-54135), MCPoison, CVE-2026-22708</span><span class="tag incident">инциденты</span>
+    <div class="d">Обход денайлиста через shell builtins и переменные окружения; Backslash Security нашла не менее четырёх способов обхода.</div>
+    <div class="l"><a href="https://api.osv.dev/v1/vulns/CVE-2026-22708">OSV: CVE-2026-22708</a><a href="https://www.theregister.com/2025/07/21/cursor_ai_safeguards_easily_bypassed/">The Register</a></div>
+  </li>
+  <li>
+    <span class="t">Обход Claude Code Opus 5 Auto Mode (Johann Rehberger)</span><span class="tag incident">инцидент</span>
+    <div class="d">26 августа 2026. Косвенная инъекция через суммаризацию URL: WebFetch → HTTP 415 → откат на curl → распаковка ZIP с вредоносным <code>struct.py</code>; 60–80 % успешных попыток.</div>
+    <div class="l"><a href="https://embracethered.com/blog/posts/2026/breaking-claude-code-opus-5-and-automode/">Embrace The Red</a></div>
+  </li>
+  <li>
+    <span class="t">InversePrompt (CVE-2025-54794 / -54795, Claude Code, Cymulate), Clinejection (Snyk, Cline → npm, 5M+ пользователей), IDEsaster (24 CVE в 10 AI IDE), GeminiJack (Noma), Gemini CLI (Tracebit), удаление production-БД агентом Replit</span><span class="tag incident">инциденты</span>
+    <div class="d">Сводный список техник и инцидентов 2025–2026 по агентным IDE.</div>
+    <div class="l"><a href="https://gist.github.com/kibotu/c06f54d6fbc4705e886a50fb2e59e6ae">Сводный gist по prompt injection и jailbreak</a><a href="https://vistainfosec.com/blog/ai-llm-penetration-testing-guide">AI/LLM Penetration Testing Guide 2026</a></div>
+  </li>
+  <li>
+    <span class="t">Прикладные исследования по кодинг-агентам</span><span class="tag paper">статьи</span>
+    <div class="d">«Prompt Injection Attacks on Agentic Coding Assistants» (arXiv:2601.17548), «Takedown: How It's Done in Modern Coding Agent Exploits» (arXiv:2509.24240), «Simple Prompt Injection Attacks Can Leak Personal Data…» (arXiv:2506.01055), CSA note о README injection (март 2026).</div>
+    <div class="l"><a href="https://arxiv.org/abs/2601.17548">2601.17548</a><a href="https://arxiv.org/abs/2509.24240">2509.24240</a><a href="https://arxiv.org/pdf/2506.01055">2506.01055</a></div>
+  </li>
+</ul>
+
+<!-- ================= РАЗДЕЛ 4 ================= -->
+<h2 id="s4">4. Защита от slopsquatting и вредоносных зависимостей</h2>
+<div class="state"><strong>Состояние.</strong> Требование кейса — защита внутри агента до установки, включая zero-day. Сравнение с известными именами бесполезно: галлюцинированные имена новые. Работают четыре приёма: проверка существования и репутации в реальном времени (DepScope MCP <code>check_package</code>), эвристики (возраст пакета, число загрузок, наличие репозитория, отсутствие пакета на момент запроса, схожесть с популярным), release-age cooldown (минимальный возраст релиза) и отключение lifecycle-скриптов при установке.</div>
+<ul class="art">
+  <li>
+    <span class="t">DepScope</span><span class="tag product">продукт / MCP-сервер</span>
+    <div class="d">Материал кейса. 8,5M+ пакетов, 19 экосистем, 22 MCP-инструмента (<code>check_package</code>, <code>package_exists</code>, <code>find_alternatives</code>, <code>check_typosquat</code>, <code>check_malicious</code>, <code>scan_project</code>), бесплатно и без авторизации. Собственный LLM Hallucination Benchmark: базовая доля установки галлюцинированных пакетов — 87 %.</div>
+    <div class="l"><a href="https://depscope.dev">depscope.dev</a><a href="https://github.com/cuttalo/depscope-mcp">MCP-сервер</a></div>
+  </li>
+  <li>
+    <span class="t">DepScope Hallucinations Dataset</span><span class="tag bench">датасет</span>
+    <div class="d">CC-BY-NC-SA 4.0. 161 запись (133 из реального трафика агентов + 28 из литературы), 18 экосистем, ежедневная реверификация; типовые суффиксы галлюцинаций: <code>-easy</code>, <code>-pro</code>, <code>-turbo</code>, <code>-plus</code>, <code>-extras</code>. Проект новый (0 звёзд) — проверьте актуальность перед интеграцией.</div>
+    <div class="l"><a href="https://github.com/cuttalo/depscope-hallucinations-dataset">GitHub</a></div>
+  </li>
+  <li>
+    <span class="t">We Have a Package for You! A Comprehensive Analysis of Package Hallucinations by Code Generating LLMs</span><span class="tag paper">статья</span><span class="tag oss">код</span>
+    <div class="d">Spracklen, Wijewickrama, Sakib, Maiti, Viswanath, Jadliwala; USENIX Security 2025, Best Paper. Первоисточник явления: 19,7 % сгенерированных пакетов — галлюцинации, 205 474 уникальных примера; не менее 5,2 % у коммерческих и 21,7 % у open-source моделей; 576 000 сэмплов, 16 LLM. Около 45 % галлюцинаций стабильно повторяются при одинаковом промпте.</div>
+    <div class="l"><a href="https://arxiv.org/abs/2406.10279">arXiv</a><a href="https://www.usenix.org/conference/usenixsecurity25/presentation/spracklen">USENIX</a><a href="https://www.usenix.org/publications/loginonline/we-have-package-you-comprehensive-analysis-package-hallucinations-code">;login: статья</a><a href="https://github.com/Spracks/PackageHallucination">Код</a></div>
+  </li>
+  <li>
+    <span class="t">CSA research note: Slopsquatting</span><span class="tag paper">обзор</span>
+    <div class="d">Cloud Security Alliance, апрель 2026 — сводка по атаке и мерам.</div>
+    <div class="l"><a href="https://labs.cloudsecurityalliance.org/wp-content/uploads/2026/04/CSA_research_note_slopsquatting-ai-supply-chain_20260419-csa-styled-1.pdf">PDF</a></div>
+  </li>
+  <li>
+    <span class="t">Datadog GuardDog</span><span class="tag oss">OSS-репозиторий</span>
+    <div class="d">Semgrep / YARA-правила плюс эвристики метаданных; сканирование в ядерном сэндбоксе (Landlock / Seatbelt).</div>
+    <div class="l"><a href="https://github.com/DataDog/guarddog">GitHub</a><a href="https://securitylabs.datadoghq.com/articles/learnings-from-recent-npm-compromises/">Уроки npm-компрометаций (Datadog Security Labs)</a></div>
+  </li>
+  <li>
+    <span class="t">Минимальный возраст релиза (cooldown) в npm / pnpm / yarn / bun</span><span class="tag std">мера</span><span class="tag det">детерминированный</span>
+    <div class="d">npm 11.10+ (<code>minimum-release-age</code>), pnpm 10.16+, yarn 4.10+ (<code>npmMinimalAgeGate</code>), bun 1.3+. Типовой порог — 7 дней. Рекомендуют Socket и Datadog. Самая простая zero-day-защита, которую можно проверять внутри агента до установки.</div>
+    <div class="l"><a href="https://github.com/josepderiu/npm-minimum-age-validation">Пример валидации</a><a href="https://github.com/mikiwiik/instructions-only-claude-coding/issues/530">Пример правила для агента (issue)</a></div>
+  </li>
+  <li>
+    <span class="t">Socket.dev (Socket Firewall, TypoSmart), Aikido Safe Chain, OpenSSF Package Analysis (детонация в gVisor → OSV), Snyk, Phylum / Veracode, Sonatype, Endor Labs, Chainguard, Checkmarx, JFrog Curation, pip-audit, npm audit, packj, OpenSSF Scorecard, Trusted Publishing</span><span class="tag product">продукты / OSS</span>
+    <div class="d">Преимущественно CI- и registry-уровень; для кейса ценны как источники сигналов, которые можно дёргать из pre-install-хука.</div>
+  </li>
+</ul>
+
+<!-- ================= РАЗДЕЛ 5 ================= -->
+<h2 id="s5">5. Бенчмарки и датасеты безопасности агентов</h2>
+<div class="state"><strong>Состояние.</strong> Большинство бенчмарков рассчитаны на веб- и tool-агентов (AgentDojo, InjecAgent, ASB, TRAP). Специализированных под кодинг-агентов и классификацию опасных bash-команд меньше: RedCode, CARE, SecCodePLT, CyberSecEval. Для хакатонного бенчмарка ядро — RedCode-Exec (bash-подмножество) плюс CARE; метрики Friction и Latency придётся добавить самостоятельно. Полная таблица — <a href="#tb">ниже</a>.</div>
+<ul class="art">
+  <li>
+    <span class="t">Дополнительные бенчмарки, не вошедшие в таблицу</span><span class="tag bench">бенчмарки</span>
+    <div class="d">SABER (arXiv:2606.01317, операционная безопасность кодинг-агентов в stateful-воркспейсах), SecureAgentBench (arXiv:2509.22097), SEC-bench (arXiv:2506.11791, 200 CVE), SecRepoBench (arXiv:2504.21205), JAWS-Bench (arXiv:2510.01359), ASTRA (arXiv:2508.03936, 1 995 промптов), AgentDyn (arXiv:2602.03117), WASP, SHADE-Arena, OpenAgentSafety, Command-line Risk Classification (arXiv:2412.01655, классы SAFE / RISKY / BLOCKED), Domain-Conditioned Safety in Computer-Using Agents (arXiv:2606.05233).</div>
+    <div class="l"><a href="https://arxiv.org/abs/2412.01655">Command-line Risk Classification</a><a href="https://arxiv.org/html/2606.05233">2606.05233</a></div>
+  </li>
+</ul>
+
+<!-- ================= РАЗДЕЛ 6 ================= -->
+<h2 id="s6">6. Approval fatigue и человеческий фактор</h2>
+<ul class="art">
+  <li>
+    <span class="t">Anthropic — данные исследования Auto Mode</span><span class="tag paper">статья / данные</span>
+    <div class="d">97 % запросов одобряются (в том числе 86 % с опасными командами). Индикатор невнимательности: планы отклоняют в 39 % случаев, а отдельные permission-запросы — лишь в 3 %. По файлам настроек: 49,5 % активных CLI-пользователей вручную создали allow-правило для Bash; 62 % использовали <code>bypassPermissions</code> или «don't ask again»; 25 % интерактивных сессий стартуют в bypass. Доля пойманных человеком опасных команд падает с ~17 % до ~5 % в течение сессии.</div>
+    <div class="l"><a href="https://claude.com/blog/auto-mode-default-in-claude-code">Анонс с данными</a></div>
+  </li>
+  <li>
+    <span class="t">Классические работы по привыканию к предупреждениям (habituation, warning fatigue)</span><span class="tag paper">статьи</span>
+    <div class="d">Akhawe &amp; Felt (эффективность браузерных предупреждений), Bravo-Lillo et al. (дизайн предупреждений), Anderson et al. (fMRI-исследование привыкания). Дают теоретическую рамку для approval fatigue у кодинг-агентов и готовые методики измерения.</div>
+  </li>
+  <li>
+    <span class="t">Обсуждения <code>--dangerously-skip-permissions</code> / YOLO mode на HN и Reddit</span><span class="tag paper">дискуссии</span>
+    <div class="d">Само наличие официального YOLO-режима в Cline — признание того, во что на практике превращается защита, основанная на подтверждениях.</div>
+  </li>
+</ul>
+
+<!-- ================= РАЗДЕЛ 7 ================= -->
+<h2 id="s7">7. Стандарты, гайды, обзоры</h2>
+<ul class="art">
+  <li>
+    <span class="t">OWASP Top 10 for LLM Applications 2025</span><span class="tag std">стандарт</span>
+    <div class="d">LLM01 Prompt Injection и остальные категории риска.</div>
+    <div class="l"><a href="https://genai.owasp.org/resource/owasp-top-10-for-llm-applications-2025/">OWASP</a></div>
+  </li>
+  <li>
+    <span class="t">OWASP Top 10 for Agentic Applications 2026 (ASI01–ASI10)</span><span class="tag std">стандарт</span>
+    <div class="d">9 декабря 2025: Agent Goal Hijack, Tool Misuse, Identity / Privilege Abuse, Agentic Supply Chain, Unexpected Code Execution, Memory / Context Poisoning, Insecure Inter-Agent Comms, Cascading Failures, Human-Agent Trust Exploitation, Rogue Agents. Удобная сетка для модели угроз в README.</div>
+    <div class="l"><a href="https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/">OWASP</a></div>
+  </li>
+  <li>
+    <span class="t">OWASP Agentic Security Initiative (Threats and Mitigations, февраль 2025), OWASP MCP Top 10, OWASP Agentic Skills Top 10</span><span class="tag std">стандарты</span>
+    <div class="d">Инкубационные проекты OWASP по угрозам агентов, MCP и skills.</div>
+  </li>
+  <li>
+    <span class="t">NIST AI RMF (AI 600-1, GenAI Profile), CSA MAESTRO / AI Controls Matrix, MITRE ATLAS v5.1.0 (16 тактик, 84 техники, ноябрь 2025), AIUC-1</span><span class="tag std">фреймворки</span>
+    <div class="l"><a href="https://www.vectra.ai/topics/mitre-atlas">Обзор MITRE ATLAS</a></div>
+  </li>
+  <li>
+    <span class="t">Обзоры arXiv 2025–2026</span><span class="tag paper">статьи</span>
+    <div class="d">«Taxonomy and Consistency Analysis of Safety Benchmarks for AI Agents» (arXiv:2605.16282), «Systematic Analysis of MCP Security» (arXiv:2508.12538), Google «An Introduction to Google's Approach for Secure AI Agents».</div>
+    <div class="l"><a href="https://arxiv.org/abs/2605.16282">2605.16282</a><a href="https://arxiv.org/abs/2508.12538">2508.12538</a></div>
+  </li>
+</ul>
+
+<!-- ================= РАЗДЕЛ 8 ================= -->
+<h2 id="s8">8. Kilo Code: что есть и что потребуется</h2>
+<p><strong>Архитектура.</strong> Форк Roo Code / Cline; CLI-часть основана на sst/opencode (<code>packages/opencode/</code>). Репозиторий Kilo-Org/kilocode — 26,9k звёзд, 3,1k форков.</p>
+<p><strong>Текущие permission-механизмы:</strong></p>
+<ul>
+  <li><code>packages/opencode/src/permission/index.ts</code> — rule-based <code>{permission, pattern, action}</code>, функция <code>Permission.ask</code> (строки ~190–239); LLM-оценки нет.</li>
+  <li><code>packages/opencode/src/kilocode/permission/routes.ts</code> — <code>POST /permission/allow-everything</code>: wildcard-одобрение без гардрейлов.</li>
+  <li><code>packages/opencode/src/kilocode/permission/config-paths.ts</code> — принудительный <code>ask</code> для <code>.kilo/</code>, <code>.opencode/</code>, <code>AGENTS.md</code>.</li>
+  <li>TUI auto-approve (<code>src/kilocode/cli/cmd/tui/app.tsx</code>), VS Code <code>AutoApproveTab.tsx</code> (статическая матрица allow / ask / deny), <code>.kilocodeignore</code> / <code>.rooignore</code>.</li>
+  <li>Legacy «AI Gatekeeper» (~388 строк в <code>kilocode-legacy</code>) — LLM-оценка при YOLO, но с одобрением при ошибке (approve-on-error), что небезопасно; при миграции <code>yoloGatekeeperApiConfigId</code> отбрасывается.</li>
+</ul>
+<p><strong>Что нужно для auto mode (по issue #9138):</strong> хук в <code>Permission.ask</code>; двухступенчатый reasoning-blind классификатор (Stage 1 — single-token на быстрой модели, Stage 2 — chain-of-thought); fail-closed с откатом в <code>ask</code>; deny-and-continue со счётчиками 3 подряд / 20 всего; tiered short-circuit (allowlist безопасных инструментов и правки внутри проекта минуют классификатор); сброс широких allow-правил (<code>bash:*</code>, <code>python:*</code>, <code>npm run *</code>) при входе в режим; конфиг <code>permission.classifier</code> с тремя prose-слотами (environment / allow / soft_deny); на втором этапе — probe на prompt injection в выводе инструментов. Системы hooks уровня Claude Code нет — её тоже придётся вводить.</p>
+
+<!-- ================= ТАБЛИЦА А ================= -->
+<h2 id="ta">Сравнительная таблица permission-систем</h2>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Агент</th><th>Режимы</th><th>Классификация опасности команд</th><th>Sandbox</th><th>Hooks / политики</th><th>OSS</th></tr></thead>
+  <tbody>
+    <tr><td>Claude Code</td><td>ask / acceptEdits / <strong>auto</strong> / plan / bypass</td><td>LLM-классификатор Sonnet 4.6, 2 стадии, reasoning-blind</td><td>Seatbelt / bubblewrap + egress-прокси</td><td>PreToolUse hooks, settings.json, hard denies</td><td>нет</td></tr>
+    <tr><td>Cursor</td><td>Allowlist / <strong>Auto-review</strong> / Run Everything</td><td>LLM-классификатор-субагент</td><td>sandbox.json (egress allowlist)</td><td>permissions.json (allow / block)</td><td>нет</td></tr>
+    <tr><td>Codex CLI</td><td>on-request / never / full-auto</td><td>нет (детерминированный OS-sandbox)</td><td>Seatbelt / Landlock + seccomp / restricted tokens</td><td>requirements.toml</td><td>да (Apache)</td></tr>
+    <tr><td>Cline</td><td>per-tool auto-approve / YOLO</td><td>флаг <code>requires_approval</code> от модели</td><td>нет (внешний)</td><td>.clineignore</td><td>да</td></tr>
+    <tr><td>OpenHands</td><td>AlwaysConfirm / NeverConfirm / ConfirmRisky</td><td>security analyzer (LOW–HIGH) + LLM</td><td>Docker-контейнер</td><td>Invariant + GraySwan</td><td>да (MIT)</td></tr>
+    <tr><td>Goose</td><td>ручной / auto</td><td>pipeline из 5 инспекторов</td><td>опционально</td><td>—</td><td>да (Apache)</td></tr>
+    <tr><td><strong>Kilo Code</strong></td><td>rule-based / allow-everything</td><td><strong>в проекте (#9138)</strong></td><td>нет (кандидат — srt)</td><td>защищённые пути в config-paths</td><td>да</td></tr>
+  </tbody>
+</table>
+</div>
+
+<!-- ================= АРХИТЕКТУРЫ AUTO MODE ================= -->
+<h3 id="arch">Известные реализации auto mode: Claude Code, Codex Auto-review, White Circle</h3>
+<p>Три реализации решают одну задачу — убрать человека из цикла подтверждений, не расширяя фактических прав агента, — но делают это в разных точках стека. Claude Code и Codex встраивают LLM-«ревьюера» внутрь агента и опираются на OS-сэндбокс как на жёсткую границу; White Circle выносит контроль во внешний API-слой поверх любого агента (так его использует Lovable). Ниже — сравнение по тому, что известно из официальной документации и публичных исследований.</p>
+
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Критерий</th><th>Claude Code Auto Mode (Anthropic)</th><th>Codex Auto-review (OpenAI)</th><th>White Circle Protect (внешний control layer)</th></tr></thead>
+  <tbody>
+    <tr><td>Точка внедрения</td><td>Внутри агента: классификатор вызывается на каждом tool call Tier 3 до исполнения</td><td>Внутри агента, только на границе сэндбокса: срабатывает лишь когда действие уже требует approval (эскалация прав, заблокированная сеть, запись вне <code>writable_roots</code>, side-effecting MCP/app-вызовы, новый домен в Browser Use)</td><td>Снаружи агента: API-прокси, через который платформа прогоняет входы, выходы и действия агента; агент сам о слое не знает</td></tr>
+    <tr><td>Кто принимает решение</td><td>Отдельная модель Claude Sonnet 4.6 с узким промптом</td><td>Отдельный Codex-агент-ревьюер (в исследовании Trajectory Labs — GPT-5.6) с текстовой политикой <code>guardian/policy.md</code> в OSS-репозитории</td><td>Проприетарные guard-модели White Circle (публичные артефакты: CircleGuardBench, KillBench на Hugging Face) плюс политики, заданные заказчиком в prose</td></tr>
+    <tr><td>Что видит ревьюер</td><td>Reasoning-blind: только сообщения пользователя и «голый» tool-call payload; рассуждения модели и вывод инструментов не подаются</td><td>Компактный транскрипт: сообщения пользователя, показанные ассистентом апдейты, релевантные tool calls и их вывод, плюс сама заявка. Скрытый chain-of-thought исключён. Может делать редкие read-only проверки для добора контекста</td><td>Вход/выход модели и вызовы инструментов, проходящие через API; глубина контекста зависит от интеграции заказчика</td></tr>
+    <tr><td>Ступени / оптимизация задержки</td><td>Tiered short-circuit (read-only и in-project правки минуют классификатор) + две стадии: single-token yes/no (8,5 % FPR, 6,6 % FNR) → chain-of-thought только на флагах (end-to-end 0,4 % FPR, 17 % FNR)</td><td>Одна ступень, но вызывается редко: всё, что разрешено <code>sandbox_mode</code>, идёт без ревью. Рекомендация OpenAI — сначала сужать сэндбокс (<code>writable_roots</code>, точные prefix-правила), а не учить ревьюера одобрять шум</td><td>Один вызов guard-модели на запрос; вендор заявляет минимальную задержку, публичных цифр FPR/FNR по действиям кодинг-агентов нет</td></tr>
+    <tr><td>Поведение при отказе</td><td>Deny-and-continue: отказ возвращается агенту как причина, агент ищет безопасный путь. Эскалация к человеку после 3 отказов подряд или 20 всего</td><td>Отказ возвращается с обоснованием и усиленной инструкцией: не обходить, продолжать только материально более безопасным путём, иначе спросить пользователя. Circuit breaker: прерывание хода после 3 отказов подряд или 10 отказов в окне из последних 50 ревью. Таймаут отделён от отказа</td><td>Блокировка/флаг на уровне API, рейт-лимит или бан пользователя по политике; сценарий «агент продолжает безопасно» зависит от интеграции</td></tr>
+    <tr><td>Hard denies / необсуждаемые запреты</td><td>Категория эксфильтрации данных — классификатор никогда не одобряет; защищённые пути (<code>.git</code>, <code>.env</code>) остаются под approval</td><td>Политика по умолчанию блокирует отправку секретов недоверенным получателям, зондирование credentials/токенов/cookies, широкое или постоянное ослабление безопасности, необратимые разрушительные действия</td><td>Задаётся политиками заказчика; из публичных материалов — блокировка вредоносных инструкций вроде удаления файлов, генерации фишинга и малвари, утечек данных</td></tr>
+    <tr><td>Переопределение человеком</td><td>Shift+Tab / выбор режима; <code>--dangerously-skip-permissions</code> отключает всё</td><td><code>/approve</code> — одноразовое одобрение одного конкретного отказанного действия; повтор всё равно проходит через ревьюера, который видит override как контекст и может отказать снова</td><td>Через консоль платформы и ручную модерацию</td></tr>
+    <tr><td>Детерминированная граница под LLM-слоем</td><td>Да: Seatbelt / bubblewrap + egress-прокси (<code>@anthropic-ai/sandbox-runtime</code>)</td><td>Да: Seatbelt / Landlock + seccomp; auto-review явно «замена ревьюера, не выдача прав» — не расширяет сэндбокс</td><td>Нет собственной: White Circle — эвристический слой; сэндбокс должен обеспечивать хост-платформа</td></tr>
+    <tr><td>Настройка политики</td><td>Prose-слоты в <code>settings.json</code>, allow/deny/ask-правила, hooks</td><td>Enterprise: <code>guardian_policy_config</code> в managed requirements; пользователь: <code>[auto_review].policy</code> в <code>config.toml</code> (managed побеждает)</td><td>Пользовательские политики в prose + автогенерация фильтров из результатов стресс-теста («Test → Protect»)</td></tr>
+    <tr><td>Статус и охват</td><td>По умолчанию для Pro/Max/Team с 14 авг 2026</td><td>Opt-in (<code>approvals_reviewer = "auto_review"</code>, флаг <code>--approve-for-me</code> в 0.147.0); с 0.146.1 (5 авг 2026) более консервативные дефолты для cyber-capable моделей; в ChatGPT-приложении режим «Approve for me»</td><td>Коммерческий SaaS / on-prem, SOC 2 Type II, 1B+ запросов; клиенты — Lovable, два крупных цифровых банка (заявление вендора, май 2026)</td></tr>
+    <tr><td>Известные ограничения</td><td>Обход косвенной инъекцией (Rehberger, 60–80 % ASR); 7 % пропусков на синтетическом adversarial-наборе</td><td>Вендор прямо пишет: не детерминированная гарантия, ошибается в adversarial-контекстах; расход токенов на ревью (дискуссия августа 2026)</td><td>Guard-модель как единственная граница обходится по определению; нет публичных данных по FP/Friction на легитимных задачах разработки</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p><strong>Что из этого переносимо в Kilo Code.</strong> У Claude Code стоит взять reasoning-blind вход, tiered short-circuit и двухстадийную схему (главный рычаг против FP и latency). У Codex — принцип «ревьюер срабатывает только на границе сэндбокса» и circuit breaker с раздельной обработкой таймаута: это резко снижает Friction, потому что большинство действий вообще не доходят до LLM. У White Circle — идею разделения ролей: политика описывается заказчиком в prose, а «Test → Protect» замыкает бенчмарк на генерацию правил, что напрямую ложится на этапы 4 и 6 кейса. Общая для всех трёх черта, которую нельзя терять: LLM-ревьюер никогда не расширяет права агента; жёсткая граница остаётся за сэндбоксом.</p>
+
+<ul class="art">
+  <li>
+    <span class="t">Codex Auto-review — официальная документация</span><span class="tag product">продукт</span><span class="tag oss">политика в OSS</span>
+    <div class="d">Жизненный цикл ревьюера, триггеры, circuit breaker 3 / 10-из-50, <code>/approve</code>, ссылки на <code>policy.md</code> и <code>policy_template.md</code> в репозитории.</div>
+    <div class="l"><a href="https://developers.openai.com/codex/concepts/sandboxing/auto-review">Auto-review</a><a href="https://developers.openai.com/codex/agent-approvals-security">Agent approvals &amp; security</a><a href="https://github.com/openai/codex/blob/main/codex-rs/core/src/guardian/policy.md">guardian/policy.md</a><a href="https://alignment.openai.com/auto-review/">Alignment Research: Auto-review</a><a href="https://codex.danielvaughan.com/2026/05/12/codex-cli-auto-review-internals-circuit-breakers-denial-handling-custom-policies/">Разбор внутренностей (май 2026)</a><a href="https://laplusda.com/en/posts/codex-cli-approve-for-me/">Флаг --approve-for-me (авг 2026)</a></div>
+  </li>
+  <li>
+    <span class="t">White Circle</span><span class="tag product">продукт</span><span class="tag heur">эвристика</span>
+    <div class="d">Париж, основатель Denis Shilov (автор «универсального джейлбрейка» 2024 года); seed $11M (май 2026) от людей из OpenAI, Anthropic, DeepMind, Mistral, Hugging Face. Платформа Test / Protect / Observe: стресс-тестирование агентов и tool-use, затем policy-движок, перехватывающий и блокирующий небезопасные выходы и действия в реальном времени через единый API; on-prem и VPC. Технологическое партнёрство с Lovable: Lovable задаёт, что разрешено его кодинг-агентам, White Circle энфорсит в реальном времени. Публичные датасеты/бенчмарки на Hugging Face: CircleGuardBench, KillBench.</div>
+    <div class="l"><a href="https://whitecircle.com/test">whitecircle.com</a><a href="https://huggingface.co/whitecircle">Hugging Face</a><a href="https://fortune.com/2026/05/12/exclusive-white-circle-raises-11-million-to-stop-ai-models-from-going-rogue-in-the-workplace/">Fortune (12 мая 2026)</a><a href="https://siliconangle.com/2026/05/12/white-circle-raises-11m-help-companies-secure-monitor-ai-model-behavior/">SiliconANGLE</a><a href="https://x.com/whitecircle">Партнёрство с Lovable (X)</a></div>
+  </li>
+  <li>
+    <span class="t">Claude Code Auto Mode — архитектура</span><span class="tag product">продукт</span>
+    <div class="d">Ссылки продублированы из раздела 1: анонс, конфигурация, engineering writeup, обход Rehberger.</div>
+    <div class="l"><a href="https://claude.com/blog/auto-mode-default-in-claude-code">Анонс</a><a href="https://code.claude.com/docs/en/auto-mode-config">Конфигурация</a><a href="https://www.anthropic.com/engineering/claude-code-auto-mode">Engineering writeup</a><a href="https://embracethered.com/blog/posts/2026/breaking-claude-code-opus-5-and-automode/">Обход (Embrace The Red)</a></div>
+  </li>
+</ul>
+
+<!-- ================= ТАБЛИЦА Б ================= -->
+<h2 id="tb">Таблица бенчмарков</h2>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Бенчмарк</th><th>Что измеряет</th><th>Метрики</th><th>Ссылка / дата</th></tr></thead>
+  <tbody>
+    <tr><td>TRAP</td><td>Persuasion-инъекции для веб-агентов (источник 13 % / 43 %)</td><td>ASR, Utility</td><td><a href="https://arxiv.org/abs/2512.23128">arXiv:2512.23128</a>, дек 2025</td></tr>
+    <tr><td>AgentDojo</td><td>Косвенные инъекции в tool-calling (97 задач, 629 тестов)</td><td>ASR, Utility</td><td><a href="https://github.com/ethz-spylab/agentdojo">GitHub</a>, NeurIPS 2024</td></tr>
+    <tr><td>InjecAgent</td><td>Косвенные инъекции, single-step</td><td>ASR</td><td><a href="https://arxiv.org/abs/2403.02691">arXiv:2403.02691</a>, 2024</td></tr>
+    <tr><td>ASB (Agent Security Bench)</td><td>Атаки и защиты агентов (400+ инструментов, 27 методов)</td><td>ASR (до 84,3 %), 7 метрик</td><td><a href="https://github.com/agiresearch/ASB">GitHub</a>, 2024</td></tr>
+    <tr><td>Agent-SafetyBench</td><td>Безопасность агентов (349 сред, 2 000 тестов)</td><td>safety score</td><td><a href="https://arxiv.org/abs/2412.14470">arXiv:2412.14470</a>, дек 2024</td></tr>
+    <tr><td>RedCode-Exec / Gen</td><td>Опасное исполнение и генерация кода (Python + Bash, 4 050 + 160)</td><td>ASR, Rejection Rate</td><td><a href="https://github.com/AI-secure/RedCode">GitHub</a>, NeurIPS 2024</td></tr>
+    <tr><td>RedCodeAgent</td><td>Автоматический red-teaming кодинг-агентов</td><td>ASR, RR</td><td><a href="https://arxiv.org/abs/2510.02609">arXiv:2510.02609</a>, окт 2025</td></tr>
+    <tr><td><strong>CARE</strong></td><td><strong>Верификация опасных shell-команд перед исполнением</strong></td><td><strong>F1, DR, FPR, Latency</strong></td><td><a href="https://arxiv.org/abs/2607.21642">arXiv:2607.21642</a>, 2026</td></tr>
+    <tr><td>SecCodePLT</td><td>Генерация безопасного кода (1 345 сэмплов, 27 CWE)</td><td>secure-gen score</td><td><a href="https://arxiv.org/abs/2410.11096">arXiv:2410.11096</a>, 2024</td></tr>
+    <tr><td>CyberSecEval 1/2/3 (Meta)</td><td>Небезопасный код, инъекции, offensive-задачи</td><td>vuln rate, FRR</td><td><a href="https://github.com/meta-llama/PurpleLlama">GitHub</a></td></tr>
+    <tr><td>OS-Harm</td><td>Безопасность computer-use агентов (150 задач)</td><td>Unsafe rate, Task completion</td><td><a href="https://github.com/tml-epfl/os-harm">GitHub</a>, июнь 2025</td></tr>
+    <tr><td>AgentHarm</td><td>Вредоносность агентов (110 / 440 задач)</td><td>Harm score, refusal</td><td><a href="https://arxiv.org/abs/2410.09024">arXiv:2410.09024</a>, окт 2024</td></tr>
+    <tr><td>SafeArena</td><td>Безопасность веб-агентов (500 задач)</td><td>completion of harmful</td><td><a href="https://safearena.github.io">safearena.github.io</a>, март 2025</td></tr>
+    <tr><td>ToolEmu</td><td>Риски в LLM-эмулированном сэндбоксе (144 кейса)</td><td>safety score</td><td>ICLR 2024</td></tr>
+    <tr><td>MCPTox</td><td>Tool poisoning на 45 живых MCP (1 312 тестов)</td><td>ASR (o1-mini 72,8 %)</td><td><a href="https://arxiv.org/abs/2508.14925">arXiv:2508.14925</a>, авг 2025</td></tr>
+    <tr><td>MCP-SafetyBench</td><td>20 типов MCP-атак, 5 доменов</td><td>ASR (host &gt; 80 %)</td><td><a href="https://arxiv.org/abs/2512.15163">arXiv:2512.15163</a>, дек 2025</td></tr>
+  </tbody>
+</table>
+</div>
+
+<!-- ================= СВОДКА В ================= -->
+<h2 id="tc">Детерминированные контроли против эвристических гардрейлов</h2>
+<div class="split">
+  <div class="det">
+    <h3>Архитектурно неуязвимы к prompt injection</h3>
+    <ul>
+      <li>OS-сэндбокс: <code>@anthropic-ai/sandbox-runtime</code> (bubblewrap / Seatbelt), Codex Seatbelt / Landlock / seccomp, gVisor, Firecracker / microVM, nsjail.</li>
+      <li>Egress-фильтрация (allowlist доменов на прокси) — блокирует эксфильтрацию даже при захвате агента.</li>
+      <li>Information-flow control и capability-паттерны: CaMeL, FIDES, Progent, type-directed privilege separation, паттерны Action-Selector и Dual LLM.</li>
+      <li>Supply chain: release-age cooldown, hash-pinning описаний MCP-инструментов, отключение lifecycle-скриптов.</li>
+    </ul>
+  </div>
+  <div class="heur">
+    <h3>Эвристики (best-effort, обходятся)</h3>
+    <ul>
+      <li>LLM-классификаторы: Claude auto mode, Cursor Auto-review, Codex Auto-review, OpenHands security analyzer, Kilo #9138.</li>
+      <li>Guard-модели: PromptGuard 2, Lakera Guard, Rebuff, LLM Guard, NeMo Guardrails.</li>
+      <li>Денайлисты команд и pattern-scan (Cursor — CVE-2026-22708 показал обход через builtins).</li>
+    </ul>
+  </div>
+</div>
+<p><strong>Вывод для кейса.</strong> Требование «хотя бы один контроль архитектурно неуязвим к prompt injection» выполняется только детерминированным контролем: sandbox плюс egress-фильтр. Классификатор auto mode решает задачу удобства и снижения approval fatigue; гарантий безопасности он не даёт.</p>
+
+<!-- ================= ПРОБЕЛЫ Г ================= -->
+<h2 id="td">Пробелы на рынке и план на хакатон</h2>
+<h3>Пробелы</h3>
+<ol>
+  <li><strong>Нет OSS-аналога auto mode с fail-closed.</strong> Legacy-gatekeeper Kilo одобрял при ошибке; ни у одного открытого агента нет двухступенчатого reasoning-blind классификатора. Главный слот для PR в Kilo Code.</li>
+  <li><strong>Нет slopsquatting-контроля внутри агента до установки, устойчивого к zero-day.</strong> Существующие инструменты (Socket, GuardDog) — сканеры постфактум; нужен pre-install-хук, комбинирующий DepScope MCP с эвристиками (возраст &lt; 7 дней, загрузки, наличие репозитория, схожесть имён) и fail-closed при 404.</li>
+  <li><strong>Нет стандартного бенчмарка dangerous-bash для кодинг-CLI</strong> с полным набором ASR / Utility / FP / Friction / Latency. RedCode-Exec (bash) и CARE дают основу, метрики Friction и Latency придётся добавить.</li>
+  <li><strong>Sandbox не интегрирован в open-source-агенты по умолчанию.</strong> Обёртка Kilo в <code>@anthropic-ai/sandbox-runtime</code> даёт контроль, до которого инъекции не доходят, «из коробки».</li>
+</ol>
+
+<h3>Что реально сделать за хакатон и подать в PR</h3>
+<ul>
+  <li><strong>Ядро:</strong> двухступенчатый reasoning-blind классификатор по #9138 (Stage 1 — single-token на быстрой модели, Stage 2 — chain-of-thought только на блоках), fail-closed, deny-and-continue со счётчиками 3/20, tiered short-circuit, сброс широких allow-правил. Ориентир по порогам: end-to-end FPR &lt; 1 % при FNR &lt; 20 % (уровень Claude Code).</li>
+  <li><strong>Контроль, неуязвимый к инъекциям:</strong> интеграция <code>@anthropic-ai/sandbox-runtime</code> плюс egress-allowlist — закрывает обязательное требование кейса.</li>
+  <li><strong>Slopsquatting-модуль:</strong> хук перед <code>npm / pip install</code> → DepScope MCP <code>check_package</code> + эвристики + release-age; fail-closed.</li>
+  <li><strong>Бенчмарк:</strong> ASR / Utility / FP / Friction / Latency на RedCode-Exec (bash) + CARE + собственные кейсы (slopsquatting, инъекции в SKILL.md / README / MCP-описания, многошаговые атаки).</li>
+  <li><strong>Продолжение после блокировки:</strong> deny-and-continue как tool-error с причиной — агент ищет безопасный путь, а не останавливается.</li>
+  <li><strong>Allow / deny / ask-листы</strong> для команд и директорий плюс инструментирование approval fatigue (лог того, как часто люди пропускают опасные команды) — дополнительные баллы.</li>
+</ul>
+
+<h3>Поэтапный план</h3>
+<ol class="stages">
+  <li><strong>Этап 1 — первые часы</strong>Зафиксировать архитектуру классификатора по #9138; поднять OS-sandbox (<code>@anthropic-ai/sandbox-runtime</code>) вокруг Kilo как отдельный, сразу демонстрируемый детерминированный контроль. Критерий перехода: sandbox блокирует запись вне workspace и egress вне allowlist.</li>
+  <li><strong>Этап 2 — середина</strong>Реализовать Stage 1 классификатора (single-token, fail-closed, deny-and-continue) и tiered short-circuit; подключить slopsquatting-хук (DepScope MCP + release-age). Критерий: классификатор ловит ≥ 80 % опасных bash-команд из RedCode-Exec при FPR &lt; 5 %.</li>
+  <li><strong>Этап 3 — финал</strong>Добавить Stage 2 (chain-of-thought), собрать бенчмарк с ASR / Utility / FP / Friction / Latency, залогировать метрику approval fatigue, оформить PR. Порог сдачи: end-to-end FPR &lt; 1 %, FNR &lt; 20 %, хотя бы один детерминированный контроль (sandbox / egress) в демо.</li>
+</ol>
+<p><strong>Что меняет план.</strong> Если классификатор даёт FPR &gt; 5 % (много ложных блокировок) — переключиться на консервативный soft_deny-список и опору на sandbox. Если DepScope API нестабилен — откат на локальные эвристики плюс поле <code>time.created</code> из npm registry.</p>
+
+<!-- ================= ОГОВОРКИ ================= -->
+<h2 id="caveats">Оговорки и ограничения</h2>
+<div class="caveats">
+<ul>
+  <li>Ряд цифр — вендорские и оспорены. Trajectory Labs 0,00 % ASR опровергнут независимо (Rehberger, 60–80 % ASR на Opus 5 Auto Mode). Доля пропусков классификатора 7 % измерена на синтетическом adversarial-наборе и не равна доле на реальном трафике.</li>
+  <li>Модели (Fable 5, Opus 5, Sonnet 5, GPT-5.6) и версии — по состоянию на сентябрь 2026; auto mode по умолчанию требует Claude Code v2.1.228+ (Windows v2.1.233+).</li>
+  <li>В статье о галлюцинациях пакетов есть две авторские формулировки (arXiv abstract 5,2 % / 21,7 % против ;login ~5 % / ~21 %; общая доля 19,7 %); в отчёте приведены цифры из abstract.</li>
+  <li>Цифра «93 % одобрений» из issue #9138 расходится с «97 %» из итогового анонса Anthropic — использована более поздняя.</li>
+  <li>DepScope Hallucinations Dataset — новый и малоизвестный проект (0 звёзд); проверьте актуальность API перед интеграцией.</li>
+  <li>Часть arXiv-идентификаторов 2026 года (CARE 2607.21642, SABER 2606.01317, MCP-SafetyBench 2512.15163) встречалась преимущественно как цитаты и препринты — проверьте первоисточники перед публикацией.</li>
+  <li>TRAP измеряет веб-агентов; прямой перенос 13 % / 43 % на кодинг-CLI некорректен без оговорки.</li>
+  <li>White Circle — внешний control layer общего назначения, а не auto mode внутри кодинг-агента; устройство его guard-моделей, состав контекста и метрики FP/FNR на задачах разработки публично не раскрыты, поэтому соответствующие ячейки таблицы заполнены по маркетинговым материалам и кейсу Lovable.</li>
+  <li>Для Codex Auto-review модель ревьюера в продакшене не зафиксирована в документации; GPT-5.6 упомянута по исследованию Trajectory Labs. Пороги circuit breaker (3 подряд / 10 из 50) взяты из текущей OSS-реализации и могут измениться.</li>
+  <li>Для ряда продуктов (Copilot, Gemini CLI, Windsurf, Devin, Junie, Augment, Warp) и классических работ по habituation в отчёте нет прямых ссылок — источники в ходе исследования не были зафиксированы, поэтому URL намеренно не приведены.</li>
+</ul>
+</div>
+
+<footer>
+  Составлено на основе открытых источников по состоянию на 2 сентября 2026. Отчёт носит обзорный характер; перед принятием инженерных решений проверяйте первоисточники по приведённым ссылкам.
+</footer>
+
+</main>
+</div>
+</body>
+</html>
