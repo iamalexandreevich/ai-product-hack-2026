@@ -2001,3 +2001,140 @@ escalating session (must stay deny, not ask); every fail-closed path (stage2 rai
 persist raises, jsonl raises, unknown profile/model) must yield ask and never allow and
 never let decide raise; cache discipline (allow cached, deny/ask never, user_request in the
 key); and that the [STAGE1] note is the fixed constant, never reason/suggest.
+
+### Task 10 review (OPUS, 925e1f3..a482247): APPROVED, merged
+
+No Critical, no Important. Everything verified by EXECUTION with a fake LLM (MockTransport)
+and constructed collisions, not by reading:
+  - hard-deny vs cache-hit: primed an allow cache, then a hard-deny in the same session ->
+    deny/hard-deny.pipe-exec, cached=False. Root cause sound: action_hash() covers every
+    normalized field except raw, and only allow is ever cached, so a hard-deny action can
+    never share a cache key with an allow.
+  - hard-deny under an escalating session (deny_consecutive==2, threshold 2): still
+    deny/hard, NOT ask — the `not hard` guard holds.
+  - cache discipline: allow cached (2nd request 0 new LLM calls), different user_request
+    misses, deny/ask never cached.
+  - fail-closed: stage2 500 -> ask/error=http; unknown profile/model -> ask; persist raising
+    -> decision unchanged, no exception out; jsonl write on uncreatable path -> swallowed;
+    pathological valid inputs never made decide raise. None yielded allow.
+  - unparseable end-to-end -> ask, 0 LLM calls, not cached.
+  - [STAGE1] note is the fixed constant; reason/suggest go only to DecideResponse.
+  - write-after-response: no commit/insert/execute inside decide; persist is the injected
+    callback called after resp/rec are built.
+Both deviations adjudicated CORRECT: unparseable-skips-llm (stale brief vs merged Task 7
+security fix), and the _do_persist try/except (satisfies constraint 3 the sample omitted).
+
+Task 10: complete (commits 925e1f3..a482247, review clean, 3 Minor parked).
+Task 10 merged as b02d5c9 (--no-ff).
+
+CARRY-FORWARD to Task 11 (from the review's Minor #3): `decide` has no top-level try/except
+and is fail-closed only because its steps are individually non-raising plus stage 2 is
+guarded. Task 11's HTTP handler MUST wrap decide() so ANY escaping exception becomes
+ask + HTTP 200 — that is the outermost fail-closed boundary and the global constraint says
+even an invalid request returns ask/200, never a 500.
+
+Parked to final review (Minor, faithful to brief): cached-allow skips state.record() so a
+cached allow does not reset deny_consecutive (escalation may fire marginally more eagerly);
+_finish_early stores the rule_id in DecisionRecord.error for unknown-profile/model.
+
+Branch: feat/agentgate-task-1 at b02d5c9. Merged T1-T10 + OpenAPI. Remaining: T11 -> T12 ->
+deploy -> T13.
+
+### Task 11 done (sonnet, worktree): commit 1280dbe on b02d5c9
+
+HTTP API. 405 passed / 22 skipped without DB, 427 with, under -W error. Files:
+api/{app,deps}.py, __main__.py, tests/test_{api,main}.py. Base wrong again, fast-forwarded.
+Fail-closed 200: decide takes a raw Request, parses JSON manually + DecideRequest.model_validate
+(both caught -> api.invalid-request), gate.decide wrapped in try/except -> api.internal-error,
+verified with a raising Gate stub. Auth seam: single make_require_token(settings) via Depends
+on all protected routes, secrets.compare_digest — one-function swap for the API-key design.
+Caught another brief bug: persist wrote rec.to_dict() to JSONL but that key is "id" not
+"decision_id", contradicting the brief's own test — fixed to dict(rec.to_dict(),
+decision_id=rec.id). Flagged _CACHE_TTL_SECONDS=86400 hardcoded to match Gate's default.
+
+Review dispatched on opus, driving the real ASGI app: every decide path 200 except 401
+(malformed body -> 200 api.invalid-request not 422; decide raising -> 200 api.internal-error
+not 500; no input yields 5xx); full auth matrix incl. compare_digest and /healthz having NO
+token; persist FK order + the jsonl decision_id fix; decisions pagination; profiles no
+secrets; __main__ wiring tested vs boot-only.
+
+### Task 11 review (OPUS, b02d5c9..1280dbe): APPROVED, merged
+
+All boundaries verified by driving the real ASGI app. Decide status matrix: 18 hostile
+inputs (malformed/empty/non-JSON/array/string/null/missing-harness/wrong-enum/40KB raw/
+null-bytes/2MB/wrong-content-type + Gate.decide raising RuntimeError and KeyError) ALL
+returned 200, none allow-on-error, no 422, no 500 — FastAPI's 422 body path provably bypassed
+via a raw Request. Auth matrix: no/wrong/length-mismatch/lowercase-bearer token -> 401;
+correct -> 200; /healthz needs NO token; token-unset+localhost passes all; compare_digest
+confirmed, guarded against None. Persist: session upsert before decision insert, scheduled
+after return, failures swallowed, JSONL carries decision_id (the brief-bug fix). __main__:
+build_app wiring unit-tested (state restore, db_probe, SystemExit on missing profile,
+ValueError on non-localhost-without-token), only uvicorn.run boot-only. 17 API/main tests
+against live Postgres. Auth seam is one make_require_token via Depends on the three protected
+routes — a one-function swap for the API-key design.
+
+Three Minor, all intended-by-spec or pre-disclosed: /v1/decisions rejects out-of-range limit
+with 422 (the always-200 contract is scoped to POST /v1/decide only, so acceptable);
+next_before non-null on an exactly-full final page (brief's specified contract);
+_CACHE_TTL_SECONDS hardcoded to mirror Gate default (latent coupling).
+
+Task 11: complete (commits b02d5c9..1280dbe, review clean, 3 Minor parked).
+Task 11 merged as d6307a8 (--no-ff). Integrated suite: 427 passed with the database.
+
+Branch: feat/agentgate-task-1 at d6307a8. Merged T1-T11 + OpenAPI. Remaining: T12 (Docker +
+hook_client + e2e) -> API-keys task -> deploy -> T13.
+
+### Task 12 done (sonnet, worktree): commit 852168c on d6307a8
+
+Docker + reference hook client + e2e. 444 passed with DB / 419 passed, 25 skipped without,
+under -W error; hook-client unit tests 14/14 with genuine RED. docker build succeeded
+unmodified first try; image actually RUN against live Postgres (throwaway DB, port 8401)
+with a real /v1/decide round trip, then cleaned up. e2e ACTUALLY RAN — 3 passed: allow
+exit=0, hard-deny exit=2 (stage1), LLM-deny exit=2 (stage2, log-verified); fail-closed
+exit=3 verified separately via unreachable-URL subprocess. Files: Dockerfile,
+contracts/hook_client.py, tests/e2e/{__init__,fake_llm,test_e2e}.py, tests/test_hook_client.py,
+docker-compose.yml (gate service added in place). Base wrong again, fast-forwarded.
+
+Note carried to the deploy/integration discussion: our reference hook_client fails CLOSED
+(ask/exit 3) on service unavailability, which is OPPOSITE the adapter contract's documented
+client default of fail-open (allow/pass). The gap analysis already flagged this posture
+conflict; our client is correct for our philosophy, and the reconciliation is a decision at
+integration time, not a T12 defect.
+
+Review dispatched on opus, told to verify by execution: hook_client stdlib-only (no
+httpx/requests/agentgate imports) and fail-closed on unreachable/garbage/timeout (never
+exit 0); exit-code mapping 0/2/3; both hook formats; Dockerfile builds or a static COPY
+check against what __main__ loads; e2e uses a REAL subprocess (not an in-process shortcut
+hiding a __main__ bug) with the stage-2 deny coming from the fake LLM returning D, not from
+a fail-closed ask; and no secret committed.
+
+### Task 12 review (OPUS, d6307a8..852168c): Spec ✅ mostly, Task quality NEEDS FIXES (1 Important)
+
+Everything verified by execution and holds: hook_client is stdlib-only (import grep clean),
+fails closed on unreachable/nonexistent-host/garbage-200/HTTP-500/10s-timeout — every one
+ask/exit 3, never exit 0, no traceback. Exit mapping allow=0/deny=2/ask=3. Both hook formats
+map correctly (content dropped intentionally — DecideRequest has no content field). Dockerfile
+built to the EXACT reported image sha 14c670ad under a distinct tag, COPYs cover everything
+__main__ loads + alembic; agentgate-pg untouched. e2e: 3 passed via a REAL
+subprocess.Popen([sys.executable,"-m","agentgate"]) against Postgres 5433, skips cleanly (3
+skipped) without the DB var, no orphaned processes; the stage-2 deny is GENUINE not
+fail-closed — the test asserts code==2 AND stage==2 AND suggest=="npm install lodash", a
+combination only reachable when the fake LLM returns D. fake_llm returns a schema-valid
+ClassifierOutput (decision D, risk supply_chain, extra=forbid clean). compose gate added
+alongside the untouched db service, depends_on service_healthy, no committed secret.
+
+IMPORTANT (fail-open in the field): hook_client.py:72-73 — json.load(sys.stdin) and
+to_request(...) run BEFORE the try block at :79, so empty stdin, non-JSON stdin, or valid
+JSON missing both tool_name and sessionID (to_request raises ValueError) escape uncaught ->
+traceback -> exit 1. Under Claude Code PreToolUse exit-code semantics, any code other than 0
+(allow) or 2 (block) is treated as NON-BLOCKING -> the tool proceeds. So an unrecognized hook
+payload effectively fails OPEN — the exact failure this client exists to prevent, on a
+realistic trigger (any hook shape the two-format mapper does not cover). The brief explicitly
+requires "Malformed/empty stdin → ask/3, not a crash". Fix: widen the fail-closed handler to
+cover parse + mapping so JSONDecodeError/ValueError yield ask/exit 3.
+
+Minor (not required): compose uses ${AGENTGATE_TOKEN:-dev-token} host-env interpolation rather
+than env_file — matches the brief's verbatim compose, acceptable; dev-token is a placeholder,
+no committed secret.
+
+Task 12: fix round 1 dispatched — resumed a06781264522e3930, FIX_BASE 852168c.
