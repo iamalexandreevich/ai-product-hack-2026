@@ -79,9 +79,15 @@ class ApiKeyRow(Base):
 
     Only ``key_hash`` (SHA-256 of the plaintext key) is ever stored -- the
     plaintext exists only transiently in ``ApiKeyRepo.create``'s return value
-    and is never written here. ``id`` is a ULID and doubles as the public
-    ``key_id`` used in the CLI, in ``DecisionRow``/log attribution, and for
-    revocation -- it never encodes or derives from the key itself.
+    and is never written here. ``id`` is a ULID and is the public ``key_id``
+    used by the CLI (``keys list`` / ``keys revoke``, see ``agentgate/cli.py``)
+    and for revocation -- it never encodes or derives from the key itself.
+
+    NOTE: the spec also calls for ``key_id`` flowing into ``DecisionRow`` and
+    the JSONL log so a decision can be attributed to the key that made it.
+    That wiring does not exist yet -- only ``last_used_at`` on this row is
+    updated (best-effort, after the response, see ``agentgate/api/deps.py``).
+    Per-decision key attribution remains a roadmap item.
     """
 
     __tablename__ = "api_keys"
