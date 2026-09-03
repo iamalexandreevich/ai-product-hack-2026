@@ -2238,3 +2238,40 @@ property mutation-checked because TDD order wasn't guaranteed.
 
 After this: merge (if clean) -> T13 (docs + root CLAUDE.md + service/Makefile deploy target via
 ~/.ssh/config alias, DEPLOY_HOST var) -> final whole-branch review -> user runs make deploy.
+
+### API-keys review (OPUS, b644462..76c3549): APPROVED, merged
+
+Every security property held under EXECUTION and under MUTATION (the review broke each in
+memory and confirmed a test died): DB/verify error -> 401 not a pass; revoked & expired keys
+rejected; revocation effective AFTER the cache TTL (before: cache-served; after: re-queries,
+repo.calls 1->2); cache keyed by hash, cannot cross-authenticate; 401 body byte-identical for
+absent/wrong/expired/revoked; keys minted only by the CLI (no route creates one); plaintext
+stored only as sha256 (verified against the live table, no plaintext column) and never logged;
+ix_api_keys_key_hash UNIQUE on both create_all and the alembic path; static token checked
+first via compare_digest, DB off-path for static/dev traffic; validate_token_for_bind
+byte-for-byte unchanged (additive override honored). The disclosed non-strict-TDD on keys.py
+did NOT produce a non-discriminating test for any mutable property; the only surviving mutation
+(compare_digest -> ==) is a timing property no behavioral test can catch, asserted structurally.
+489 passed with DB. No Critical, no auth defect.
+
+ONE Important, NOT a security defect: key_id attribution is unimplemented. Spec wants key_id in
+DecisionRow and JSONL so decisions attribute to a client; require_token returns None and is
+wired only as dependencies=[auth], so the resolved key_id never reaches the route/DecisionRow/
+JSONL, and DecisionRow has no key_id column. store/models.py:83 docstring FALSELY claims it is
+wired. AuthN is correct; this is auditability only.
+
+Ruling R43: defer key_id attribution to a post-deploy follow-up task, NOT before deploy.
+— Why: the auth boundary is Approved and this is auditability not security; full wiring needs
+its own migration 0003 on DecisionRow plus pipeline/deps changes and its own review; and the
+user defined the remaining sequence explicitly as T13 -> final review -> deploy with no extra
+key work. — Cost if wrong: until the follow-up lands, decisions carry only last_used_at
+per-key, not per-decision client attribution. The false models.py docstring is corrected in
+T13 (merging code that claims a non-existent wiring is not acceptable); the full wiring is a
+recorded roadmap item.
+
+API-keys: complete (commits b644462..76c3549, review clean, key_id attribution deferred).
+Merged as d79b5fa. Suite: 489 passed with DB.
+
+Branch feat/agentgate-task-1 at d79b5fa. Done: T1-T12 + OpenAPI + API-keys. Remaining: T13
+(docs + root CLAUDE.md + service/Makefile deploy target via ssh alias + correct the models.py
+key_id docstring) -> final whole-branch review -> user runs make deploy.
