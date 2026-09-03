@@ -66,7 +66,7 @@ deploy: check-clean
 		PREV_IMAGE=$$(docker compose images -q gate 2>/dev/null || true); \
 		if [ -n "$$PREV_IMAGE" ]; then echo "$$PREV_IMAGE" > .previous_gate_image; fi; \
 		docker compose up -d --build && \
-		docker compose exec -T gate alembic upgrade head'
+		docker compose exec -T gate uv run alembic upgrade head'
 	@echo "==> health check"
 	@if ssh $(DEPLOY_HOST) 'curl -fsS http://localhost:$(HEALTHZ_PORT)/healthz >/dev/null'; then \
 		echo "==> deploy OK"; \
