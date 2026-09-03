@@ -21,7 +21,7 @@ services:
         condition: service_healthy
     environment:
       AGENTGATE_DB_URL: postgresql+asyncpg://agentgate:agentgate@db:5432/agentgate
-      AGENTGATE_TOKEN: ${AGENTGATE_TOKEN:-dev-token}
+      AGENTGATE_TOKEN: ${AGENTGATE_TOKEN:?set AGENTGATE_TOKEN before docker compose up}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
     ports: ["8400:8400"]
     volumes: ["gatedata:/data"]

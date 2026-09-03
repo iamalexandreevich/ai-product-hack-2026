@@ -173,3 +173,42 @@ def test_allowlist_prefix_bare_name_protected_path_outside_path_commands():
 def test_allowlist_bare_name_non_protected_path_still_allowed(raw, rule):
     d = run_stage1(req(raw=raw), DEFAULT)
     assert d is not None and d.decision is DecisionKind.allow and d.rule_id == rule, raw
+
+
+# --- must-fix: the shipped ".env*" glob over-protected templates/examples/tmp
+# files (no secrets), making ordinary work UNESCALATABLY hard-denied. The
+# shipped profile now protects only ".env", ".env.local" and ".env.*.local".
+
+
+@pytest.mark.parametrize("raw", [
+    "cp x .env",
+    "echo x > .env",
+])
+def test_dotenv_still_hard_denied_by_shipped_profile(raw):
+    d = run_stage1(req(raw=raw), DEFAULT)
+    assert d is not None, raw
+    assert d.decision is DecisionKind.deny, raw
+    assert d.rule_id == "hard-deny.protected-write", raw
+    assert d.hard is True, raw
+
+
+@pytest.mark.parametrize("raw", [
+    "cp x .env.example",
+    "cp .env.example .env.sample",
+    "cat .env | grep -v SECRET > .env.tmp",
+])
+def test_dotenv_templates_examples_and_tmp_not_hard_denied_by_shipped_profile(raw):
+    d = run_stage1(req(raw=raw), DEFAULT)
+    assert d is None or d.rule_id != "hard-deny.protected-write", raw
+    assert d is None or d.decision is not DecisionKind.deny or d.hard is False, raw
+
+
+def test_dotenv_local_variants_still_hard_denied_by_shipped_profile():
+    assert run_stage1(req("file_write", paths=["/home/u/repo/.env.local"]), DEFAULT).rule_id == "hard-deny.protected-write"
+    assert run_stage1(req("file_write", paths=["/home/u/repo/.env.production.local"]), DEFAULT).rule_id == "hard-deny.protected-write"
+
+
+def test_dotenv_template_variants_not_hard_denied_by_shipped_profile():
+    for p in ("/home/u/repo/.env.example", "/home/u/repo/.env.sample", "/home/u/repo/.env.tmp", "/home/u/repo/.env.template", "/home/u/repo/.env.dist"):
+        d = run_stage1(req("file_write", paths=[p]), DEFAULT)
+        assert d is None or d.rule_id != "hard-deny.protected-write", p

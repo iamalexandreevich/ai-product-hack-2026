@@ -72,6 +72,8 @@ models:
 
 Переключить модель на конкретный запрос — поле `model` в теле `POST /v1/decide` (`DecideRequest.model`), значение должно совпадать с ключом в `models.configs`; иначе — `ask` с `rule_id: api.unknown-model`. Без поля используется `models.default`.
 
+Ступень 2 в шаблонном профиле (`profiles/default-dev.yaml`) по умолчанию использует Gemini через OpenRouter (`models.default: gemini`). Строковые значения в YAML-профиле поддерживают подстановку `${VAR}` / `${VAR:-default}` из окружения процесса (загрузчик, `agentgate/profiles/loader.py`) — так, слаг модели задан как `${OPENROUTER_MODEL_NAME:-google/gemini-3.8-flash}`: без переменной `OPENROUTER_MODEL_NAME` берётся `google/gemini-3.8-flash`, а с ней — оператор переопределяет слаг без правки YAML. Ключ провайдера — по-прежнему `OPENROUTER_API_KEY` (см. таблицу переменных выше).
+
 ## База для тестов хранилища
 
 `docker-compose.yml` поднимает Postgres 16 на `5433` и создаёт основную базу `agentgate` через `POSTGRES_DB`. Вторая база, `agentgate_test`, на которую указывает `AGENTGATE_TEST_DB_URL` (`postgresql+asyncpg://agentgate:agentgate@localhost:5433/agentgate_test`) для `tests/test_store.py`, создаётся автоматически скриптом `scripts/init-test-db.sql`, примонтированным в `/docker-entrypoint-initdb.d/` — Postgres выполняет такие скрипты один раз, при первой инициализации пустого каталога данных.

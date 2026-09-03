@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from agentgate.profiles.loader import detect_workspace, load_profiles, with_workspace
+from agentgate.profiles.loader import detect_workspace, interpolate_env, load_profiles, with_workspace
 from agentgate.profiles.schema import DenyWindow, NetworkMode, Profile
 
 MINIMAL = {
@@ -126,3 +126,96 @@ def test_shipped_default_profile_loads():
     profiles = load_profiles(shipped)
     assert "default" in profiles
     assert profiles["default"].models.default in profiles["default"].models.configs
+
+
+# --- env-var interpolation in profile YAML loading ---
+
+
+def test_interpolate_env_default_used_when_unset(monkeypatch):
+    monkeypatch.delenv("OPENROUTER_MODEL_NAME", raising=False)
+    assert interpolate_env("${OPENROUTER_MODEL_NAME:-google/gemini-3.8-flash}") == "google/gemini-3.8-flash"
+
+
+def test_interpolate_env_value_used_when_set(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_MODEL_NAME", "google/gemini-2.0-flash")
+    assert interpolate_env("${OPENROUTER_MODEL_NAME:-google/gemini-3.8-flash}") == "google/gemini-2.0-flash"
+
+
+def test_interpolate_env_bare_var_empty_when_unset(monkeypatch):
+    monkeypatch.delenv("SOME_UNSET_VAR_XYZ", raising=False)
+    assert interpolate_env("${SOME_UNSET_VAR_XYZ}") == ""
+
+
+def test_interpolate_env_bare_var_used_when_set(monkeypatch):
+    monkeypatch.setenv("SOME_SET_VAR_XYZ", "hello")
+    assert interpolate_env("${SOME_SET_VAR_XYZ}") == "hello"
+
+
+def test_interpolate_env_literal_string_unchanged():
+    assert interpolate_env("anthropic/claude-sonnet-4-6") == "anthropic/claude-sonnet-4-6"
+    assert interpolate_env("no dollar signs here at all") == "no dollar signs here at all"
+
+
+def test_interpolate_env_workspace_placeholder_left_untouched(monkeypatch):
+    # ${WORKSPACE} is resolved later by Profile._expand from the runtime
+    # workspace, not from os.environ — env interpolation must not consume it,
+    # even if a real WORKSPACE env var happens to be set.
+    monkeypatch.setenv("WORKSPACE", "/should/not/be/used")
+    assert interpolate_env("${WORKSPACE}") == "${WORKSPACE}"
+    assert interpolate_env("${WORKSPACE}/src") == "${WORKSPACE}/src"
+
+
+def test_interpolate_env_recurses_through_dicts_and_lists(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_MODEL_NAME", "google/gemini-2.0-flash")
+    data = {
+        "id": "t",
+        "allowed_paths": ["${WORKSPACE}"],
+        "models": {"default": "m", "configs": {"m": {"model": "${OPENROUTER_MODEL_NAME:-fallback}"}}},
+        "list_of_ints": [1, 2, 3],
+    }
+    out = interpolate_env(data)
+    assert out["allowed_paths"] == ["${WORKSPACE}"]
+    assert out["models"]["configs"]["m"]["model"] == "google/gemini-2.0-flash"
+    assert out["list_of_ints"] == [1, 2, 3]
+
+
+def test_load_profiles_applies_env_interpolation(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENROUTER_MODEL_NAME", "google/gemini-2.0-flash")
+    data = dict(
+        MINIMAL,
+        models={"default": "m", "configs": {"m": {"base_url": "http://x/v1", "model": "${OPENROUTER_MODEL_NAME:-fallback}"}}},
+    )
+    (tmp_path / "a.yaml").write_text(yaml.safe_dump(data))
+    profiles = load_profiles(tmp_path)
+    assert profiles["t"].models.configs["m"].model == "google/gemini-2.0-flash"
+
+
+def test_load_profiles_applies_env_interpolation_default(tmp_path, monkeypatch):
+    monkeypatch.delenv("OPENROUTER_MODEL_NAME", raising=False)
+    data = dict(
+        MINIMAL,
+        models={"default": "m", "configs": {"m": {"base_url": "http://x/v1", "model": "${OPENROUTER_MODEL_NAME:-fallback}"}}},
+    )
+    (tmp_path / "a.yaml").write_text(yaml.safe_dump(data))
+    profiles = load_profiles(tmp_path)
+    assert profiles["t"].models.configs["m"].model == "fallback"
+
+
+def test_shipped_default_profile_default_model_is_gemini(monkeypatch):
+    monkeypatch.delenv("OPENROUTER_MODEL_NAME", raising=False)
+    shipped = Path(__file__).resolve().parents[1] / "profiles"
+    profiles = load_profiles(shipped)
+    assert profiles["default"].models.default == "gemini"
+    key, cfg = profiles["default"].models.model_config_for(None)
+    assert key == "gemini"
+    assert cfg.model == "google/gemini-3.8-flash"
+    assert cfg.base_url == "https://openrouter.ai/api/v1"
+    assert cfg.api_key_env == "OPENROUTER_API_KEY"
+
+
+def test_shipped_default_profile_model_override_via_env(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_MODEL_NAME", "google/gemini-2.0-flash")
+    shipped = Path(__file__).resolve().parents[1] / "profiles"
+    profiles = load_profiles(shipped)
+    _, cfg = profiles["default"].models.model_config_for(None)
+    assert cfg.model == "google/gemini-2.0-flash"

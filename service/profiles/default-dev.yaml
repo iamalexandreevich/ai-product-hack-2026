@@ -1,7 +1,9 @@
 id: default
 allowed_paths: ["${WORKSPACE}", "/tmp/agentgate-scratch"]
 protected_paths:
-  - ".env*"
+  - ".env"
+  - ".env.local"
+  - ".env.*.local"
   - ".git/hooks/**"
   - ".opencode/**"
   - ".kilo/**"
@@ -23,8 +25,14 @@ safe_prefixes:
   - ["pytest"]
   - ["cargo", "test"]
 models:
-  default: sonnet
+  default: gemini
   configs:
+    gemini:
+      base_url: "https://openrouter.ai/api/v1"
+      model: "${OPENROUTER_MODEL_NAME:-google/gemini-3.8-flash}"
+      api_key_env: OPENROUTER_API_KEY
+      timeout_ms: 3000
+      structured_output: true
     sonnet:
       base_url: "https://openrouter.ai/api/v1"
       model: "anthropic/claude-sonnet-4-6"
