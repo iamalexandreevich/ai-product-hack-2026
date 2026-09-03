@@ -2,7 +2,6 @@ import os
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import text
 
 
 @pytest.fixture(autouse=True)

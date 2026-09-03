@@ -66,15 +66,40 @@ class DecisionRecord:
 
 
 class DecisionRepo:
+    """Repository for decision rows.
+
+    Ordering requirement: `rec.session_id`, when not ``None``, is a foreign
+    key to ``sessions.id``. The referenced session must already exist —
+    callers doing the post-response write (Task 10) must call
+    ``SessionRepo.upsert`` for the session before ``DecisionRepo.insert`` for
+    its decisions, or `insert` raises ``sqlalchemy.exc.IntegrityError``.
+    """
+
     def __init__(self, session_factory: async_sessionmaker) -> None:
         self._sf = session_factory
 
     async def insert(self, rec: DecisionRecord) -> None:
+        """Insert one decision.
+
+        Raises ``sqlalchemy.exc.IntegrityError`` if ``rec.session_id`` is not
+        ``None`` and does not reference an existing session (see class
+        docstring for the required call ordering), or if ``rec.id`` collides
+        with an existing decision.
+        """
         async with self._sf() as s:
             s.add(rec.to_row())
             await s.commit()
 
     async def list(self, session_id: str | None, model: str | None, limit: int, before: str | None) -> list[DecisionRecord]:
+        """List decisions ordered by ``id`` descending (newest first).
+
+        ``before`` pages backwards: only rows with ``id < before`` are
+        returned. ``limit`` is clamped to ``[1, 1000]`` regardless of the
+        input value, so a caller does not need to validate it and a
+        pathological value (zero, negative, or unbounded) cannot turn this
+        into a database error or an unbounded read.
+        """
+        limit = max(1, min(limit, 1000))
         stmt = select(DecisionRow).order_by(DecisionRow.id.desc()).limit(limit)
         if session_id is not None:
             stmt = stmt.where(DecisionRow.session_id == session_id)
@@ -117,6 +142,20 @@ class SessionRepo:
         return out
 
     async def cache_put(self, session_id: str, action_hash: str, decision_id: str, expires_at: datetime) -> None:
+        """Upsert one allow-cache entry.
+
+        ``decision_id`` is a foreign key to ``decisions.id`` and ``session_id``
+        to ``sessions.id`` — both rows must already exist (see
+        ``DecisionRepo``'s docstring for the required ordering), or this
+        raises ``sqlalchemy.exc.IntegrityError``.
+
+        ``expires_at`` must be timezone-aware. A naive value is not treated
+        as UTC — the driver reinterprets it through the connection's session
+        timezone — which would silently shift when the cache entry expires
+        relative to the tz-aware ``now`` used by ``cache_load_valid``.
+        """
+        if expires_at.tzinfo is None:
+            raise ValueError("expires_at must be timezone-aware (got a naive datetime)")
         stmt = pg_insert(AllowCacheRow).values(session_id=session_id, action_hash=action_hash, decision_id=decision_id, expires_at=expires_at)
         stmt = stmt.on_conflict_do_update(index_elements=[AllowCacheRow.session_id, AllowCacheRow.action_hash],
                                           set_={"decision_id": decision_id, "expires_at": expires_at})
