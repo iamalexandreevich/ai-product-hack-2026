@@ -173,3 +173,101 @@ Without DB:
 Only intended files under `service/` and `contracts/`, matching the allowed scope in
 `service/CLAUDE.md`. No `docs/`, `adapters/`, `benchmark/`, or root files touched;
 `service/.env` was not read, printed, moved, or committed.
+
+## Fix round 1
+
+Fix base: `852168c`. One Important finding from review, confirmed and fixed.
+
+### Important — malformed/unrecognized stdin crashed (exit 1) instead of failing closed to ask/3
+
+`hook = json.load(sys.stdin)` and `body = to_request(...)` in `contracts/hook_client.py`'s `main()`
+ran before the `try/except` that wraps the network call, so three realistic inputs escaped with an
+uncaught traceback and Python's default exit code 1: empty stdin, non-JSON stdin, and valid JSON in
+neither recognized hook shape (`to_request`'s own `ValueError`, which fires for any hook event or
+tool shape the two-format mapper does not cover — not a corner case).
+
+Why it mattered: under Claude Code's PreToolUse exit-code semantics, only exit 0 (allow) and exit 2
+(block) are meaningful; every other code, 1 included, is a *non-blocking error* and the tool
+proceeds anyway. A crash on bad stdin therefore read as fail-*open* — the one behavior this client
+exists to prevent — even though the intent was clearly fail-closed.
+
+**Fix**: widened the fail-closed boundary in `main()` to wrap the stdin-read-and-map step
+(`json.load` + `to_request`) in its own `try/except Exception`, producing
+`{"decision": "ask", "reason": f"invalid hook input: {exc}"}` and returning `EXIT["ask"]` (3) before
+ever reaching the network call. Kept the reason string ("invalid hook input: …") distinct from the
+service-unavailable path ("agentgate unavailable: …") so the two failure modes are distinguishable
+in the field. The network-call try/except is unchanged. No line in `main()` can now raise past a
+`try` — the whole read → parse → map → call → map-exit-code flow is inside one fail-closed
+boundary or another.
+
+### TDD evidence (fix round)
+
+Added three tests to `service/tests/test_hook_client.py` — `test_empty_stdin_fails_closed`,
+`test_non_json_stdin_fails_closed`, `test_unrecognized_hook_shape_fails_closed` — each running the
+real CLI as a subprocess (same style as the existing fail-closed tests) with `--url
+http://127.0.0.1:1` so the service is unreachable regardless, isolating the assertion to the
+parse/map failure. Watched them fail against the pre-fix code first:
+
+```
+FAILED tests/test_hook_client.py::test_empty_stdin_fails_closed - AssertionError: ... returncode=1
+FAILED tests/test_hook_client.py::test_non_json_stdin_fails_closed - AssertionError: ... returncode=1
+FAILED tests/test_hook_client.py::test_unrecognized_hook_shape_fails_closed - AssertionError: ... returncode=1
+3 failed, 14 deselected in 0.21s
+```
+Each failure's captured `stderr` showed the real traceback (`JSONDecodeError` for the first two,
+`ValueError: unrecognized hook payload` for the third) — genuine RED, not a mocked scenario.
+
+After the fix, same three tests plus the original 14 — all green, no test changes needed post-fix:
+```
+17 passed in 0.34s
+```
+
+Manually reproduced the brief's own CLI pattern for all three inputs:
+```
+$ echo -n "" | python3 contracts/hook_client.py --url http://127.0.0.1:1; echo exit=$?
+{"decision": "ask", "reason": "invalid hook input: Expecting value: line 1 column 1 (char 0)", "suggest": ""}
+exit=3
+$ echo "not json at all" | python3 contracts/hook_client.py --url http://127.0.0.1:1; echo exit=$?
+{"decision": "ask", "reason": "invalid hook input: Expecting value: line 1 column 1 (char 0)", "suggest": ""}
+exit=3
+$ echo '{"foo":"bar"}' | python3 contracts/hook_client.py --url http://127.0.0.1:1; echo exit=$?
+{"decision": "ask", "reason": "invalid hook input: unrecognized hook payload", "suggest": ""}
+exit=3
+```
+
+### e2e re-verification
+
+Re-ran `tests/e2e` with `AGENTGATE_TEST_DB_URL` set, as requested, rather than assuming the change
+(upstream of the network call) left it untouched:
+```
+tests/e2e/test_e2e.py::test_allow_via_allowlist PASSED
+tests/e2e/test_e2e.py::test_hard_deny PASSED
+tests/e2e/test_e2e.py::test_llm_deny_and_log PASSED
+3 passed in 2.43s
+```
+Confirmed unaffected, as expected.
+
+### Full suite (fix round)
+
+With DB, `-W error`: `447 passed in 6.74s` (444 + 3 new tests).
+Without DB, `-W error`: `422 passed, 25 skipped` (419 + 3 new tests; skip count unchanged).
+
+### Files changed (fix round)
+
+- `contracts/hook_client.py` — widened fail-closed boundary around stdin parse/map
+- `service/tests/test_hook_client.py` — 3 new tests
+
+### Scope check
+
+`git status --short` before commit:
+```
+ M contracts/hook_client.py
+ M service/tests/test_hook_client.py
+```
+Only the two files the fix touches; nothing outside `service/` and `contracts/`.
+
+### Concerns
+
+None. The minor compose note from the review (host-env interpolation vs. `env_file`) was left as-is
+per the reviewer's own guidance — it matches the brief verbatim and wasn't otherwise in scope for
+this fix.

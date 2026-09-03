@@ -2138,3 +2138,31 @@ than env_file — matches the brief's verbatim compose, acceptable; dev-token is
 no committed secret.
 
 Task 12: fix round 1 dispatched — resumed a06781264522e3930, FIX_BASE 852168c.
+
+### Task 12 fix re-review (sonnet, 852168c..88a290f): ADDRESSED, merged
+
+Verified by execution: empty/non-JSON/{"foo":"bar"}/array/bare-string/null stdin all ->
+exit exactly 3 with {"decision":"ask"} and empty stderr; the fix also caught the null case
+(TypeError from `"tool_name" in None`) beyond the anticipated ValueError/JSONDecodeError.
+Pre-fix (852168c) reproduced exit 1 + traceback for the same input. The 3 new tests assert
+returncode==3 (not !=0), so they discriminate the 1-vs-3 distinction. Regression clean:
+stdlib-only preserved, normal allow/deny/ask still 0/2/3 via a local stub server,
+service-unreachable still ask/3 with a distinct reason, e2e/service files untouched.
+
+Task 12: fix round 1 (fail-open on malformed stdin -> fail-closed ask/3). Task 12: complete
+(commits d6307a8..88a290f, review clean).
+Task 12 merged as b644462 (--no-ff). Integrated suite: 447 passed with the database.
+
+### PLAN COMPLETE THROUGH T12. Branch feat/agentgate-task-1 at b644462.
+Merged: T1-T12 + OpenAPI. All 13 plan tasks except T13 (docs) are done. Remaining work is the
+two human-added tasks plus docs: API-keys -> deploy -> T13.
+
+### API-keys task dispatched (my spec docs/.../specs/api-keys.md, not a plan task)
+
+Controller decision recorded before dispatch: implement keys ADDITIVELY. make_require_token
+accepts a bearer matching EITHER the static AGENTGATE_TOKEN (existing compare_digest path,
+unchanged) OR a valid non-revoked non-expired issued key (SHA-256 hash lookup, in-process
+TTL cache). This keeps every merged T11 auth test green and validate_token_for_bind
+unchanged. The spec's stricter "non-localhost ignores AGENTGATE_TOKEN entirely" posture is
+noted as optional hardening, NOT forced now, to avoid destabilizing merged behavior. Base
+b644462.
