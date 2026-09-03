@@ -5,3 +5,9 @@ FastAPI-сервис: `POST /v1/decide`, `GET /v1/decisions`, `GET /v1/profiles/
 Спека: `docs/superpowers/specs/2026-09-03-agentgate-v1-design.md`. План реализации: `docs/superpowers/plans/2026-09-03-agentgate-v1.md`.
 
 Запуск (после реализации): `docker compose up` из этой папки; переменные окружения `AGENTGATE_DB_URL`, `AGENTGATE_TOKEN`, `AGENTGATE_BIND`, `AGENTGATE_PROFILES_DIR`, `AGENTGATE_LOG_PATH` и ключи провайдеров по именам из профилей.
+
+## База для тестов хранилища
+
+`docker-compose.yml` поднимает Postgres 16 на `5433` и создаёт основную базу `agentgate` через `POSTGRES_DB`. Вторая база, `agentgate_test`, на которую указывает `AGENTGATE_TEST_DB_URL` (`postgresql+asyncpg://agentgate:agentgate@localhost:5433/agentgate_test`) для `tests/test_store.py`, создаётся автоматически скриптом `scripts/init-test-db.sql`, примонтированным в `/docker-entrypoint-initdb.d/` — Postgres выполняет такие скрипты один раз, при первой инициализации пустого каталога данных.
+
+Из этого следует: если volume `pgdata` уже существовал до добавления скрипта (переиспользуется поднятый ранее контейнер), инициализация не перезапустится сама. В этом случае — либо `docker compose down -v && docker compose up -d db` (пересоздать том с нуля), либо создать базу вручную: `docker compose exec db psql -U agentgate -c "CREATE DATABASE agentgate_test;"`.

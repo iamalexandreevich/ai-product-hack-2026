@@ -1,0 +1,18 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: agentgate
+      POSTGRES_PASSWORD: agentgate
+      POSTGRES_DB: agentgate
+    ports: ["5433:5432"]
+    volumes:
+      - "pgdata:/var/lib/postgresql/data"
+      - "./scripts/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql:ro"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agentgate"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+volumes:
+  pgdata: {}
