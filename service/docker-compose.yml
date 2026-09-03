@@ -14,5 +14,17 @@ services:
       interval: 2s
       timeout: 2s
       retries: 20
+  gate:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      AGENTGATE_DB_URL: postgresql+asyncpg://agentgate:agentgate@db:5432/agentgate
+      AGENTGATE_TOKEN: ${AGENTGATE_TOKEN:-dev-token}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+    ports: ["8400:8400"]
+    volumes: ["gatedata:/data"]
 volumes:
   pgdata: {}
+  gatedata: {}
