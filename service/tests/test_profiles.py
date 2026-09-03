@@ -5,7 +5,7 @@ import pytest
 import yaml
 
 from agentgate.profiles.loader import detect_workspace, load_profiles, with_workspace
-from agentgate.profiles.schema import NetworkMode, Profile
+from agentgate.profiles.schema import DenyWindow, NetworkMode, Profile
 
 MINIMAL = {
     "id": "t",
@@ -31,6 +31,33 @@ def test_default_model_must_exist():
     bad = dict(MINIMAL, models={"default": "zzz", "configs": MINIMAL["models"]["configs"]})
     with pytest.raises(ValueError):
         Profile.model_validate(bad)
+
+
+def test_deny_window_of_last_zero_rejected():
+    # of_last=0 makes list[-0:] the WHOLE list in Python, silently defeating
+    # an operator's attempt to disable the window check.
+    with pytest.raises(ValueError):
+        DenyWindow(of_last=0)
+
+
+def test_deny_window_count_zero_rejected():
+    # count=0 makes window.count("deny") >= 0 trivially true: escalates on everything.
+    with pytest.raises(ValueError):
+        DenyWindow(count=0)
+
+
+def test_deny_window_count_greater_than_of_last_rejected():
+    # count > of_last: the window can never hold `count` denials, so escalation
+    # never fires. Fails open, silently, which is worse than the of_last=0 bug.
+    with pytest.raises(ValueError):
+        DenyWindow(count=5, of_last=3)
+
+
+def test_load_profiles_rejects_degenerate_deny_window(tmp_path):
+    bad = dict(MINIMAL, escalation={"deny_window": {"count": 10, "of_last": 0}})
+    (tmp_path / "bad.yaml").write_text(yaml.safe_dump(bad))
+    with pytest.raises(ValueError, match="bad.yaml"):
+        load_profiles(tmp_path)
 
 
 def test_hash_ignores_workspace_and_is_stable():

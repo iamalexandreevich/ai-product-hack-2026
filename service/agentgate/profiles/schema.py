@@ -42,8 +42,17 @@ class ModelsConfig(BaseModel):
 
 
 class DenyWindow(BaseModel):
-    count: int = 10
-    of_last: int = 50
+    count: int = Field(default=10, ge=1)
+    of_last: int = Field(default=50, ge=1)
+
+    @model_validator(mode="after")
+    def _count_within_window(self) -> "DenyWindow":
+        if self.count > self.of_last:
+            raise ValueError(
+                f"deny_window.count ({self.count}) cannot exceed deny_window.of_last "
+                f"({self.of_last}); escalation could never fire"
+            )
+        return self
 
 
 class Escalation(BaseModel):

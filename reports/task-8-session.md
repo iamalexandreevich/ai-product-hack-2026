@@ -1,6 +1,6 @@
 # Task 8 — Сессия: счётчики, эскалация, кэш allow
 
-**Статус:** закрыт. **Ветка:** `feat/agentgate-task-1`.
+**Статус:** закрыт, прошёл раунд 1 доработок по ревью. **Ветка:** `worktree-agent-acfda8903b8a9039e` (изолированный воркер этого агента; общая ветка `feat/agentgate-task-1` не двигалась).
 
 ## Что построено
 
@@ -49,7 +49,7 @@ tests/test_session.py::test_cache_key_depends_on_all_parts PASSED
 ## Решения, принятые за пользователя
 
 - Добавлены короткие докстринги к модулям (`escalation.py`, `cache_key.py`, `memory.py`), фиксирующие два инварианта из глобальных ограничений сервиса (кэшируется только `allow`; эскалация не может смягчить `deny`) — как комментарий-напоминание для Task 10, которая эти модули будет компоновать. Сам код идентичен брифу.
-- Метод `preload()` в `InMemorySessionStateStore` оставлен, как в примере брифа, хотя не покрыт тестами и не используется в Task 8 — потенциально нужен для прогрева стора в Task 9/10; не удалён самовольно, раз бриф его явно приводит.
+- Метод `preload()` в `InMemorySessionStateStore` оставлен, как в примере брифа; изначально был не покрыт тестами — закрыто в раунде 1 (см. ниже), теперь есть round-trip тест.
 
 ## Саморевью
 
@@ -61,3 +61,50 @@ tests/test_session.py::test_cache_key_depends_on_all_parts PASSED
 
 - Персистентность в Postgres — Task 9.
 - Политика вытеснения (eviction) для `InMemorySessionStateStore` — не запрошена брифом, не добавлена.
+
+## Fix round 1 (ревью)
+
+Ревью подтвердило корректность ключевой семантики (счётчики, кэш только для `allow`, `monotonic()`-TTL, граница `deny_consecutive`, порядок вычисления эскалации, сигнатуры контрактов) — эти части не менялись. Найдены один реальный баг и один недостающий граничный тест, плюс три Minor.
+
+**Finding 1 (Important) — вырожденные значения `DenyWindow` обходили проверку окна.**
+В Python `lst[-0:]` равно `lst[0:]` — всему списку, а не пустому окну. `DenyWindow.count`/`of_last` были обычными `int` без ограничений, поэтому `of_last=0` в профиле проходил загрузку и эскалация начинала оцениваться по всей истории `recent`, а не «выключалась», как рассчитывал оператор. Отдельно `count=0` делал `window.count("deny") >= 0` тривиально истинным — эскалация срабатывала всегда. И в другую сторону: `count > of_last` делает срабатывание невозможным вообще — окно физически не может накопить `count` отказов, — то есть тихий отказ в открытую сторону, хуже первого бага.
+
+Исправлено в `service/agentgate/profiles/schema.py`, не в `escalation.py`: `DenyWindow.count` и `DenyWindow.of_last` получили `Field(ge=1)`, плюс `model_validator(mode="after")` `_count_within_window`, отклоняющий `count > of_last` с сообщением, называющим оба значения. `load_profiles()` в `loader.py` уже оборачивает `ValidationError` в `ValueError(f"invalid profile {path.name}: {exc}")` — это осталось без изменений, ошибка автоматически называет файл профиля.
+
+Тесты (в `service/tests/test_profiles.py`): `test_deny_window_of_last_zero_rejected`, `test_deny_window_count_zero_rejected`, `test_deny_window_count_greater_than_of_last_rejected` (прямое конструирование `DenyWindow`) и `test_load_profiles_rejects_degenerate_deny_window` (YAML-профиль с `of_last: 0` не загружается) — покрывают путь, которым это реально ударит оператора.
+
+**Finding 2 (Important) — граница окна проверялась только с одной стороны.**
+`test_escalate_on_window` проверял ровно `count=3` (эскалирует) и полный сброс до нуля (не эскалирует), но не проверял `count-1`: два отказа среди последних пяти решений не должны эскалировать. Добавлена симметричная проверка «на единицу ниже порога» перед третьим `deny` в той же последовательности.
+
+**Дозакрыто по решению координатора:**
+- `InMemorySessionStateStore.preload()` был без теста — добавлен `test_memory_store_preload_roundtrip`: `preload([...])` затем `get_or_create` возвращает засеянное состояние.
+- TTL-тест проверял только «далеко за истечением» (`t+11` при `ttl=10`). Добавлен `test_memory_store_cache_ttl_exact_boundary_expires`: ровно в момент истечения (`t+10`) запись уже должна считаться просроченной (сравнение `>=`).
+- Эта строка отчёта (ветка) была неверной — исправлена выше.
+
+### TDD-свидетельство раунда 1
+
+Finding 1 — настоящий RED, зафиксирован до исправления схемы. Команда: `cd service && uv run pytest tests/test_profiles.py -v -k deny_window`
+
+```
+tests/test_profiles.py::test_deny_window_of_last_zero_rejected FAILED
+tests/test_profiles.py::test_deny_window_count_zero_rejected FAILED
+tests/test_profiles.py::test_deny_window_count_greater_than_of_last_rejected FAILED
+tests/test_profiles.py::test_load_profiles_rejects_degenerate_deny_window FAILED
+E       Failed: DID NOT RAISE ValueError   (x3)
+4 failed, 11 deselected
+```
+
+GREEN после добавления `Field(ge=1)` и `_count_within_window` в `schema.py`: та же команда → `4 passed` (в составе полного `test_profiles.py` — `15 passed`).
+
+Finding 2 и три дозакрытых пункта — тесты-стражи поверх уже корректного поведения; на первом прогоне все прошли без изменений в `state.py`/`memory.py`/`escalation.py`: `cd service && uv run pytest tests/test_session.py -v` → `7 passed` (было 5, добавлено 2: `test_memory_store_cache_ttl_exact_boundary_expires`, `test_memory_store_preload_roundtrip`; `test_escalate_on_window` расширен внутри того же теста).
+
+Полный набор под `-W error`: `cd service && uv run pytest -q -W error` → `58 passed` (52 было + 4 в `test_profiles.py` + 2 в `test_session.py`), чисто, без варнингов.
+
+### Файлы, изменённые в раунде 1
+
+- `service/agentgate/profiles/schema.py` — `DenyWindow` получил `ge=1` на оба поля и валидатор `count <= of_last`.
+- `service/tests/test_profiles.py` — 4 новых теста, импорт `DenyWindow`.
+- `service/tests/test_session.py` — `test_escalate_on_window` расширен симметричной нижней границей; 2 новых теста (`preload` round-trip, TTL exact-boundary).
+- `reports/task-8-session.md` — исправлена ветка, обновлена заметка про `preload()`, добавлен этот раздел.
+
+`escalation.py` не менялся: с гарантией `of_last >= 1` из схемы код `list(state.recent)[-cfg.deny_window.of_last:]` больше не может получить вырожденный срез, защитный код в самой функции не нужен.

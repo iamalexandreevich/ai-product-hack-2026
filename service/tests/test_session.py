@@ -34,7 +34,11 @@ def test_escalate_on_consecutive():
 def test_escalate_on_window():
     s = state()
     cfg = Escalation(deny_consecutive=99, deny_window=DenyWindow(count=3, of_last=5))
-    for d in ["deny", "allow", "deny", "allow", "deny"]:
+    for d in ["deny", "allow", "deny"]:
+        s.record(DecisionKind(d))
+    # two denials among the last five must NOT escalate: one below threshold.
+    assert not should_escalate(s, cfg)
+    for d in ["allow", "deny"]:
         s.record(DecisionKind(d))
     assert should_escalate(s, cfg)
     for _ in range(5):
@@ -56,6 +60,28 @@ async def test_memory_store_roundtrip_and_cache_ttl(monkeypatch):
     now = mem.time.monotonic()
     monkeypatch.setattr(mem.time, "monotonic", lambda: now + 11)
     assert await store.cache_get("s1", "k") is None
+
+
+async def test_memory_store_cache_ttl_exact_boundary_expires(monkeypatch):
+    # The comparison is `>=`, so exactly at expiry (t + ttl_seconds) the entry
+    # must already be considered expired, not one tick past it.
+    store = InMemorySessionStateStore()
+    import agentgate.session.memory as mem
+
+    now = mem.time.monotonic()
+    monkeypatch.setattr(mem.time, "monotonic", lambda: now)
+    await store.cache_put("s1", "k", "dec1", ttl_seconds=10)
+    monkeypatch.setattr(mem.time, "monotonic", lambda: now + 10)
+    assert await store.cache_get("s1", "k") is None
+
+
+async def test_memory_store_preload_roundtrip():
+    store = InMemorySessionStateStore()
+    seeded = SessionState(session_id="s2", harness="h", profile_id="p", workspace="/w", deny_total=5)
+    store.preload([seeded])
+    again = await store.get_or_create("s2", "h", "p", "/w")
+    assert again is seeded
+    assert again.deny_total == 5
 
 
 def test_cache_key_depends_on_all_parts():
