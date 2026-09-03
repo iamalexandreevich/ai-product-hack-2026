@@ -20,7 +20,7 @@ from tests.test_pipeline import FakeLLM, profile
 WS = "/home/u/repo"
 
 
-def build(tmp_path, token=None, bind="127.0.0.1:8400", llm=None, db_ok=True, gate=None):
+def build(tmp_path, token=None, bind="127.0.0.1:8400", llm=None, db_ok=True, gate=None, key_repo=None):
     settings = Settings(db_url="postgresql+asyncpg://x", token=token, bind=bind, log_path=tmp_path / "d.jsonl")
     profiles = {"default": profile()}
     llm = llm or FakeLLM()
@@ -60,7 +60,8 @@ def build(tmp_path, token=None, bind="127.0.0.1:8400", llm=None, db_ok=True, gat
 
     drepo = FakeDecisionRepo()
     srepo = FakeSessionRepo() if db_ok else FakeSessionRepoBroken()
-    app = create_app(settings, gate, drepo, srepo, profiles, JsonlLogger(settings.log_path), db_probe=probe)
+    app = create_app(settings, gate, drepo, srepo, profiles, JsonlLogger(settings.log_path), db_probe=probe,
+                     key_repo=key_repo)
     return app, drepo, srepo, llm
 
 
@@ -154,6 +155,64 @@ async def test_no_token_localhost_allows_all(tmp_path):
     assert r.status_code == 200
     r2 = await call(app, "GET", "/v1/decisions")
     assert r2.status_code == 200
+
+
+# --- Auth: API keys (additive on top of the static token) -------------------
+#
+# The controller override for this design (docs/superpowers/service/specs/
+# api-keys.md) is additive: a bearer authenticates if it matches
+# AGENTGATE_TOKEN (unchanged) OR a currently valid issued key -- it does not
+# make non-localhost binds ignore the static token. See agentgate.api.deps'
+# module docstring.
+
+
+class FakeKeyRepo:
+    """A minimal stand-in for agentgate.store.keys.ApiKeyRepo: only the two
+    methods make_require_token actually calls.
+    """
+
+    def __init__(self, valid: dict[str, str]):
+        # key_hash -> key_id, all valid/unrevoked/unexpired.
+        from types import SimpleNamespace
+        self._records = {h: SimpleNamespace(id=kid, is_valid=lambda now=None: True) for h, kid in valid.items()}
+        self.touched: list[str] = []
+
+    async def get_by_hash(self, key_hash: str):
+        return self._records.get(key_hash)
+
+    async def touch_last_used(self, key_id: str) -> None:
+        self.touched.append(key_id)
+
+
+async def test_valid_api_key_authenticates_when_static_token_also_set(tmp_path):
+    from agentgate.store.keys import hash_key
+
+    plaintext = "agk_" + "g" * 20
+    key_repo = FakeKeyRepo({hash_key(plaintext): "key-1"})
+    app, _, _, _ = build(tmp_path, token="secret", key_repo=key_repo)
+
+    ok = await call(app, "POST", "/v1/decide", json=body(), headers={"authorization": f"Bearer {plaintext}"})
+    assert ok.status_code == 200
+    still_ok = await call(app, "POST", "/v1/decide", json=body(), headers={"authorization": "Bearer secret"})
+    assert still_ok.status_code == 200  # static token still works, unchanged
+    bad = await call(app, "POST", "/v1/decide", json=body(), headers={"authorization": "Bearer nope"})
+    assert bad.status_code == 401
+
+
+async def test_valid_api_key_touches_last_used_after_the_response(tmp_path):
+    from agentgate.store.keys import hash_key
+
+    plaintext = "agk_" + "h" * 20
+    key_repo = FakeKeyRepo({hash_key(plaintext): "key-2"})
+    app, _, _, _ = build(tmp_path, token="secret", key_repo=key_repo)
+
+    assert key_repo.touched == []
+    resp = await call(app, "POST", "/v1/decide", json=body(), headers={"authorization": f"Bearer {plaintext}"})
+    assert resp.status_code == 200
+    # BackgroundTasks run after the response is generated but before
+    # ASGITransport's call returns, so this is already visible here -- no
+    # separate wait needed.
+    assert key_repo.touched == ["key-2"]
 
 
 # --- GET /v1/decisions: shape and cursor pagination -------------------------

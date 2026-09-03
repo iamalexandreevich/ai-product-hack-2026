@@ -53,6 +53,12 @@ class Settings(BaseSettings):
     profiles_dir: Path = Path("profiles")
     log_path: Path = Path("logs/decisions.jsonl")
     default_profile: str = "default"
+    # In-process TTL for the API-key verification cache (agentgate.api.deps).
+    # Spec: docs/superpowers/service/specs/api-keys.md, "Проверка на горячем
+    # пути" -- kept short (30-60s) because a revoked key stays accepted for
+    # up to this long: revocation is not instantaneous, it is bounded by
+    # this TTL.
+    api_key_cache_ttl_seconds: float = 45.0
 
     @field_validator("bind")
     @classmethod

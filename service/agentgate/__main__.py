@@ -26,6 +26,7 @@ from agentgate.pipeline import Gate
 from agentgate.profiles.loader import load_profiles
 from agentgate.session.memory import InMemorySessionStateStore
 from agentgate.store.db import make_engine, make_session_factory
+from agentgate.store.keys import ApiKeyRepo
 from agentgate.store.repo import DecisionRepo, SessionRepo
 
 log = logging.getLogger(__name__)
@@ -60,6 +61,7 @@ async def build_app(settings: Settings | None = None):
     engine = make_engine(settings.db_url)
     sf = make_session_factory(engine)
     decision_repo, session_repo = DecisionRepo(sf), SessionRepo(sf)
+    key_repo = ApiKeyRepo(sf)
 
     store = InMemorySessionStateStore()
     store.preload(await session_repo.load_all())
@@ -70,12 +72,26 @@ async def build_app(settings: Settings | None = None):
     gate = Gate(profiles, settings.default_profile, store, httpx.AsyncClient())
     app = create_app(
         settings, gate, decision_repo, session_repo, profiles, JsonlLogger(settings.log_path),
-        db_probe=make_db_probe(engine),
+        db_probe=make_db_probe(engine), key_repo=key_repo,
     )
     return app, settings
 
 
 def main() -> None:
+    """Process entrypoint.
+
+    ``python -m agentgate keys ...`` dispatches to the key-management CLI
+    (agentgate.cli) instead of starting the server -- see that module's
+    docstring for why key issuance is a CLI concern, not an HTTP endpoint.
+    Any other (or no) argument starts the server as before.
+    """
+    import sys
+
+    if len(sys.argv) > 1 and sys.argv[1] == "keys":
+        from agentgate.cli import run_keys_cli
+
+        sys.exit(run_keys_cli(sys.argv[2:]))
+
     logging.basicConfig(level=logging.INFO)
     app, settings = asyncio.run(build_app())
     uvicorn.run(app, host=settings.bind_host, port=settings.bind_port)
