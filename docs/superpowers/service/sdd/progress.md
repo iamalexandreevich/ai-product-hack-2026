@@ -2308,3 +2308,81 @@ QUEUED (do AFTER the final review returns, so as not to disturb its read of the 
 a small reviewed change to service/profiles/default-dev.yaml + the profile loader so the
 stage-2 model defaults to google/gemini-3.8-flash on OpenRouter and can be overridden by
 OPENROUTER_MODEL_NAME env, plus a README line. Then the user deploys.
+
+### Final whole-branch review (OPUS, at 4dba5a2/171c749): SHIP IT with one must-fix
+
+All 6 integration properties HOLD under execution: fail-closed spine end-to-end (every error
+path -> ask/200 or 401, never allow, never 5xx on /v1/decide); hard-deny primacy (rm -rf /etc
+in an escalating session -> deny/hard, escalation did not soften; cache allow-only + action_hash
+key so no collision); closed stage-2 prompt (metadata absent, [STAGE1] is the fixed vocab not
+reason, a \n in user_request produced exactly ONE [STAGE1] line — _j json.dumps escaping holds,
+raw has no path in); allow-only cache; auth boundary (token OR key, DB error -> 401, revocation
+after TTL); decisions only on NormalizedAction (raw read only by normalizer + audit persist).
+
+Parked-item triage:
+  T5 curl -so secret.pem: NON-ISSUE. With an allowlisted domain, curl -o key.pem / -so
+    secret.pem / wget -O id_rsa / openssl req -out all pass stage 1; the earlier "deny" was
+    profile.domain (domain not allowlisted), correct. _IGNORE_VALUE_FLAGS excludes -o/-O/-out.
+    No unescalatable over-denial of downloads.
+  T5 .env* glob: MUST-FIX. cp .env.example .env.sample and cat .env|grep>...env.tmp both
+    hard-deny.protected-write under default-dev.yaml because .env* matches .env.sample/.env.tmp.
+    Unescalatable deny of ordinary work. Profile-authoring fix (narrow the glob), not a rule bug.
+  T5 protected-path deletion (rm .env): acceptable-roadmap (falls to stage 2, escalatable).
+  T10 cached-allow skips record: acceptable-roadmap (biases to MORE ask; fail-safe direction).
+  API-keys key_id attribution: acceptable-roadmap (observability, auth sound).
+  API-keys verify cache, T11 hardcoded TTL, Task 4 residuals: all acceptable-roadmap.
+
+Fresh finding (medium, recommended hardening): docker-compose AGENTGATE_TOKEN default `dev-token`
++ 0.0.0.0:8400 bind means a forgotten token exposes a network service under a public string.
+Recommend ${AGENTGATE_TOKEN:?...} fail-fast. Migrations clean from empty (0001+0002, 5 tables,
+0 drift), Dockerfile migrates on start, __main__ restore sound, contracts+OpenAPI valid.
+Deploy Makefile: all four safety gates pass (no committed secret/IP/key, rsync excludes .env,
+--delete protects server .env, /healthz gate fails on non-zero).
+
+Verdict: SHIP with must-fix #1. Recommended: compose token fail-fast. Everything else roadmap.
+
+### Final config change dispatched, then a WORKTREE-BASE ANOMALY worth noting
+
+Dispatched one implementer for all three: narrow .env glob (must-fix), compose token fail-fast
+(hardening), and the model change (default -> google/gemini-3.8-flash on OpenRouter +
+OPENROUTER_MODEL_NAME override via new loader env-interpolation), with tests.
+
+It returned NEEDS_CONTEXT: its worktree landed on 8e2cb5f ("Revert benchmark") — a DIVERGENT
+history, not our branch, with NONE of our work, and 9a3889b is not an ancestor of it in either
+direction. Unlike the usual "worktree from main" bug (a clean fast-forward), this was an
+unrelated line. The implementer correctly REFUSED git reset --hard because it wasn't a
+fast-forward — the STEP-ZERO safety catch working as intended. Controller verified 9a3889b is
+our real tip with loader.py/pipeline.py/keys.py all present and 8e2cb5f is a benchmark branch,
+and the worktree was empty (no work to lose), then sent an EXPLICIT override to reset to
+9a3889b with the cross-branch verification the agent couldn't do itself. Resumed.
+
+The model slug google/gemini-3.8-flash is the user's verbatim choice; a wrong slug fails closed
+to ask, friction not danger.
+
+### Final config change verified by controller execution; BRANCH COMPLETE
+
+Commit 3a83087 is a clean linear child of 9a3889b (verified: single commit, exactly the intended
+files — loader.py env-interpolation, docker-compose token, default-dev.yaml glob+model, README,
+tests). The final-config agent operated in the main checkout rather than an isolated worktree
+(harness cwd instability it flagged), but the END STATE equals what a merge would produce: the
+branch is linearly advanced, no stray worktrees, main tree clean but for the ledger. Reviewed
+post-commit by controller EXECUTION (small, well-tested, clean-on-inspection delta on an
+already-final-reviewed branch, on flaky infra — a focused verification, not another full round):
+  1. ${WORKSPACE} survives env interpolation (reserved); ${OPENROUTER_MODEL_NAME:-...} resolves
+     to the default unset and the override when set.
+  2. default profile model = google/gemini-3.8-flash on openrouter.ai/api/v1, key OPENROUTER_API_KEY.
+  3. cp x .env / echo x > .env -> deny/hard-deny.protected-write; cp .env.example .env.sample,
+     cp x .env.example, echo x > .env.tmp -> None. MUST-FIX closed, templates freed.
+Loader interpolation inspected: regex matches only ${NAME} and ${NAME:-default}, no arbitrary
+shell expansion, WORKSPACE explicitly reserved. 507 passed with DB, 464/43 without, -W error.
+
+Task 5's must-fix (the only whole-branch-review blocker) + the recommended compose hardening +
+the user's Gemini/OPENROUTER_MODEL_NAME model config all landed in 3a83087.
+
+=== PLAN COMPLETE. feat/agentgate-task-1 @ 3a83087. 507 tests. Ready for the user's make deploy. ===
+Merged/landed: T1-T13 + OpenAPI + API-keys + final config. 15 integration commits.
+Not done by design: the deploy itself (user runs make deploy from a VPN-connected machine;
+sandbox can't reach the server and the password rule forbids me typing it). Roadmap (all
+acceptable per the final review): key_id-in-DecisionRow attribution, protected-path deletion
+hard-deny, cached-allow state.record, per-worker key cache bound, Task-4 friction residuals,
+Task-5 curl-so (confirmed non-issue), the OpenAPI provisional routes now real (re-generate).
