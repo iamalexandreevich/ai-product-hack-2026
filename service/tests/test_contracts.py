@@ -114,12 +114,20 @@ def test_openapi_documents_every_v1_endpoint(committed_openapi):
     }
 
 
-def test_openapi_marks_unimplemented_endpoints_as_provisional(committed_openapi):
-    """The three unbuilt endpoints must say so, in their own description."""
-    for path in ("/v1/decisions", "/v1/profiles/{id}", "/healthz"):
-        description = committed_openapi["paths"][path]["get"]["description"]
-        assert "NOT YET IMPLEMENTED" in description, path
-        assert "provisional" in description.lower(), path
+def test_openapi_marks_no_endpoint_as_provisional(committed_openapi):
+    """All four routes are implemented — none may still claim to be unbuilt."""
+    for path, item in committed_openapi["paths"].items():
+        for method in item.values():
+            description = method.get("description", "")
+            assert "NOT YET IMPLEMENTED" not in description, path
+            assert "provisional" not in description.lower(), path
+
+
+def test_openapi_auth_covers_api_keys(committed_openapi):
+    """The bearer scheme must describe the additive API-key credential, not only the static token."""
+    auth = committed_openapi["components"]["securitySchemes"]["bearerAuth"]["description"]
+    assert "agk_" in auth
+    assert "keys create" in auth
 
 
 def test_openapi_bearer_scheme_is_optional(committed_openapi):

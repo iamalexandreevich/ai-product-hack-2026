@@ -107,26 +107,33 @@ with a null session.
 
 ## Implementation status
 
-`POST /v1/decide` is the settled contract: its request and response models are
-running, tested code and the schemas below are generated from them.
-`GET /v1/decisions`, `GET /v1/profiles/{{id}}` and `GET /healthz` are **not yet
-implemented** — they are described here from the design spec and their shapes
-are provisional. Each is marked as such in its own description. Do not build
-against their exact response envelopes yet.
+All four routes are implemented, tested and running in v1. `POST /v1/decide`,
+`GET /v1/decisions`, `GET /v1/profiles/{{id}}` and `GET /healthz` are the settled
+contract; the request/response schemas below are generated from the running
+pydantic models. Integrate against these shapes.
 """
 
 AUTH_DESCRIPTION = """\
-Bearer token, compared against the service's `AGENTGATE_TOKEN` environment
-variable.
+`Authorization: Bearer <credential>`. The credential is EITHER the static
+`AGENTGATE_TOKEN` (set in the service's environment) OR an issued API key. A
+request authenticates if the bearer matches either one; both are checked in
+constant time.
 
-OpenAPI cannot express the actual rule, so it is stated here: the token is
-**mandatory when the service binds to a non-localhost address** — in that case
-the service refuses to start without `AGENTGATE_TOKEN` set. On a localhost bind
-(the default, `127.0.0.1:8400`) the token may be absent, and when it is absent
-every request passes without authentication. This is why the scheme is declared
-optional in `security`. Send `Authorization: Bearer <token>` whenever the
-service is configured with one; a missing or wrong token is the single case
-that answers HTTP 401 instead of a decision.
+**API keys** are minted by the operator from the CLI, never over HTTP:
+`python -m agentgate keys create --label <name>` (also `keys list`,
+`keys revoke <key_id>`). A key is shown exactly once at creation, looks like
+`agk_` followed by 43 URL-safe characters, and is stored only as a SHA-256 hash
+— the plaintext is never persisted or logged. A revoked or expired key stops
+working within a short in-process cache TTL (revocation is not instant, up to a
+minute). Hand each integrator their own key so it can be revoked individually.
+
+OpenAPI cannot express the conditional rule, so it is stated here: on a
+non-localhost bind a credential is required (the service will not start without a
+token, and issued keys are also accepted); on a localhost bind with no token and
+no keys, every request passes (dev mode) — which is why the scheme is declared
+optional in `security`. `GET /healthz` never requires a credential. A missing,
+wrong, expired or revoked credential all return the same opaque HTTP 401 (the
+body does not say which); every other failure is a 200 `ask`, not a 401.
 """
 
 DECIDE_DESCRIPTION = """\
@@ -165,30 +172,22 @@ has no request counterpart because it shows what an invalid request produces.
 """
 
 DECISIONS_DESCRIPTION = """\
-**NOT YET IMPLEMENTED — shape provisional.** Scheduled for a later task; this
-description comes from the design spec, not from running code. The query
-parameters below are as specified. The response envelope is **not** fixed by
-the spec: what is shown here is the expected shape and it may change. Do not
-build against it yet.
-
 Decision feed for the dashboard and the benchmark. Returns stored decisions
-newest first, with cursor pagination by `decision_id` — pass the oldest
-`decision_id` you have seen back as `before` to get the next page. Because
-`decision_id` is a ULID, ordering by it is ordering by time.
+newest first as `{items, next_before}`, with cursor pagination by `decision_id`:
+pass the `next_before` from a page back as the `before` query parameter to get
+the next (older) page. `next_before` is `null` when the last page was returned.
+Because `decision_id` is a ULID, ordering by it is ordering by time.
 
-The spec does not state a default or maximum for `limit`, nor whether this
-endpoint requires the bearer token when one is configured; both are open.
+`limit` is `1..500`, default `100`; a value outside that range is a `422`
+(this is a read endpoint, not the always-200 decide path). Requires the bearer
+credential when the service is configured with one.
 """
 
 PROFILE_DESCRIPTION = """\
-**NOT YET IMPLEMENTED — shape provisional.** Scheduled for a later task; this
-description comes from the design spec, not from running code. The `Profile`
-schema itself IS generated from the running pydantic model
-(`agentgate/profiles/schema.py`), so the field names and types are accurate;
-what is provisional is whether the endpoint returns that object directly or
-wraps it, and how a missing profile is reported.
-
-Reads a policy profile exactly as the service loaded it. Profiles are
+Reads a policy profile exactly as the service loaded it, returned as the
+`Profile` object directly (200) or a `404` for an unknown id. The `Profile`
+schema is generated from the running pydantic model
+(`agentgate/profiles/schema.py`). Profiles are
 server-side configuration: a harness passes at most a `profile_id` and never
 reads policy in normal operation. This endpoint exists for operators and the
 dashboard.
@@ -199,15 +198,13 @@ the first place — a profile holds only the *name* of the environment variable
 """
 
 HEALTH_DESCRIPTION = """\
-**NOT YET IMPLEMENTED — shape provisional.** Scheduled for a later task; this
-description comes from the design spec, not from running code.
-
-Liveness probe. The design spec says the answer includes the status of the
-database and of the active LLM endpoint, but does not fix the field names, the
-value vocabulary, or the status code used when a dependency is down. The schema
-below is therefore open (`additionalProperties: true`) and should be treated as
-a sketch. The spec is also silent on whether this endpoint requires the bearer
-token when one is configured.
+Liveness probe, no credential required. Returns `{"status": "ok" | "degraded",
+"db": <bool>, "llm": null}`: `status` is `degraded` when the database probe
+fails, `ok` otherwise; `db` is the boolean result of that probe; `llm` is
+reserved and currently always `null`. The status code is always `200` — a
+`degraded` body, not a 5xx, signals a dependency is down. A single `/healthz`
+right after a container start can briefly report `db: false` during connection
+warmup and then recover.
 """
 
 UNAUTHORIZED_DESCRIPTION = """\
@@ -491,16 +488,18 @@ RESPONSE_EXAMPLES: dict[str, dict[str, Any]] = {
 }
 
 # --------------------------------------------------------------------------
-# Provisional schemas (no pydantic model exists yet — these endpoints are unbuilt)
+# Hand-authored schemas for routes whose responses are plain dicts, not pydantic
+# models (the decision feed items, health). The models they mirror live in
+# agentgate/store/repo.py and the /healthz handler.
 # --------------------------------------------------------------------------
 
-PROVISIONAL_SCHEMAS: dict[str, dict[str, Any]] = {
+EXTRA_SCHEMAS: dict[str, dict[str, Any]] = {
     "DecisionListResponse": {
         "type": "object",
         "title": "DecisionListResponse",
         "description": (
-            "PROVISIONAL — `GET /v1/decisions` is not implemented and the design "
-            "spec does not fix this envelope. Left open on purpose."
+            "Response of `GET /v1/decisions`: a page of stored decisions plus a "
+            "cursor for the next page."
         ),
         "properties": {
             "items": {
@@ -523,15 +522,15 @@ PROVISIONAL_SCHEMAS: dict[str, dict[str, Any]] = {
         "type": "object",
         "title": "DecisionRecord",
         "description": (
-            "PROVISIONAL — one stored decision. The design spec lists these "
-            "columns for the `decisions` table but does not fix the wire "
-            "representation, so the schema is left open and only the fields the "
-            "spec names are listed. Everything a `DecideResponse` carries is "
-            "here, plus the request it answered and the profile it was judged "
-            "against."
+            "One stored decision, as returned in the `/v1/decisions` items array. "
+            "Everything a `DecideResponse` carries is here, plus the request it "
+            "answered and the profile it was judged against. The item carries both "
+            "`id` and `decision_id`; they are the same ULID (the feed injects "
+            "`decision_id` for symmetry with `/v1/decide`)."
         ),
         "properties": {
-            "id": {"type": "string", "description": "ULID; equals the `decision_id` returned by /v1/decide."},
+            "id": {"type": "string", "description": "ULID of the decision."},
+            "decision_id": {"type": "string", "description": "Same ULID as `id`; mirrors the field name /v1/decide returns."},
             "session_id": {"anyOf": [{"type": "string"}, {"type": "null"}]},
             "ts": {"type": "string", "format": "date-time"},
             "harness": {"type": "string"},
@@ -565,25 +564,28 @@ PROVISIONAL_SCHEMAS: dict[str, dict[str, Any]] = {
     "Health": {
         "type": "object",
         "title": "Health",
-        "description": (
-            "PROVISIONAL — `GET /healthz` is not implemented. The design spec "
-            "says only that liveness includes the status of the database and of "
-            "the active LLM endpoint; it fixes neither the field names nor the "
-            "value vocabulary. Treat this as a sketch."
-        ),
+        "description": "Response of `GET /healthz`. Always delivered with HTTP 200.",
         "properties": {
-            "status": {"type": "string", "description": "Overall liveness of the service."},
-            "db": {"type": "string", "description": "Status of the Postgres connection."},
-            "llm": {"type": "string", "description": "Status of the active LLM endpoint."},
+            "status": {
+                "type": "string",
+                "enum": ["ok", "degraded"],
+                "description": "`ok`, or `degraded` when the database probe fails.",
+            },
+            "db": {"type": "boolean", "description": "Result of the Postgres liveness probe."},
+            "llm": {
+                "anyOf": [{"type": "string"}, {"type": "null"}],
+                "description": "Reserved for the active LLM endpoint's status; currently always null.",
+            },
         },
-        "additionalProperties": True,
+        "required": ["status", "db", "llm"],
+        "additionalProperties": False,
     },
     "Error": {
         "type": "object",
         "title": "Error",
         "description": (
-            "PROVISIONAL — error body. Only HTTP 401 uses it; every other failure "
-            "is an HTTP 200 `ask`. The design spec does not fix the shape."
+            "Error body. Only HTTP 401 (a missing/invalid/expired/revoked "
+            "credential) uses it; every other failure is an HTTP 200 `ask`."
         ),
         "properties": {"detail": {"type": "string"}},
         "additionalProperties": True,
@@ -678,9 +680,9 @@ def _paths() -> dict[str, Any]:
         "/v1/decisions": {
             "get": {
                 "operationId": "listDecisions",
-                "summary": "Decision feed (not yet implemented — shape provisional)",
+                "summary": "Decision feed",
                 "description": DECISIONS_DESCRIPTION,
-                "tags": ["provisional"],
+                "tags": ["read"],
                 "parameters": [
                     {
                         "name": "session_id",
@@ -704,11 +706,8 @@ def _paths() -> dict[str, Any]:
                         "name": "limit",
                         "in": "query",
                         "required": False,
-                        "description": (
-                            "Page size. The design spec fixes neither a default "
-                            "nor a maximum."
-                        ),
-                        "schema": {"type": "integer", "minimum": 1},
+                        "description": "Page size, 1..500, default 100.",
+                        "schema": {"type": "integer", "minimum": 1, "maximum": 500, "default": 100},
                     },
                     {
                         "name": "before",
@@ -723,7 +722,7 @@ def _paths() -> dict[str, Any]:
                 ],
                 "responses": {
                     "200": {
-                        "description": "A page of decisions, newest first. Envelope provisional.",
+                        "description": "A page of decisions, newest first.",
                         "content": {
                             "application/json": {
                                 "schema": {"$ref": "#/components/schemas/DecisionListResponse"}
@@ -744,9 +743,9 @@ def _paths() -> dict[str, Any]:
         "/v1/profiles/{id}": {
             "get": {
                 "operationId": "getProfile",
-                "summary": "Read a policy profile (not yet implemented — shape provisional)",
+                "summary": "Read a policy profile",
                 "description": PROFILE_DESCRIPTION,
-                "tags": ["provisional"],
+                "tags": ["read"],
                 "parameters": [
                     {
                         "name": "id",
@@ -774,11 +773,7 @@ def _paths() -> dict[str, Any]:
                         },
                     },
                     "404": {
-                        "description": (
-                            "No such profile. The design spec does not say how a "
-                            "missing profile is reported; this status is an "
-                            "assumption."
-                        ),
+                        "description": "No such profile id.",
                         "content": {
                             "application/json": {
                                 "schema": {"$ref": "#/components/schemas/Error"}
@@ -791,12 +786,12 @@ def _paths() -> dict[str, Any]:
         "/healthz": {
             "get": {
                 "operationId": "healthz",
-                "summary": "Liveness (not yet implemented — shape provisional)",
+                "summary": "Liveness probe",
                 "description": HEALTH_DESCRIPTION,
-                "tags": ["provisional"],
+                "tags": ["read"],
                 "responses": {
                     "200": {
-                        "description": "Service is live. Body provisional.",
+                        "description": "Service liveness. `degraded` is still a 200.",
                         "content": {
                             "application/json": {
                                 "schema": {"$ref": "#/components/schemas/Health"}
@@ -813,7 +808,7 @@ def build_document() -> dict[str, Any]:
     """The whole OpenAPI 3.1 document as plain data."""
     schemas = _generated_schemas()
     _apply_descriptions(schemas)
-    schemas.update(copy.deepcopy(PROVISIONAL_SCHEMAS))
+    schemas.update(copy.deepcopy(EXTRA_SCHEMAS))
 
     return {
         "openapi": "3.1.0",
@@ -838,11 +833,8 @@ def build_document() -> dict[str, Any]:
                 "description": "The gate itself. Implemented and contract-stable.",
             },
             {
-                "name": "provisional",
-                "description": (
-                    "Described from the design spec but not yet implemented. "
-                    "Shapes may change; do not build against them."
-                ),
+                "name": "read",
+                "description": "Read/ops endpoints: decision feed, profile read, liveness.",
             },
         ],
         "paths": _paths(),
