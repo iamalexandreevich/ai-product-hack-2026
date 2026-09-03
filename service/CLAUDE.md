@@ -24,6 +24,7 @@
 - Спека: `docs/superpowers/service/specs/2026-09-03-agentgate-v1-design.md` (читать можно, менять нельзя)
 - Дорожная карта по объёму контекста (v1→v4): `docs/superpowers/service/specs/context-versions-roadmap.md`. **Сейчас реализуется v1**: одно действие + последнее сообщение пользователя, без истории диалога.
 - API-ключи (выдача, хранение, проверка): `docs/superpowers/service/specs/api-keys.md`. Обязательна к прочтению перед Task 11 — она владеет аутентификацией.
+- Авто-деплой на сервер (`make deploy` по SSH): `docs/superpowers/service/specs/deploy.md`. Задача деплоя идёт после Task 12.
 - План: `docs/superpowers/service/plans/2026-09-03-agentgate-v1.md` (читать можно, менять нельзя)
 
 ## Технические правила
