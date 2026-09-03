@@ -72,3 +72,24 @@ class AllowCacheRow(Base):
     action_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
     decision_id: Mapped[str] = mapped_column(String(26), ForeignKey("decisions.id"))
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ApiKeyRow(Base):
+    """Issued API keys (docs/superpowers/service/specs/api-keys.md).
+
+    Only ``key_hash`` (SHA-256 of the plaintext key) is ever stored -- the
+    plaintext exists only transiently in ``ApiKeyRepo.create``'s return value
+    and is never written here. ``id`` is a ULID and doubles as the public
+    ``key_id`` used in the CLI, in ``DecisionRow``/log attribution, and for
+    revocation -- it never encodes or derives from the key itself.
+    """
+
+    __tablename__ = "api_keys"
+
+    id: Mapped[str] = mapped_column(String(26), primary_key=True)
+    key_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    label: Mapped[str] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -72,9 +72,10 @@ def create_app(
     profiles: dict[str, Profile],
     jsonl: JsonlLogger,
     db_probe: Callable[[], Awaitable[bool]] | None = None,
+    key_repo=None,
 ) -> FastAPI:
     app = FastAPI(title="AgentGate", version="0.1.0")
-    auth = Depends(make_require_token(settings))
+    auth = Depends(make_require_token(settings, key_repo=key_repo, cache_ttl_seconds=settings.api_key_cache_ttl_seconds))
 
     async def persist(rec: DecisionRecord, state: SessionState | None) -> None:
         # rec.to_dict() carries the field as "id" (DecisionRecord's own
