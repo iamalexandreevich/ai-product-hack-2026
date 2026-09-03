@@ -149,3 +149,93 @@ cd service && AGENTGATE_TEST_DB_URL=postgresql+asyncpg://agentgate:agentgate@loc
 
 Ничего в рамках задачи 12 не отложено — все шаги брифа (Dockerfile, compose, клиент, fake LLM,
 e2e, полный прогон) выполнены и подтверждены реальным запуском Docker и Postgres на 5433.
+
+## Раунд правок 1
+
+База правки: `852168c`. Одна находка ревью категории Important, подтверждена и устранена.
+
+### Important — некорректный/нераспознанный stdin падал с exit 1 вместо fail-closed ask/3
+
+В `contracts/hook_client.py` строки `hook = json.load(sys.stdin)` и `body = to_request(...)`
+выполнялись в `main()` до `try/except`, который оборачивал только сетевой вызов. Три реалистичных
+входа проходили мимо этой защиты необработанным исключением и кодом выхода `1` по умолчанию от
+интерпретатора: пустой stdin, не-JSON stdin и валидный JSON, не подходящий ни под один из двух
+форматов хука (`to_request` кидает свой `ValueError` — это срабатывает на любом событии хука или
+форме инструмента, которую не знает маппер, то есть не редкий крайний случай).
+
+Почему это существенно: в семантике кодов выхода PreToolUse у Claude Code смысл имеют только `0`
+(allow) и `2` (block); любой другой код, включая `1`, трактуется как неблокирующая ошибка — и
+инструмент выполняется дальше. Падение на плохом stdin читалось как fail-*open* — ровно то, что
+этот клиент обязан предотвращать, при том что замысел явно был fail-closed.
+
+**Исправление**: граница fail-closed в `main()` расширена — чтение и маппинг stdin (`json.load` +
+`to_request`) теперь тоже под `try/except Exception`, результат —
+`{"decision": "ask", "reason": f"invalid hook input: {exc}"}` и возврат `EXIT["ask"]` (3) до
+всякого сетевого вызова. Строка причины намеренно отличается от пути «сервис недоступен»
+(`"agentgate unavailable: …"`), чтобы в логах/выводе можно было отличить парсинг-ошибку от
+сетевой. Обработка сетевого вызова не изменена. Теперь ни одна строка в `main()` не может кинуть
+исключение мимо `try` — весь путь «читать stdin → парсить → маппить → вызывать сервис → маппить
+код выхода» лежит внутри той или иной fail-closed границы.
+
+### Доказательства TDD (раунд правок)
+
+В `service/tests/test_hook_client.py` добавлены три теста —
+`test_empty_stdin_fails_closed`, `test_non_json_stdin_fails_closed`,
+`test_unrecognized_hook_shape_fails_closed` — каждый гоняет реальный CLI подпроцессом (тем же
+стилем, что и существующие fail-closed тесты) с `--url http://127.0.0.1:1`, чтобы изолировать
+именно ошибку парсинга/маппинга от недоступности сервиса. Сначала прогнаны против кода до
+исправления — подтверждён настоящий RED:
+
+```
+FAILED tests/test_hook_client.py::test_empty_stdin_fails_closed - AssertionError: ... returncode=1
+FAILED tests/test_hook_client.py::test_non_json_stdin_fails_closed - AssertionError: ... returncode=1
+FAILED tests/test_hook_client.py::test_unrecognized_hook_shape_fails_closed - AssertionError: ... returncode=1
+3 failed, 14 deselected in 0.21s
+```
+В перехваченном `stderr` каждого падения виден настоящий traceback (`JSONDecodeError` — для первых
+двух, `ValueError: unrecognized hook payload` — для третьего).
+
+После исправления — все 17 тестов (14 старых + 3 новых) зелёные, без изменений в самих тестах:
+```
+17 passed in 0.34s
+```
+
+Вручную воспроизведён паттерн вызова из брифа для всех трёх входов — результат `exit=3` и
+`"decision": "ask"` для пустого stdin, не-JSON stdin и `{"foo":"bar"}`.
+
+### Повторная проверка e2e
+
+По требованию — не предположение, а факт: e2e перезапущен с `AGENTGATE_TEST_DB_URL`:
+```
+tests/e2e/test_e2e.py::test_allow_via_allowlist PASSED
+tests/e2e/test_e2e.py::test_hard_deny PASSED
+tests/e2e/test_e2e.py::test_llm_deny_and_log PASSED
+3 passed in 2.43s
+```
+Подтверждено — правка на пути парсинга stdin, выше по потоку от всего, что использует e2e, и
+действительно не задета.
+
+### Полный прогон (раунд правок)
+
+С БД, `-W error`: `447 passed in 6.74s` (444 + 3 новых теста).
+Без БД, `-W error`: `422 passed, 25 skipped` (419 + 3 новых теста; число skip не изменилось).
+
+### Изменённые файлы (раунд правок)
+
+- `contracts/hook_client.py` — расширена граница fail-closed вокруг парсинга/маппинга stdin
+- `service/tests/test_hook_client.py` — 3 новых теста
+
+### Проверка объёма изменений
+
+`git status --short` перед коммитом:
+```
+ M contracts/hook_client.py
+ M service/tests/test_hook_client.py
+```
+Только два файла, которые правка и затрагивает; ничего вне `service/` и `contracts/`.
+
+### Замечания
+
+Нет. Минорное замечание ревью про `docker-compose.yml` (интерполяция переменных окружения вместо
+`env_file`) оставлено как есть по указанию самого ревьюера — соответствует буквальному тексту
+брифа и не входило в объём этой правки.

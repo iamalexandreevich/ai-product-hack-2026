@@ -208,3 +208,58 @@ def test_fail_closed_on_unreachable_service_never_exits_zero():
         timeout=15,
     )
     assert proc.returncode != 0
+
+
+# --- fail-closed on malformed/unrecognized stdin -------------------------
+#
+# These exercise the parse/mapping path (json.load + to_request), which
+# runs *before* the service call. A crash here is not cosmetic: under
+# Claude Code's PreToolUse exit-code semantics, exit 0 means allow and
+# exit 2 means block, but any OTHER exit code (including the default 1
+# from an uncaught exception) is a non-blocking error -- the tool
+# proceeds. So an uncaught exception on bad stdin reads as fail-*open*,
+# exactly the failure mode this client exists to prevent. Every one of
+# these must exit exactly 3 (not merely "non-zero") and print an "ask"
+# decision with no traceback on stderr.
+
+
+def test_empty_stdin_fails_closed():
+    proc = subprocess.run(
+        [sys.executable, str(HOOK_PATH), "--url", "http://127.0.0.1:1"],
+        input="",
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert proc.returncode == 3, proc.stderr
+    data = json.loads(proc.stdout)
+    assert data["decision"] == "ask"
+    assert proc.stderr == ""
+
+
+def test_non_json_stdin_fails_closed():
+    proc = subprocess.run(
+        [sys.executable, str(HOOK_PATH), "--url", "http://127.0.0.1:1"],
+        input="not json at all",
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert proc.returncode == 3, proc.stderr
+    data = json.loads(proc.stdout)
+    assert data["decision"] == "ask"
+    assert proc.stderr == ""
+
+
+def test_unrecognized_hook_shape_fails_closed():
+    proc = subprocess.run(
+        [sys.executable, str(HOOK_PATH), "--url", "http://127.0.0.1:1"],
+        input=json.dumps({"foo": "bar"}),
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert proc.returncode == 3, proc.stderr
+    data = json.loads(proc.stdout)
+    assert data["decision"] == "ask"
+    assert proc.stderr == ""
