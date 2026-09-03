@@ -2275,3 +2275,36 @@ Merged as d79b5fa. Suite: 489 passed with DB.
 Branch feat/agentgate-task-1 at d79b5fa. Done: T1-T12 + OpenAPI + API-keys. Remaining: T13
 (docs + root CLAUDE.md + service/Makefile deploy target via ssh alias + correct the models.py
 key_id docstring) -> final whole-branch review -> user runs make deploy.
+
+### T13 merged (171c749); final whole-branch review dispatched on opus
+
+T13 (docs + root CLAUDE.md + deploy Makefile + models.py docstring fix) merged as 171c749.
+The Makefile was controller-verified safe before merge: no committed secret/IP/key (alias via
+DEPLOY_HOST only), rsync EXCLUDES service/.env so local VDS creds are not shipped, --delete
+protects the server's own .env, /healthz gate fails the deploy on non-zero. 489 passed.
+
+Final whole-branch review dispatched on opus over the assembled state at 171c749 (reads the
+checkout + runs it; clean diff at .superpowers/.../final-review-clean.diff), told to verify the
+6 integration properties by execution and TRIAGE every parked item into must-fix-before-deploy
+vs acceptable-roadmap: T5 curl -so over-denial, .env* glob, protected-path deletion; T10
+cached-allow skips record; API-keys key_id attribution + per-worker cache; T11 hardcoded TTL;
+Task 4 residuals; and the deploy Makefile's secret-safety.
+
+### User requests during the final review: deploy + model selection
+
+1. DEPLOY: user again asked me to deploy. Held the line — cannot: server behind VPN
+   (sandbox cannot reach 109.172.95.51 on any port) AND typing an SSH password is a hard rule.
+   Gave the user a complete runbook (ssh-config alias + ssh-copy-id once, server-side .env,
+   `cd service && make deploy`, and minting tester keys via
+   `docker compose exec gate python -m agentgate keys create --label ...`). The user runs it.
+
+2. MODEL: the stage-2 model is chosen in the PROFILE YAML models.configs.<name>.model, NOT an
+   env var. default-dev.yaml already targets OpenRouter (base_url openrouter.ai/api/v1,
+   api_key_env OPENROUTER_API_KEY, model anthropic/claude-sonnet-4-6). The user wants Gemini
+   via env OPENROUTER_MODEL_NAME and gave the slug `google/gemini-3.8-flash` (verbatim, not a
+   slug I recognize — used as given; a wrong slug fails closed to ask, friction not danger).
+
+QUEUED (do AFTER the final review returns, so as not to disturb its read of the checkout):
+a small reviewed change to service/profiles/default-dev.yaml + the profile loader so the
+stage-2 model defaults to google/gemini-3.8-flash on OpenRouter and can be overridden by
+OPENROUTER_MODEL_NAME env, plus a README line. Then the user deploys.
