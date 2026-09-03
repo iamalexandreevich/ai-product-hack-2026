@@ -22,6 +22,7 @@
 Ядро AgentGate: FastAPI-сервис `POST /v1/decide`, каскад «детерминированная ступень 1 → LLM-ступень 2».
 
 - Спека: `docs/superpowers/service/specs/2026-09-03-agentgate-v1-design.md` (читать можно, менять нельзя)
+- Дорожная карта по объёму контекста (v1→v4): `docs/superpowers/service/specs/context-versions-roadmap.md`. **Сейчас реализуется v1**: одно действие + последнее сообщение пользователя, без истории диалога.
 - План: `docs/superpowers/service/plans/2026-09-03-agentgate-v1.md` (читать можно, менять нельзя)
 
 ## Технические правила
