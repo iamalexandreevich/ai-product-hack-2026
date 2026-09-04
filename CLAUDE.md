@@ -2,7 +2,7 @@
 
 Читается первым. Актуальная спека v1: `docs/superpowers/service/specs/2026-09-03-agentgate-v1-design.md`. План: `docs/superpowers/service/plans/2026-09-03-agentgate-v1.md`. Исходные материалы (частично устарели, при расхождении права спека v1): `docs/base.md`, `docs/artifacts/`. Позиционирование: `docs/why-agentgate.md`.
 
-Дорожная карта версий (v1→v5: контекст на v1–v4, независимость от провайдера модели на v5), принятая владельцем продукта: `docs/superpowers/service/specs/context-versions-roadmap.md`. Стоимость решения в ответе (из трёх запрошенных полей два уже есть, нужна только цена): `docs/superpowers/service/specs/response-cost-reporting.md`. Спека API-ключей: `docs/superpowers/service/specs/api-keys.md`. Спека деплоя: `docs/superpowers/service/specs/deploy.md`. Сверка с контрактом адаптера (Gate↔Guard) и расхождение по fail-open/fail-closed: `docs/superpowers/service/specs/adapter-contract-gap-analysis.md`.
+Дорожная карта версий (v1→v5: контекст на v1–v4, независимость от провайдера модели на v5), принятая владельцем продукта: `docs/superpowers/service/specs/context-versions-roadmap.md`. Стоимость решения в ответе (из трёх запрошенных полей два уже есть, нужна только цена): `docs/superpowers/service/specs/response-cost-reporting.md`. Спека API-ключей: `docs/superpowers/service/specs/api-keys.md`. Спека деплоя: `docs/superpowers/service/specs/deploy.md`. Деплой v1.5 за HTTPS и подключение команды: `docs/superpowers/service/specs/2026-09-04-deploy-public-endpoint-design.md`, страница интегратора — `docs/connect.md`. Сверка с контрактом адаптера (Gate↔Guard) и расхождение по fail-open/fail-closed: `docs/superpowers/service/specs/adapter-contract-gap-analysis.md`.
 
 ## Что построено (v1 по функциям, v1.5 по форме кода)
 
@@ -70,6 +70,8 @@
 - **Fail-open vs fail-closed конфликт с контрактом адаптера** — контракт Gate↔Guard по умолчанию fail-open на клиенте, наш сервис жёстко fail-closed изнутри; разногласие и три варианта решения — в `adapter-contract-gap-analysis.md`. Не решено владельцем продукта на момент написания.
 - **`AGENTGATE_TOKEN` на non-localhost bind** по-прежнему обязателен и принимается наравне с ключами; более строгий вариант спеки api-keys.md («non-localhost принимает только ключи, токен игнорируется») в v1 сознательно не реализован — см. docstring `agentgate/api/deps.py`.
 - **Вызов без `session_id` берёт workspace из своего `cwd`.** Привязка к сессии закрыла дыру только для сессионных вызовов; бессессионный вызов с `cwd: "/"` по-прежнему расширяет `allowed_paths` до корня на этот один запрос. Закрыть — значит отвергать безсессионные запросы, это изменение контракта и решение владельца.
+- **Порт 8400 всё ещё открыт по HTTP** параллельно с HTTPS через Caddy — до тех пор, пока интеграторы не перейдут на `https://109.172.95.51.sslip.io`. Закрыть — одна строка в `docker-compose.yml` (`127.0.0.1:8400:8400`) и следующий `make deploy`.
+- **Имя `*.sslip.io` не в Public Suffix List**: недельный лимит Let's Encrypt общий на всех его пользователей; Caddy сам падает на ZeroSSL. Если и он откажет — купить домен, A-запись на сервер, поменять `AGENTGATE_PUBLIC_HOST` в серверном `.env`.
 - **Неизменяемость `NormalizedAction` поверхностная.** Само действие `frozen=True` (переписать поле нельзя), но `commands`/`paths`/`domains` — списки, а не кортежи: переход на кортежи ломает сравнение `cmd.argv[:len(p)] == p` в `allowlist.py` и молча выключает `safe_prefixes` оператора. Отдельная задача с правкой матчера и golden-тестов, не часть рефакторинга.
 
 ## Отчёты
