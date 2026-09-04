@@ -11,17 +11,18 @@ import httpx
 from httpx import ASGITransport
 
 from agentgate.api.app import create_app
-from agentgate.api.schemas import DecisionKind
+from agentgate.api.schemas import HISTORY_MAX_TURNS, PROTOCOL, DecisionKind
 from agentgate.config import Settings
 from agentgate.engine.gate import Gate
 from agentgate.log.jsonl import JsonlLogger
 from agentgate.rules.chain import STAGE1
 from agentgate.session.memory import InMemorySessionStateStore
 from agentgate.session.persistent import PersistentSessionStateStore
+from agentgate.session.replay import InMemoryReplayStore
 from agentgate.store.repo import DecisionRepo, SessionRepo
 from agentgate.store.writer import CompositeDecisionWriter, JsonlDecisionWriter, PostgresDecisionWriter
 from tests.conftest import requires_db
-from tests.factories import WORKSPACE, FakeClassifier, FakeSessionRecords, classifiers, profile
+from tests.factories import WORKSPACE, FakeClassifier, FakeSessionRecords, classifiers, profile, stage2_verdict
 
 
 class FakeDecisionRepo:
@@ -44,7 +45,7 @@ class FakeDecisionRepo:
 
 
 def build(tmp_path, token=None, bind="127.0.0.1:8400", classifier=None, db_ok=True,
-          gate=None, key_repo=None, sessions_broken=False, git_sha=None):
+          gate=None, key_repo=None, sessions_broken=False, git_sha=None, replay=None):
     settings = Settings(db_url="postgresql+asyncpg://x", token=token, bind=bind,
                         log_path=tmp_path / "d.jsonl", git_sha=git_sha)
     profiles = {"default": profile()}
@@ -61,7 +62,7 @@ def build(tmp_path, token=None, bind="127.0.0.1:8400", classifier=None, db_ok=Tr
         JsonlDecisionWriter(JsonlLogger(settings.log_path)),
         PostgresDecisionWriter(drepo, sessions, settings.allow_cache_ttl_seconds),
     ])
-    app = create_app(settings, gate, writer, drepo, profiles, db_probe=probe, key_repo=key_repo)
+    app = create_app(settings, gate, writer, drepo, profiles, db_probe=probe, key_repo=key_repo, replay=replay)
     return app, drepo, sessions, classifier
 
 
@@ -358,3 +359,100 @@ async def test_a_sessioned_decision_and_its_cache_row_reach_postgres(session_fac
     assert [row.id for row in stored] == [response.json()["decision_id"]]
     cached = await sessions.cache_load_valid()
     assert [(row[0], row[2]) for row in cached] == [("fresh-session", response.json()["decision_id"])]
+
+
+# --- v2: history, protocol, idempotency ------------------------------------
+
+
+def turn_dict(**over) -> dict:
+    base = dict(role="human", author="human", content="fix it")
+    base.update(over)
+    return base
+
+
+async def test_history_over_the_turn_limit_is_ask_with_its_own_rule_id(tmp_path):
+    app, _, _, _ = build(tmp_path)
+    r = await call(app, "POST", "/v1/decide", json=body(history=[turn_dict()] * (HISTORY_MAX_TURNS + 1)))
+    assert r.status_code == 200
+    assert (r.json()["decision"], r.json()["rule_id"], r.json()["stage"]) == ("ask", "api.history-too-large", 0)
+
+
+async def test_unsupported_protocol_is_ask_with_its_own_rule_id(tmp_path):
+    app, _, _, _ = build(tmp_path)
+    r = await call(app, "POST", "/v1/decide", json=body(protocol=2))
+    assert r.status_code == 200
+    assert (r.json()["decision"], r.json()["rule_id"]) == ("ask", "api.unsupported-protocol")
+
+
+async def test_invalid_turn_is_the_generic_invalid_request(tmp_path):
+    app, _, _, _ = build(tmp_path)
+    r = await call(app, "POST", "/v1/decide", json=body(history=[turn_dict(role="wizard")]))
+    assert (r.json()["decision"], r.json()["rule_id"]) == ("ask", "api.invalid-request")
+
+
+async def test_response_and_healthz_carry_the_protocol(tmp_path):
+    app, _, _, _ = build(tmp_path)
+    assert (await call(app, "POST", "/v1/decide", json=body())).json()["protocol"] == PROTOCOL
+    assert (await call(app, "GET", "/healthz")).json()["protocol"] == PROTOCOL
+
+
+async def test_history_reaches_the_classifier_through_the_api(tmp_path):
+    classifier = FakeClassifier(stage2_verdict("A"))
+    app, _, _, _ = build(tmp_path, classifier=classifier)
+    await call(app, "POST", "/v1/decide", json=body(raw="npm install lodash", history=[turn_dict(content="please")]))
+    assert classifier.cases[0].dialogue.turns[0].content == "please"
+
+
+async def test_repeat_with_the_same_key_replays_the_same_decision(tmp_path):
+    classifier = FakeClassifier(stage2_verdict("A"))
+    app, drepo, _, _ = build(tmp_path, classifier=classifier)
+    headers = {"idempotency-key": "abc"}
+    first = await call(app, "POST", "/v1/decide", json=body(raw="npm install lodash"), headers=headers)
+    second = await call(app, "POST", "/v1/decide", json=body(raw="npm install lodash"), headers=headers)
+    assert first.json() == second.json()
+    assert classifier.calls == 1
+    assert len(drepo.rows) == 1 and drepo.rows[0].to_record().idempotency_key == "abc"
+
+
+async def test_repeat_moves_no_session_counter_and_fills_no_allow_cache(tmp_path):
+    classifier = FakeClassifier(stage2_verdict("D", "bad"))
+    app, _, _, _ = build(tmp_path, classifier=classifier)
+    headers = {"idempotency-key": "k-deny"}
+    await call(app, "POST", "/v1/decide", json=body(raw="npm install lodahs"), headers=headers)
+    r = await call(app, "POST", "/v1/decide", json=body(raw="npm install lodahs"), headers=headers)
+    assert r.json()["decision"] == "deny" and classifier.calls == 1
+    third = await call(app, "POST", "/v1/decide", json=body(raw="ls"))
+    assert third.json()["decision"] == "allow"
+    lines = [json.loads(ln) for ln in (tmp_path / "d.jsonl").read_text().splitlines()]
+    assert [ln["decision"] for ln in lines] == ["deny", "allow"]
+
+
+async def test_different_keys_are_different_decisions(tmp_path):
+    classifier = FakeClassifier(stage2_verdict("A"))
+    app, drepo, _, _ = build(tmp_path, classifier=classifier)
+    await call(app, "POST", "/v1/decide", json=body(raw="npm install lodash"), headers={"idempotency-key": "a"})
+    await call(app, "POST", "/v1/decide", json=body(raw="npm install lodash", session_id="s2"), headers={"idempotency-key": "b"})
+    assert classifier.calls == 2 and len(drepo.rows) == 2
+
+
+async def test_empty_or_oversized_key_is_ignored(tmp_path):
+    classifier = FakeClassifier(stage2_verdict("A"))
+    app, _, _, _ = build(tmp_path, classifier=classifier)
+    for key in ("", "x" * 129):
+        await call(app, "POST", "/v1/decide", json=body(raw="npm install lodash", session_id=None), headers={"idempotency-key": key})
+    assert classifier.calls == 2
+
+
+async def test_an_invalid_body_is_not_stored_under_the_key(tmp_path):
+    app, _, _, _ = build(tmp_path)
+    headers = {"idempotency-key": "bad-body"}
+    await call(app, "POST", "/v1/decide", json={"harness": "t"}, headers=headers)
+    r = await call(app, "POST", "/v1/decide", json=body(), headers=headers)
+    assert r.json()["decision"] == "allow"
+
+
+async def test_a_replay_store_given_to_the_app_is_the_one_used(tmp_path):
+    replay = InMemoryReplayStore()
+    app, _, _, _ = build(tmp_path, replay=replay)
+    await call(app, "POST", "/v1/decide", json=body(), headers={"idempotency-key": "seen"})
+    assert (await replay.get("seen")) is not None

@@ -65,6 +65,14 @@ info:
     `session_id` there are no counters and no cache, and the decision is recorded
     with a null session.
 
+    ## History and idempotency (v2)
+
+    `history` is the dialogue that preceded the action, oldest turn first, each turn
+    with a `role` and an `author`; only `author: human` turns count as the user's
+    words. The service truncates it to the profile budget before it reaches the
+    stage-2 model and never shows it to stage 1. A repeat of a call with the same
+    `Idempotency-Key` header replays the stored decision unchanged.
+
     ## Implementation status
 
     All four routes are implemented, tested and running in v1. `POST /v1/decide`,
@@ -118,6 +126,14 @@ paths:
         is `null` when stage 2 decided. `latency_ms` reports per stage, with `null` for
         a stage that did not run. `decision_id` is a ULID and the primary key of the
         stored decision — quote it in bug reports.
+
+        **v2 fields.** `history` carries the dialogue that preceded the action
+        (see the `Turn` schema); it is optional, and an empty history behaves exactly
+        like v1. `protocol` names the contract version; this service answers `1` and
+        refuses any other value as `ask` with `rule_id: api.unsupported-protocol`. An
+        `Idempotency-Key` request header, at most 128 characters, makes a repeat of the
+        same call return the same decision (same `decision_id`) without touching
+        session counters or storing a second row; the key is opaque to the service.
 
         The request and response examples below are paired by name: `allow_safe_test`,
         `deny_unknown_package`, `ask_uncertain_db_cleanup`. The fourth response example
@@ -434,7 +450,8 @@ paths:
         `degraded` body, not a 5xx, signals a dependency is down. `git_sha` is the
         commit the running image was built from, or `null` for a build without it. A single `/healthz`
         right after a container start can briefly report `db: false` during connection
-        warmup and then recover.
+        warmup and then recover. `protocol` is the contract version served on
+        `POST /v1/decide`.
       operationId: healthz
       responses:
         '200':
@@ -919,6 +936,10 @@ components:
           title: Git Sha
           description: Full commit SHA the running image was built from; `null` when the image
             was built without it (local builds).
+        protocol:
+          type: integer
+          title: Protocol
+          description: Protocol version this service speaks on `POST /v1/decide`.
       additionalProperties: false
       type: object
       required:
@@ -926,6 +947,7 @@ components:
       - db
       - llm
       - git_sha
+      - protocol
       title: Health
       description: Response of `GET /healthz`. Always delivered with HTTP 200.
     History:
