@@ -10,12 +10,12 @@ Test DB: agentgate-pg on localhost:5433, AGENTGATE_TEST_DB_URL=postgresql+asyncp
 | 1 Verdict | a878160 | 449eb8d | sonnet DONE | APPROVED, 0 crit / 0 imp | **done** |
 | 2 Decision + writer | 449eb8d | bab29cc | sonnet DONE | NEEDS FIXES, 2 important | fix queued |
 | 3 RuleChain | bab29cc | cb5da99 | opus DONE_W_CONCERNS | APPROVED, 1 important | fix queued |
-| 4 shell/ + ParsedArgv | f9be1cb | | opus running | | implementing |
-| 5 Policy | | | | | pending |
-| 6 protocols + bootstrap | | | | | pending |
-| 7 CommandSpec | | | | | pending |
-| 8 OpenAPI | | | | | pending |
-| 9 docs | | | | | pending |
+| 4 shell/ + ParsedArgv | f9be1cb | e96a33c | opus DONE_W_CONCERNS | APPROVED, 1 important (fixed) | **done** |
+| 5 Policy | 9f5b3af | 61f6590 | opus DONE | APPROVED, 0 crit / 0 imp | **done** |
+| 6 protocols + bootstrap | 3e99027 | 04b4a50 | opus DONE_W_CONCERNS | APPROVED, 2 important (fixed) | **done** |
+| 7 CommandSpec | 04b4a50 | 3401230 | opus DONE_W_CONCERNS | NEEDS FIXES, 2 important (fixed) | **done** |
+| 8 OpenAPI | 6593e3e | 53cc9a7 | opus CRASHED (API 403), finished by controller | NEEDS FIXES, 3 important (fixed) | **done** |
+| 9 docs | 53cc9a7 | d4e505c | opus DONE | pending final branch review | **done** |
 
 ## Cadence (changed after task 1, at the user's request)
 
@@ -260,3 +260,26 @@ Open question for later: how to version server code from a monorepo carrying thr
 - Deviations upheld: `rm` at write_target NONE (the sketch's EVERY_POSITIONAL would have made
   `rm .env` an unoverridable hard deny); Role.WRITE and PathArguments.FLAG_VALUES unimplemented as
   dead or behaviour-changing; shell/paths.py placed correctly rather than papering over the cycle.
+
+- Tasks 8 and 9 closed. Nine of nine done: 29 commits, 667 tests, exit 0, contracts regenerate clean.
+
+- Task 8 was finished by the controller after its implementer crashed on an API 403 mid-task. Its
+  review then caught a circular claim in the controller's own sign-off package: the 422 on
+  GET /v1/profiles/{id} was not an answer the hand-written document had failed to describe — the task
+  had added max_length to the path parameter and the empirical check ran on the changed code. Three
+  undeclared constraints reverted, the unreachable 422 pruned, the report's schema section rewritten
+  (three real deltas it had denied), contracts/README.md's stale provisional note removed, and both
+  behaviours pinned by tests.
+
+- Task 9 shipped CLAUDE.md, service/CLAUDE.md, service/README.md and
+  docs/reports/task-v1.5-solid-refactor.md. Its "how to add" examples were verified by running the
+  stage 1 rule example verbatim against the live chain: the new rule fires on `kubectl delete pod`,
+  is silent on `kubectl get pods`, and leaves `ls -la` on allowlist.readonly.
+
+- Owner reminder recorded 4 Sept: an uncertain outcome must be ASK, never DENY. Verified as
+  implemented at four levels rather than assumed — prompt ("Answer U (uncertain) when a human should
+  confirm"), the U->ask mapping in classify/llm.py, four ambiguous.* rule ids that answer ask when a
+  rule recognises danger it cannot pin down, and fail-closed turning every error into ask. Live check:
+  `git push --force` -> ask/ambiguous.git-force, `env -S "echo hi"` -> ask/ambiguous.wrapper-opaque,
+  a nine-deep wrapper chain -> ask/ambiguous.wrapper-depth, an unterminated quote -> ask/unparseable,
+  and only the determinable `rm -rf /` -> deny.
