@@ -307,7 +307,6 @@ paths:
         schema:
           anyOf:
           - type: string
-            maxLength: 128
           - type: 'null'
           description: Return only decisions of this session.
           title: Session Id
@@ -318,7 +317,6 @@ paths:
         schema:
           anyOf:
           - type: string
-            maxLength: 64
           - type: 'null'
           description: Return only decisions taken with this model configuration. Decisions
             settled by stage 1 have no model.
@@ -394,7 +392,6 @@ paths:
         required: true
         schema:
           type: string
-          maxLength: 64
           description: Profile identifier, e.g. `default` or `default-dev`.
           title: Id
         description: Profile identifier, e.g. `default` or `default-dev`.
@@ -420,12 +417,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
   /healthz:
     get:
       tags:

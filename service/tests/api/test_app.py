@@ -256,6 +256,23 @@ async def test_profiles_endpoint(tmp_path):
     assert (await call(app, "GET", "/v1/profiles/nope")).status_code == 404
 
 
+async def test_unknown_profile_id_is_404_however_long_it_is(tmp_path):
+    # The id is unconstrained, so no value can fail validation: an absurd one
+    # is simply a profile that does not exist. The published document says so
+    # by documenting no 422 here.
+    app, _, _, _ = build(tmp_path)
+    assert (await call(app, "GET", "/v1/profiles/" + "x" * 200)).status_code == 404
+
+
+async def test_decisions_rejects_a_limit_outside_its_bounds(tmp_path):
+    # The one validation error the service really can answer with, and the
+    # hand-written contract used not to document it.
+    app, _, _, _ = build(tmp_path)
+    assert (await call(app, "GET", "/v1/decisions?limit=9999")).status_code == 422
+    assert (await call(app, "GET", "/v1/decisions?limit=0")).status_code == 422
+    assert (await call(app, "GET", "/v1/decisions?limit=500")).status_code == 200
+
+
 # --- GET /healthz ---------------------------------------------------------
 
 

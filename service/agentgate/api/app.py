@@ -283,12 +283,11 @@ def create_app(
     async def decisions(
         session_id: Annotated[
             str | None,
-            Query(max_length=128, description="Return only decisions of this session."),
+            Query(description="Return only decisions of this session."),
         ] = None,
         model: Annotated[
             str | None,
             Query(
-                max_length=64,
                 description=(
                     "Return only decisions taken with this model configuration. "
                     "Decisions settled by stage 1 have no model."
@@ -340,7 +339,6 @@ def create_app(
             str,
             Path(
                 alias="id",
-                max_length=64,
                 description="Profile identifier, e.g. `default` or `default-dev`.",
             ),
         ],

@@ -54,12 +54,52 @@ def install_openapi(app: FastAPI) -> None:
 
 def _published(app: FastAPI, document: dict[str, Any]) -> dict[str, Any]:
     _restore_declared_examples(app, document)
+    _drop_unreachable_validation_errors(document)
     components = {
         "securitySchemes": {"bearerAuth": BEARER_SCHEME},
         "schemas": dict(sorted((_request_schemas() | document["components"]["schemas"]).items())),
     }
     return _in_reading_order(
         document | {"security": OPTIONAL_BEARER, "components": components}
+    )
+
+
+def _drop_unreachable_validation_errors(document: dict[str, Any]) -> None:
+    """Remove the 422 from operations no request can provoke one from.
+
+    FastAPI documents a validation error for every operation that takes a
+    parameter, whether or not any value could fail one. `GET /v1/profiles/{id}`
+    takes an unconstrained string and answers 404 for anything it does not
+    recognise, so a documented 422 there describes an answer the service never
+    gives -- the same drift this document exists to prevent, pointing the other
+    way. `GET /v1/decisions` keeps its 422: `limit` is bounded 1..500 and
+    really does reject values outside it.
+    """
+    for item in document.get("paths", {}).values():
+        for operation in item.values():
+            responses = operation.get("responses", {})
+            if "422" in responses and not _can_reject_a_value(operation):
+                del responses["422"]
+
+
+def _can_reject_a_value(operation: dict[str, Any]) -> bool:
+    """True if some parameter of this operation constrains what it accepts."""
+    return any(
+        _is_constrained(parameter.get("schema", {}))
+        for parameter in operation.get("parameters", ())
+    )
+
+
+def _is_constrained(schema: dict[str, Any]) -> bool:
+    branches = [b for kind in ("anyOf", "allOf", "oneOf") for b in schema.get(kind, ())]
+    if branches:
+        return any(_is_constrained(branch) for branch in branches)
+    if schema.get("type") not in (None, "string", "null"):
+        return True
+    return any(
+        key in schema
+        for key in ("minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum",
+                    "minLength", "maxLength", "pattern", "enum")
     )
 
 
