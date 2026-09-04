@@ -4,8 +4,9 @@ each other -- renaming a test module must not break three others.
 
 from datetime import datetime, timezone
 
-from agentgate.api.schemas import DecideRequest, DecisionKind
+from agentgate.api.schemas import DecideRequest, DecisionKind, Turn
 from agentgate.classify.base import Classifier
+from agentgate.domain.dialogue import Dialogue
 from agentgate.domain.policy import Policy
 from agentgate.domain.session import SessionState
 from agentgate.domain.verdict import Verdict
@@ -171,6 +172,16 @@ def decide_request(raw: str, session_id: str | None = "s1", **overrides) -> Deci
     )
     data.update(overrides)
     return DecideRequest.model_validate(data)
+
+
+def turn(role: str = "human", author: str = "human", content: str = "fix the build", **overrides) -> Turn:
+    data = dict(role=role, author=author, content=content)
+    data.update(overrides)
+    return Turn.model_validate(data)
+
+
+def dialogue(*turns: Turn) -> Dialogue:
+    return Dialogue.of(turns)
 
 
 def session_state(session_id: str = "s1", **overrides) -> SessionState:
