@@ -1,6 +1,14 @@
-# AGENTGATE_PUBLIC_HOST is the canonical name; AGENTGATE_PUBLIC_ALIASES is an
+# AGENTGATE_PUBLIC_HOST is the canonical API name; AGENTGATE_PUBLIC_ALIASES is an
 # optional space-separated list of extra names served by the same site (used
-# while integrators migrate from an old name). Both come from the server .env.
+# while integrators migrate from an old name). AGENTGATE_SITE_HOSTS is the
+# space-separated list of names for the static landing page, served from
+# /srv/site (bind-mounted from the server's site directory, see
+# docker-compose.deploy.yml). All three come from the server .env.
 {$AGENTGATE_PUBLIC_HOST} {$AGENTGATE_PUBLIC_ALIASES} {
 	reverse_proxy gate:8400
+}
+
+{$AGENTGATE_SITE_HOSTS} {
+	root * /srv/site
+	file_server
 }

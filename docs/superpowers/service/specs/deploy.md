@@ -51,7 +51,7 @@ make rollback  — откат на предыдущий образ
 
 ### Вечер 4 сентября: v1.5 развёрнута за HTTPS
 
-Решения и результат — `2026-09-04-deploy-public-endpoint-design.md`, отчёт — `docs/reports/task-14-deploy.md`. Коротко: `main` на сервере, `https://api.openmagi.ru` через Caddy (домен `openmagi.ru` на Timeweb, A-записи `api`, `@`, `www` на сервер; алиас `109.172.95.51.sslip.io` и прямой порт 8400 закрыты тем же вечером, `gate` слушает только loopback), Postgres только на loopback, `git_sha` в `/healthz`, rsync по `.gitignore`. Из таблицы версионирования ниже выбран первый вариант. Страница для интеграторов — `docs/connect.md`.
+Решения и результат — `2026-09-04-deploy-public-endpoint-design.md`, отчёт — `docs/reports/task-14-deploy.md`. Коротко: `main` на сервере, `https://api.openmagi.ru` через Caddy (домен `openmagi.ru` на Timeweb, A-записи `api`, `@`, `www` на сервер; алиас `109.172.95.51.sslip.io` и прямой порт 8400 закрыты тем же вечером, `gate` слушает только loopback), Postgres только на loopback, `git_sha` в `/healthz`, rsync по `.gitignore`. Из таблицы версионирования ниже выбран первый вариант. Страница для интеграторов — `docs/connect.md`. Тем же вечером Caddy получил второй сайт: `openmagi.ru` и `www` отдают статику из `frontend/site/`, которую `make deploy` синхронизирует в `/opt/openmagi-site` (хосты — `AGENTGATE_SITE_HOSTS` серверного `.env`).
 
 ### Исправление к предыдущей редакции этого раздела
 

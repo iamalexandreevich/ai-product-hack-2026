@@ -27,6 +27,9 @@
 # `DEPLOY_HOST` names the ~/.ssh/config alias, not a hostname or IP.
 DEPLOY_HOST ?= agentgate
 DEPLOY_DIR ?= /opt/agentgate
+# Where the static landing page (../frontend/site) lands on the server;
+# docker-compose.deploy.yml bind-mounts it into Caddy.
+SITE_DIR ?= /opt/openmagi-site
 HEALTHZ_PORT ?= 8400
 
 # Server-side compose invocation: the base file plus the server-only
@@ -37,18 +40,19 @@ COMPOSE := docker compose -f docker-compose.yml -f docker-compose.deploy.yml
 .PHONY: deploy logs ps rollback check-clean
 
 # Refuse to ship a dirty working tree: `make deploy` deploys committed
-# code only. Scoped to `service/` (this Makefile's own directory), since
-# that is exactly what gets rsynced below -- uncommitted changes
-# elsewhere in the repo do not block a service deploy.
+# code only. Scoped to `service/` and `../frontend/`, since that is
+# exactly what gets rsynced below -- uncommitted changes elsewhere in
+# the repo do not block a deploy.
 check-clean:
-	@if [ -n "$$(git status --porcelain -- .)" ]; then \
-		echo "error: service/ has uncommitted changes -- refusing to deploy a dirty tree. Commit or stash first." >&2; \
+	@if [ -n "$$(git status --porcelain -- . ../frontend)" ]; then \
+		echo "error: service/ or frontend/ has uncommitted changes -- refusing to deploy a dirty tree. Commit or stash first." >&2; \
 		exit 1; \
 	fi
 
 # make deploy:
 #   1. check-clean (above)
-#   2. rsync the committed service/ tree to the server. Exclusions come
+#   2. rsync the committed service/ tree to the server, then ../frontend/site
+#      to $(SITE_DIR) for Caddy to serve. Exclusions come
 #      from .gitignore (one list, not three); two stay explicit: `.env`
 #      because the server's secrets must survive even if someone edits
 #      .gitignore, and `.previous_gate_image` because it is not ignored
@@ -70,6 +74,10 @@ deploy: check-clean
 		--exclude='.env' \
 		--exclude='.previous_gate_image' \
 		./ $(DEPLOY_HOST):$(DEPLOY_DIR)/
+	@echo "==> syncing frontend/site/ to $(DEPLOY_HOST):$(SITE_DIR)"
+	rsync -az --delete \
+		--filter=':- .gitignore' \
+		../frontend/site/ $(DEPLOY_HOST):$(SITE_DIR)/
 	@echo "==> building and starting containers on $(DEPLOY_HOST)"
 	ssh $(DEPLOY_HOST) 'set -e; cd $(DEPLOY_DIR) && \
 		PREV_IMAGE=$$($(COMPOSE) images -q gate 2>/dev/null || true); \
@@ -82,6 +90,9 @@ deploy: check-clean
 		PUBLIC_HOST=$$(ssh $(DEPLOY_HOST) "sed -n 's/^AGENTGATE_PUBLIC_HOST=//p' $(DEPLOY_DIR)/.env"); \
 		curl -fsS --retry 12 --retry-delay 5 --retry-all-errors "https://$$PUBLIC_HOST/healthz" \
 			&& echo && echo "==> https://$$PUBLIC_HOST is up"; \
+		SITE_HOST=$$(ssh $(DEPLOY_HOST) "sed -n 's/^AGENTGATE_SITE_HOSTS=//p' $(DEPLOY_DIR)/.env" | awk '{print $$1}'); \
+		curl -fsS --retry 12 --retry-delay 5 --retry-all-errors -o /dev/null "https://$$SITE_HOST/" \
+			&& echo "==> https://$$SITE_HOST is up"; \
 	else \
 		echo "error: /healthz did not come up within 30s -- deploy considered FAILED." >&2; \
 		echo "       inspect with 'make logs' / 'make ps'; consider 'make rollback'." >&2; \
