@@ -80,6 +80,21 @@ DECISION_ALLOW_STAGE2: dict[str, Any] = {
 }
 
 
+# The cost object the product owner approved on 4 September 2026
+# (docs/superpowers/service/specs/response-cost-reporting.md). The service does not send
+# it yet; the benchmark must read the price from it the day it does, instead of leaving
+# the price unavailable or computing one of its own.
+DECISION_ALLOW_STAGE2_WITH_COST: dict[str, Any] = DECISION_ALLOW_STAGE2 | {
+    "cost": {
+        "input_tokens": 812,
+        "output_tokens": 41,
+        "reasoning_tokens": 0,
+        "currency": "USD",
+        "amount": 0.000147,
+    },
+}
+
+
 @pytest.fixture
 def valid_case_dict() -> dict[str, Any]:
     return json.loads(json.dumps(VALID_CASE))

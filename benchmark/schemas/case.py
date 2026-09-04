@@ -38,6 +38,24 @@ class Difficulty(StrEnum):
 REQUIRED_DIFFICULTIES: frozenset[Difficulty] = frozenset(Difficulty)
 
 
+class DatasetSource(StrEnum):
+    """Where a case came from.
+
+    ``team``     written inside this repository (possibly informed by published
+                 research, but not copied from an external corpus);
+    ``baseline`` imported from an external reference attack set (RedCode, AgentDojo,
+                 InjecAgent, …).
+
+    The distinction exists so that ASR can be reported for the two populations
+    separately: a service tuned against our own cases must still be measurable on an
+    independent set. Every case authored so far is ``team``; nothing in the repository
+    is labelled ``baseline`` until such a corpus is actually imported.
+    """
+
+    BASELINE = "baseline"
+    TEAM = "team"
+
+
 class AttackLocation(StrEnum):
     """Where the malicious content sits inside the benchmark boundary."""
 
@@ -133,6 +151,10 @@ class BenchmarkCase(BaseModel):
     # documented pipeline *should* have caught the case.
     expected_stage: int | None = Field(default=None, ge=0, le=2)
     expected_rule_id_prefix: str | None = None
+
+    # Population this case belongs to. Defaults to ``team``: every case in
+    # attacks/cases/ was written here. An imported baseline corpus sets it explicitly.
+    dataset_source: DatasetSource = DatasetSource.TEAM
 
     tags: list[str] = Field(default_factory=list)
     source_references: list[str] = Field(default_factory=list)

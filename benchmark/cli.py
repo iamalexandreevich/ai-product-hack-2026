@@ -20,6 +20,7 @@ import json
 import logging
 import sys
 import uuid
+from collections import Counter
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -30,6 +31,7 @@ from dataset.validator import difficulty_coverage, validate_dataset
 from reporting.report import build_summary, render_failures, render_text, write_reports
 from runner.executor import BenchmarkRunner
 from runner.recorder import Recorder
+from schemas.case import DatasetSource
 from schemas.result import RunConfig
 from storage.sqlite import BenchmarkStore
 
@@ -82,6 +84,11 @@ def _cmd_validate(args: argparse.Namespace) -> int:
     print(f"cases: {len(report.cases)} in {len(coverage)} categor(ies)")
     for category, difficulties in sorted(coverage.items()):
         print(f"  {category:<32} {len(difficulties):>2}  {', '.join(sorted(difficulties))}")
+    sources = Counter(case.dataset_source.value for case in report.cases)
+    print(
+        "dataset sources: "
+        + (", ".join(f"{name} {n}" for name, n in sorted(sources.items())) or "none")
+    )
     print(f"errors: {len(report.errors)}   warnings: {len(report.warnings)}")
 
     if args.strict_warnings and report.warnings:
@@ -109,6 +116,7 @@ def _cmd_benchmark(args: argparse.Namespace) -> int:
             categories=args.category or None,
             difficulties=args.difficulty or None,
             case_ids=args.case_id or None,
+            dataset_sources=args.dataset_source or None,
         )
     except DatasetLoadError as exc:
         print(str(exc), file=sys.stderr)
@@ -148,6 +156,7 @@ def _cmd_benchmark(args: argparse.Namespace) -> int:
         category_filter=list(args.category or []),
         difficulty_filter=list(args.difficulty or []),
         case_filter=list(args.case_id or []),
+        dataset_source_filter=list(args.dataset_source or []),
         dataset_path=str(dataset_path),
         pricing_table_path=service_config.pricing.source_path,
         session_mode=args.session_mode,
@@ -311,6 +320,13 @@ def _build_parser() -> argparse.ArgumentParser:
     benchmark.add_argument("--difficulty", action="append", default=None)
     benchmark.add_argument("--case-id", action="append", default=None)
     benchmark.add_argument(
+        "--dataset-source",
+        action="append",
+        choices=[source.value for source in DatasetSource],
+        default=None,
+        help="run only cases from this population (baseline / team); repeatable",
+    )
+    benchmark.add_argument(
         "--subset",
         action="store_true",
         help="skip the 'exactly five cases per category' validation rule",
@@ -361,7 +377,9 @@ def _add_execution_args(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="exit non-zero when any case fails (useful in CI)",
     )
-    parser.set_defaults(subset=False, category=None, difficulty=None, case_id=None)
+    parser.set_defaults(
+        subset=False, category=None, difficulty=None, case_id=None, dataset_source=None
+    )
 
 
 def _has_filters(args: argparse.Namespace) -> bool:
@@ -369,6 +387,7 @@ def _has_filters(args: argparse.Namespace) -> bool:
         getattr(args, "category", None)
         or getattr(args, "difficulty", None)
         or getattr(args, "case_id", None)
+        or getattr(args, "dataset_source", None)
     )
 
 

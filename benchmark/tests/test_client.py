@@ -17,7 +17,12 @@ from client.security_service import (
 from config import ModelPrice, PricingTable, ServiceConfig
 from schemas.case import BenchmarkCase, ToolCall
 from schemas.result import ComponentsSource, CostSource, ModelSource, ServiceResultType
-from tests.conftest import DECISION_ALLOW_STAGE2, DECISION_DENY, VALID_CASE
+from tests.conftest import (
+    DECISION_ALLOW_STAGE2,
+    DECISION_ALLOW_STAGE2_WITH_COST,
+    DECISION_DENY,
+    VALID_CASE,
+)
 
 # -- request ----------------------------------------------------------------
 
@@ -327,3 +332,68 @@ def test_healthz_reports_status(service_config: ServiceConfig):
     healthy, payload = asyncio.run(scenario())
     assert healthy is True
     assert payload == {"status": "ok", "version": "0.1.0"}
+
+
+# -- price, response time and stage, straight from the service ---------------
+
+
+def test_price_is_read_from_the_service_cost_object(service_config: ServiceConfig):
+    """The approved ``cost`` object wins over any local computation."""
+    response = normalize_response(
+        DECISION_ALLOW_STAGE2_WITH_COST, http_status=200, config=service_config
+    )
+    assert response.cost == 0.000147
+    assert response.cost_source is CostSource.SERVICE_REPORTED
+    assert response.cost_currency == "USD"
+    assert response.cost_unavailable_reason is None
+    assert response.usage.input_tokens == 812
+    assert response.usage.output_tokens == 41
+    assert response.usage.total_tokens == 853
+
+
+def test_service_price_is_not_recomputed_from_a_pricing_table():
+    """A pricing table never overrides a price the service itself reported."""
+    config = ServiceConfig(
+        resolve_model_metadata=False,
+        pricing=PricingTable(models={"sonnet": ModelPrice(input_per_1m=3.0, output_per_1m=15.0)}),
+    )
+    response = normalize_response(DECISION_ALLOW_STAGE2_WITH_COST, http_status=200, config=config)
+    assert response.cost == 0.000147
+    assert response.cost_source is CostSource.SERVICE_REPORTED
+
+
+def test_tokens_alone_still_produce_a_price_with_the_table_currency():
+    config = ServiceConfig(
+        resolve_model_metadata=False,
+        pricing=PricingTable(
+            currency="EUR", models={"sonnet": ModelPrice(input_per_1m=3.0, output_per_1m=15.0)}
+        ),
+    )
+    payload = DECISION_ALLOW_STAGE2 | {"cost": {"input_tokens": 1_000, "output_tokens": 200}}
+    response = normalize_response(payload, http_status=200, config=config)
+    assert response.cost == (1_000 * 3.0 + 200 * 15.0) / 1e6
+    assert response.cost_source is CostSource.COMPUTED_FROM_TOKENS
+    assert response.cost_currency == "EUR"
+
+
+def test_missing_price_is_absent_not_zero(service_config: ServiceConfig):
+    response = normalize_response(DECISION_DENY, http_status=200, config=service_config)
+    assert response.cost is None
+    assert response.cost_currency is None
+    assert response.cost_source is CostSource.UNAVAILABLE
+    assert response.cost_unavailable_reason
+
+
+def test_response_time_and_stage_are_taken_from_the_service(service_config: ServiceConfig):
+    response = normalize_response(DECISION_ALLOW_STAGE2, http_status=200, config=service_config)
+    assert response.latency_total_ms == 85.2
+    assert response.latency_stage1_ms == 0.5
+    assert response.latency_stage2_ms == 84.0
+    assert response.stage == 2
+
+
+def test_absent_response_time_and_stage_stay_none(service_config: ServiceConfig):
+    payload = {"decision": "ask", "reason": "r", "decision_id": "01J"}
+    response = normalize_response(payload, http_status=200, config=service_config)
+    assert response.latency_total_ms is None
+    assert response.stage is None

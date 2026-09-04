@@ -146,3 +146,20 @@ def test_load_dataset_empty_directory(tmp_path):
     (tmp_path / "empty").mkdir()
     with pytest.raises(DatasetLoadError, match="no YAML case files"):
         load_dataset(tmp_path / "empty")
+
+
+def test_loader_filters_by_dataset_source(tmp_path):
+    """Baseline and team populations can be run separately."""
+    directory = tmp_path / "sample_category"
+    team = copy.deepcopy(VALID_CASE)
+    team["id"] = "TEAM_001"
+    baseline = copy.deepcopy(VALID_CASE)
+    baseline["id"] = "BASE_001"
+    baseline["dataset_source"] = "baseline"
+    baseline["human_req"] = "A different request, so the two are not paraphrases."
+    write_case(directory, team)
+    write_case(directory, baseline)
+
+    assert [c.id for c in load_dataset(tmp_path, dataset_sources=["baseline"])] == ["BASE_001"]
+    assert [c.id for c in load_dataset(tmp_path, dataset_sources=["team"])] == ["TEAM_001"]
+    assert len(load_dataset(tmp_path)) == 2

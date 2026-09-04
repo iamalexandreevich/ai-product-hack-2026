@@ -11,9 +11,15 @@ import pytest
 
 from client.security_service import SecurityServiceClient
 from runner.executor import BenchmarkRunner, execute_case, measure_ms
-from schemas.case import BenchmarkCase
+from schemas.case import BenchmarkCase, DatasetSource
 from schemas.result import ComponentsSource, CostSource, ModelSource, RunConfig, ServiceResultType
-from tests.conftest import DECISION_ALLOW_STAGE2, DECISION_DENY, VALID_CASE
+from tests.conftest import (
+    BENIGN_CASE,
+    DECISION_ALLOW_STAGE2,
+    DECISION_ALLOW_STAGE2_WITH_COST,
+    DECISION_DENY,
+    VALID_CASE,
+)
 
 
 def _cases(n: int) -> list[BenchmarkCase]:
@@ -208,3 +214,69 @@ def test_metadata_carries_run_and_case_id(service_config):
     _run(handler, _cases(1), service_config)
     assert seen[0]["run_id"] == "run-1"
     assert seen[0]["case_id"] == "SAMPLE_001"
+
+
+# -- what one executed case must carry ---------------------------------------
+
+
+def test_server_price_response_time_and_stage_reach_the_result(service_config):
+    """The three server-provided fields survive execution unchanged."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=DECISION_ALLOW_STAGE2_WITH_COST)
+
+    result = _run(handler, _cases(1), service_config)
+
+    assert result.cost == 0.000147
+    assert result.cost_currency == "USD"
+    assert result.cost_source is CostSource.SERVICE_REPORTED
+    assert result.service_latency_total_ms == 85.2
+    assert result.service_latency_stage1_ms == 0.5
+    assert result.service_latency_stage2_ms == 84.0
+    assert result.stage == 2
+    # client wall clock stays a separate concept, never a substitute
+    assert result.execution_time_ms != result.service_latency_total_ms
+
+
+def test_a_missing_server_price_stays_missing(service_config):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=DECISION_DENY)
+
+    result = _run(handler, _cases(1), service_config)
+    assert result.cost is None
+    assert result.cost_currency is None
+    assert result.cost_unavailable_reason
+
+
+def test_attack_type_difficulty_and_dataset_source_come_from_the_case(service_config):
+    """Attack metadata is benchmark-side and is never inferred from the response."""
+    payload = copy.deepcopy(VALID_CASE)
+    payload["difficulty"] = "adversarial"
+    payload["dataset_source"] = "baseline"
+    case = BenchmarkCase.model_validate(payload)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=DECISION_ALLOW_STAGE2)
+
+    result = _run(handler, [case], service_config)
+
+    assert result.attack_category == "sample_category"
+    assert result.difficulty.value == "adversarial"
+    assert result.dataset_source is DatasetSource.BASELINE
+    assert result.is_benign is False
+    assert result.attack_success is True
+
+
+def test_a_legitimate_case_is_recorded_as_a_legitimate_task(service_config):
+    case = BenchmarkCase.model_validate(copy.deepcopy(BENIGN_CASE))
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=DECISION_ALLOW_STAGE2)
+
+    result = _run(handler, [case], service_config)
+
+    assert result.is_benign is True
+    assert result.dataset_source is DatasetSource.TEAM
+    assert result.task_success is True
+    assert result.attack_success is None
+    assert result.human_decision_count == 0

@@ -29,7 +29,14 @@ DEFAULT_HARNESS = "bench"
 # nothing else. They are probed anyway so that a later contract extension is picked up
 # without a code change; when none of them resolves, cost stays ``None`` with an
 # explicit reason. Cost is never guessed.
+#
+# ``cost.*`` is the shape the owner approved on 4 September 2026 in
+# docs/superpowers/service/specs/response-cost-reporting.md — an object
+# ``{input_tokens, output_tokens, reasoning_tokens, currency, amount}`` on the decide
+# response. It is probed here so that the day the service ships it, the benchmark reads
+# the price from the service instead of silently reporting it as unavailable.
 DEFAULT_INPUT_TOKEN_PATHS: tuple[str, ...] = (
+    "cost.input_tokens",
     "usage.input_tokens",
     "usage.prompt_tokens",
     "model_usage.input_tokens",
@@ -37,6 +44,7 @@ DEFAULT_INPUT_TOKEN_PATHS: tuple[str, ...] = (
     "model_raw_response.usage.prompt_tokens",
 )
 DEFAULT_OUTPUT_TOKEN_PATHS: tuple[str, ...] = (
+    "cost.output_tokens",
     "usage.output_tokens",
     "usage.completion_tokens",
     "model_usage.output_tokens",
@@ -44,15 +52,22 @@ DEFAULT_OUTPUT_TOKEN_PATHS: tuple[str, ...] = (
     "model_raw_response.usage.completion_tokens",
 )
 DEFAULT_TOTAL_TOKEN_PATHS: tuple[str, ...] = (
+    "cost.total_tokens",
     "usage.total_tokens",
     "model_usage.total_tokens",
     "model_raw_response.usage.total_tokens",
 )
 DEFAULT_COST_PATHS: tuple[str, ...] = (
+    "cost.amount",
     "cost",
     "usage.cost",
     "model_usage.cost",
     "model_raw_response.usage.cost",
+)
+DEFAULT_CURRENCY_PATHS: tuple[str, ...] = (
+    "cost.currency",
+    "usage.currency",
+    "currency",
 )
 
 
@@ -120,6 +135,7 @@ class ServiceConfig:
     output_token_paths: tuple[str, ...] = DEFAULT_OUTPUT_TOKEN_PATHS
     total_token_paths: tuple[str, ...] = DEFAULT_TOTAL_TOKEN_PATHS
     cost_paths: tuple[str, ...] = DEFAULT_COST_PATHS
+    currency_paths: tuple[str, ...] = DEFAULT_CURRENCY_PATHS
     pricing: PricingTable = field(default_factory=PricingTable)
 
     @property
