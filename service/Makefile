@@ -57,6 +57,9 @@ check-clean:
 #      synced source, no local build/push/registry involved)
 #   4. apply migrations inside the running `gate` container
 #   5. curl /healthz on the server; a non-zero exit fails the deploy
+#   6. curl /healthz over HTTPS from here, with retries: on the very first
+#      deploy Caddy is still obtaining the certificate when the server-side
+#      check passes, and the TLS handshake fails for up to a minute
 #
 # Nothing here carries a secret: ssh/rsync resolve $(DEPLOY_HOST) purely
 # through the operator's ~/.ssh/config alias.
@@ -77,7 +80,8 @@ deploy: check-clean
 	@if ssh $(DEPLOY_HOST) 'for i in $$(seq 1 30); do curl -fsS http://localhost:$(HEALTHZ_PORT)/healthz >/dev/null 2>&1 && exit 0; sleep 1; done; exit 1'; then \
 		echo "==> deploy OK on the server; checking from here over HTTPS"; \
 		PUBLIC_HOST=$$(ssh $(DEPLOY_HOST) "sed -n 's/^AGENTGATE_PUBLIC_HOST=//p' $(DEPLOY_DIR)/.env"); \
-		curl -fsS "https://$$PUBLIC_HOST/healthz" && echo && echo "==> https://$$PUBLIC_HOST is up"; \
+		curl -fsS --retry 12 --retry-delay 5 --retry-all-errors "https://$$PUBLIC_HOST/healthz" \
+			&& echo && echo "==> https://$$PUBLIC_HOST is up"; \
 	else \
 		echo "error: /healthz did not come up within 30s -- deploy considered FAILED." >&2; \
 		echo "       inspect with 'make logs' / 'make ps'; consider 'make rollback'." >&2; \
