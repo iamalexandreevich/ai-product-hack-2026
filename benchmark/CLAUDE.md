@@ -6,10 +6,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `benchmark/` is direction 3 of AgentGate. The system under test is **an automode implementation** —
 something standing between a coding agent and the OS that answers `allow | deny | ask`. The
-benchmark reaches one through an `AutomodeAdapter` (`automode/base.py`), and the only implementation
-that exists today is our own service over HTTP (`ServerAutomodeAdapter`, `POST /v1/decide`), which
-stays the default. A future implementation (`Claude Code + native Auto Mode` through the Claude Code
-SDK) would be a second class behind the same protocol; it does not exist and must not be stubbed.
+benchmark reaches one through an `AutomodeAdapter` (`automode/base.py`). Two implementations exist:
+`ServerAutomodeAdapter` (our own service over HTTP, `POST /v1/decide`), the default; and
+`ClaudeCodeAutomodeAdapter` (`automode/claude_code.py`), which poses the same `(user_request, action)`
+pair to Claude Code's native auto-mode classifier through the Claude Agent SDK — guardrail-vs-guardrail,
+the methodology guardrail benchmarks use (TraceSafe-style pre-action evaluation), not the
+environment-and-outcome methodology of AgentDojo/AgentHarm. The Claude Code adapter is opt-in
+(`--adapter claude-code`), needs a disposable network-isolated sandbox (a classifier allow executes
+the command), and today reproduces only `shell` cases; the rest return no decision with a reason.
 
 The benchmark-side package is `automode/`, never `adapters/`: repo-root `adapters/` is direction 1
 — the harness plugins (opencode / claude-code / codex / kilo) that call our service in production.
@@ -34,7 +38,7 @@ All commands run from `benchmark/`.
 ```bash
 uv sync                                                    # deps (pydantic, pyyaml, httpx; dev: pytest, ruff)
 
-uv run pytest                                              # 185 unit tests, no network
+uv run pytest                                              # 204 unit tests, no network
 uv run pytest tests/test_scorer.py::test_error_always_scores_zero   # one test
 uv run pytest -m live                                      # 2 more, needs a live service at SECURITY_SERVICE_URL
 
@@ -76,23 +80,35 @@ imports read `from schemas.case import BenchmarkCase`, never `from benchmark.sch
 One case flows through:
 
 ```
-cli.py → dataset (load + validate) → runner.executor → automode.server (AutomodeAdapter)
-       → client.security_service → evaluator.scorer → runner.recorder → storage.sqlite
-       → evaluator.metrics → reporting.report
+cli.py → dataset (load + validate) → runner.executor → automode adapter (AutomodeAdapter)
+       → transport (client.security_service | automode.sdk) → evaluator.scorer
+       → runner.recorder → storage.sqlite → evaluator.metrics → reporting.report
 ```
 
 `automode/` is the only seam. `runner/executor.py` is typed to the `AutomodeAdapter` protocol and
-imports nothing from `client/` or `config.py` (a test asserts that); `automode/server.py` is the only
-production module that knows both a benchmark case and `SecurityServiceClient`; the dataset, the
-scorer, the metrics, the storage and the reports are shared by every implementation.
+imports nothing from `client/` or `config.py` (a test asserts that); `automode/server.py` and
+`automode/claude_code.py` are the only production modules that know a benchmark case and a concrete
+transport; the dataset, the scorer, the metrics, the storage and the reports are shared by every
+implementation. `automode/sdk.py` is the one place that touches the Claude Agent SDK and is imported
+lazily, so the whole test suite runs without `claude-agent-sdk` installed (it lives in the optional
+`claude` dependency group). The Claude Code verdict logic (`interpret`) is a pure function, tested
+branch by branch with no SDK, no network and no spend.
 
 **How to add an adapter:** write a class with `name: str` and
 `async def execute(case, *, run_id) -> AutomodeExecutionResult`, construct it in `cli.py` (the only
-composition root), and add nothing to the runner or the metrics. There is deliberately no
-`--adapter` flag, no registry and no plugin discovery — a selection mechanism with one choice is the
-branch this seam exists to avoid; it is added by whoever adds the second adapter. Note what the seam
-does *not* solve: `BenchmarkResult` still assumes one decision per case (`human_decision_count`,
-`attack_success`, `task_success`), and a whole-task implementation will still need work there.
+composition root), and add nothing to the runner or the metrics. The `--adapter` flag now exists
+because a second adapter does; adding a third is one `choices=` entry plus a composition branch in
+`cli.py`, never a registry or plugin discovery. Note what the seam still does *not* solve:
+`BenchmarkResult` assumes one decision per case (`human_decision_count`, `attack_success`,
+`task_success`), so a whole-task, environment-and-outcome adapter would need work there;
+`ClaudeCodeAutomodeAdapter` fits the one-decision boundary and does not.
+
+**Comparing runs:** `cli.py compare RUN_A RUN_B` reads two stored runs and prints a paired,
+guardrail-vs-guardrail comparison — restricted to cases *both* runs decided, because a run that
+rendered no decision on a case never saw the action. Cost is intentionally absent from the
+comparison: the two adapters price on different bases (the server prices one decision; Claude Code's
+cost is whole-session, agent plus classifier). The numbers come from `evaluator/metrics.py::compare_runs`;
+`reporting/report.py::render_comparison` only formats them.
 
 Each module owns one boundary: `client/` is the only place that knows the HTTP contract,
 `evaluator/scorer.py` is the only place that decides pass/fail, `evaluator/metrics.py` is the only

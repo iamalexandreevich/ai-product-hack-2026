@@ -17,6 +17,11 @@ dev = [
     "pytest>=8.3",
     "ruff>=0.16.5",
 ]
+# Optional: only needed to run the Claude Code adapter (`--adapter claude-code`).
+# The core benchmark, the server adapter, and the whole unit-test suite never import it.
+claude = [
+    "claude-agent-sdk>=0.2.152",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -16,7 +16,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from evaluator.metrics import compute_run_metrics, percentile
+from evaluator.metrics import compare_runs, compute_run_metrics, percentile
 from schemas.result import BenchmarkResult, ExecutionMode, RunConfig
 
 MAX_FAILURE_DETAIL = 4000
@@ -24,6 +24,7 @@ MAX_FAILURE_DETAIL = 4000
 __all__ = [
     "build_summary",
     "percentile",
+    "render_comparison",
     "render_failures",
     "render_text",
     "write_reports",
@@ -378,6 +379,60 @@ def _ratio(part: int, whole: int) -> float | None:
 
 def _mean(values: list[float]) -> float | None:
     return sum(values) / len(values) if values else None
+
+
+def render_comparison(
+    results_a: list[BenchmarkResult],
+    results_b: list[BenchmarkResult],
+    *,
+    label_a: str,
+    label_b: str,
+) -> str:
+    """Format a two-run comparison. Formats only; every number comes from ``compare_runs``."""
+    cmp = compare_runs(results_a, results_b)
+    over_a, over_b = cmp["overall"]["a"], cmp["overall"]["b"]
+    paired = cmp["paired"]
+    pa, pb = paired["a"], paired["b"]
+
+    def row(name: str, va: str, vb: str) -> str:
+        return f"  {name:<22} {va:>16} {vb:>16}"
+
+    lines: list[str] = []
+    lines.append("=" * 78)
+    lines.append("AgentGate Benchmark V1 - run comparison")
+    lines.append("=" * 78)
+    lines.append(row("", label_a, label_b))
+    lines.append(row("adapter", str(over_a["adapter_name"]), str(over_b["adapter_name"])))
+    lines.append("")
+    lines.append("-- overall (each run's whole population) ---------------------------------")
+    lines.append(row("cases", str(over_a["cases"]), str(over_b["cases"])))
+    lines.append(row("no decision", str(over_a["no_decision"]), str(over_b["no_decision"])))
+    lines.append(row("ASR", _pct(over_a["asr"]), _pct(over_b["asr"])))
+    lines.append(row("Utility", _pct(over_a["utility"]), _pct(over_b["utility"])))
+    lines.append(
+        row("FP rate", _pct(over_a["false_positive_rate"]), _pct(over_b["false_positive_rate"]))
+    )
+    lines.append("")
+    lines.append(
+        f"-- paired (the {paired['cases_compared']} case(s) both runs decided; "
+        f"{paired['cases_in_both_runs']} in both runs) --"
+    )
+    lines.append(row("ASR", _pct(pa["asr"]), _pct(pb["asr"])))
+    lines.append(row("Utility", _pct(pa["utility"]), _pct(pb["utility"])))
+    lines.append(row("FP rate", _pct(pa["false_positive_rate"]), _pct(pb["false_positive_rate"])))
+    lines.append("")
+    disagreements = paired["disagreements"]
+    lines.append(f"-- disagreements on paired cases: {len(disagreements)} --")
+    for d in disagreements:
+        kind = "benign" if d["is_benign"] else "attack"
+        lines.append(f"  {d['case_id']:<32} {kind:<7} {label_a}={d['a']:<6} {label_b}={d['b']}")
+    lines.append("")
+    lines.append(
+        "note: overall rates are over different populations and are not directly "
+        "comparable; use the paired block. Cost is intentionally absent - the two "
+        "adapters price on different bases (see the report)."
+    )
+    return "\n".join(lines)
 
 
 def _pct(value: float | None) -> str:

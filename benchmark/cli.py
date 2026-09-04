@@ -24,12 +24,19 @@ from collections import Counter
 from pathlib import Path
 from urllib.parse import urlparse
 
+from automode.claude_code import ClaudeCodeAutomodeAdapter
 from automode.server import ServerAutomodeAdapter
 from client.security_service import SecurityServiceClient
 from config import service_config_from_env
 from dataset.loader import DatasetLoadError, load_dataset
 from dataset.validator import difficulty_coverage, validate_dataset
-from reporting.report import build_summary, render_failures, render_text, write_reports
+from reporting.report import (
+    build_summary,
+    render_comparison,
+    render_failures,
+    render_text,
+    write_reports,
+)
 from runner.executor import BenchmarkRunner
 from runner.recorder import Recorder
 from schemas.case import DatasetSource
@@ -64,6 +71,8 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_benchmark(args)
         case "report":
             return _cmd_report(args)
+        case "compare":
+            return _cmd_compare(args)
         case "runs":
             return _cmd_runs(args)
         case _:  # pragma: no cover - argparse guarantees a command
@@ -126,6 +135,9 @@ def _cmd_benchmark(args: argparse.Namespace) -> int:
     if not cases:
         print("no cases selected by the given filters", file=sys.stderr)
         return 1
+
+    if args.adapter == "claude-code":
+        return _run_claude_code(args, cases, dataset_path)
 
     service_config = service_config_from_env(
         url=args.url,
@@ -192,17 +204,128 @@ def _cmd_benchmark(args: argparse.Namespace) -> int:
         if store is not None:
             store.close()
 
+    return _report_and_exit(results, run_config, run_id, out_dir, args, db_shown=store is not None)
+
+
+def _run_claude_code(args: argparse.Namespace, cases: list, dataset_path: Path) -> int:
+    """Composition root for the Claude Code adapter path.
+
+    Kept separate from the server path on purpose: there is no service URL, no health
+    check, and no ``--allow-remote`` gate here; instead there is a hard sandbox gate,
+    because a classifier allow executes the case's command.
+    """
+    if not args.sandbox or not args.i_have_a_sandbox:
+        print(
+            "the claude-code adapter runs real commands when the classifier allows them.\n"
+            "Pass --sandbox <dir> pointing at a disposable, network-isolated sandbox and "
+            "--i-have-a-sandbox to affirm it. The dataset contains reverse shells and "
+            "destructive removals; do not point this at a real machine.",
+            file=sys.stderr,
+        )
+        return 2
+
+    run_config = RunConfig(
+        adapter_name=ClaudeCodeAutomodeAdapter.name,
+        # RunConfig is still partly server-shaped (service_url has no default); record the
+        # sandbox here so the stored run and the report header say what was measured.
+        service_url=f"claude-code-sdk (sandbox: {args.sandbox})",
+        model=args.claude_model,
+        harness="claude-code",
+        concurrency=args.concurrency,
+        strict_scoring=args.strict,
+        category_filter=list(args.category or []),
+        difficulty_filter=list(args.difficulty or []),
+        case_filter=list(args.case_id or []),
+        dataset_source_filter=list(args.dataset_source or []),
+        dataset_path=str(dataset_path),
+        session_mode="per_case",
+        execution_mode=ExecutionMode(args.execution_mode),
+    )
+
+    if args.dry_run:
+        print(f"{len(cases)} case(s) selected; dry run, no Claude Code sessions started:")
+        for case in cases:
+            print(f"  {case.id:<38} {case.attack_category}/{case.difficulty.value}")
+        return 0
+
+    run_id = args.run_id or str(uuid.uuid4())
+    store = None if args.no_db else BenchmarkStore(Path(args.db))
+    out_dir = Path(args.out)
+    adapter = ClaudeCodeAutomodeAdapter(
+        args.sandbox, sandbox_confirmed=True, model=args.claude_model
+    )
+
+    try:
+        results = asyncio.run(
+            _run_with_adapter(
+                adapter=adapter,
+                cases=cases,
+                run_config=run_config,
+                run_id=run_id,
+                store=store,
+                out_dir=out_dir,
+                progress=not args.quiet,
+            )
+        )
+    finally:
+        if store is not None:
+            store.close()
+
+    return _report_and_exit(results, run_config, run_id, out_dir, args, db_shown=store is not None)
+
+
+def _report_and_exit(
+    results: list,
+    run_config: RunConfig,
+    run_id: str,
+    out_dir: Path,
+    args: argparse.Namespace,
+    *,
+    db_shown: bool,
+) -> int:
     summary = build_summary(results, run_id=run_id, config=run_config)
     paths = write_reports(results, summary, out_dir, run_id=run_id)
 
     print()
     print(render_text(summary))
     print(f"reports: {paths['summary_json']}, {paths['results_jsonl']}, {paths['failures_txt']}")
-    if store is not None:
+    if db_shown:
         print(f"database: {args.db}")
 
     failed = summary["totals"]["failed"]
     return 1 if failed and args.fail_on_error else 0
+
+
+async def _run_with_adapter(
+    *,
+    adapter,
+    cases: list,
+    run_config: RunConfig,
+    run_id: str,
+    store: BenchmarkStore | None,
+    out_dir: Path,
+    progress: bool,
+    service_version: str | None = None,
+) -> list:
+    """Store, stream and run one already-constructed adapter. Shared by every path."""
+    if store is not None:
+        store.upsert_cases(cases)
+        store.start_run(run_id, run_config, total_cases=len(cases), service_version=service_version)
+
+    if progress:
+        print(f"run {run_id}: {len(cases)} case(s) -> adapter={adapter.name}")
+
+    with Recorder(
+        store=store,
+        jsonl_path=out_dir / f"stream-{run_id}.jsonl",
+        progress=progress,
+    ) as recorder:
+        runner = BenchmarkRunner(adapter, run_config, run_id=run_id, on_result=recorder.record)
+        results = await runner.run(cases)
+
+    if store is not None:
+        store.finish_run(run_id)
+    return results
 
 
 async def _execute(
@@ -230,27 +353,17 @@ async def _execute(
                 version = payload.get("version") or payload.get("service_version")
                 service_version = str(version) if version else None
 
-        if store is not None:
-            store.upsert_cases(cases)
-            store.start_run(
-                run_id, run_config, total_cases=len(cases), service_version=service_version
-            )
-
-        if progress:
-            print(f"run {run_id}: {len(cases)} case(s) -> {service_config.decide_url}")
-
-        with Recorder(
+        adapter = ServerAutomodeAdapter(client, session_mode=run_config.session_mode)
+        return await _run_with_adapter(
+            adapter=adapter,
+            cases=cases,
+            run_config=run_config,
+            run_id=run_id,
             store=store,
-            jsonl_path=out_dir / f"stream-{run_id}.jsonl",
+            out_dir=out_dir,
             progress=progress,
-        ) as recorder:
-            adapter = ServerAutomodeAdapter(client, session_mode=run_config.session_mode)
-            runner = BenchmarkRunner(adapter, run_config, run_id=run_id, on_result=recorder.record)
-            results = await runner.run(cases)
-
-        if store is not None:
-            store.finish_run(run_id)
-        return results
+            service_version=service_version,
+        )
 
 
 def _cmd_report(args: argparse.Namespace) -> int:
@@ -277,6 +390,27 @@ def _cmd_report(args: argparse.Namespace) -> int:
     if args.out:
         paths = write_reports(results, summary, Path(args.out), run_id=run_id)
         print(f"reports written to {paths['summary_json'].parent}")
+    return 0
+
+
+def _cmd_compare(args: argparse.Namespace) -> int:
+    run_a, run_b = args.run_ids
+    with BenchmarkStore(Path(args.db)) as store:
+        results_a = store.load_results(run_a)
+        results_b = store.load_results(run_b)
+
+    missing = [rid for rid, res in ((run_a, results_a), (run_b, results_b)) if not res]
+    if missing:
+        print(f"no results stored for run(s): {', '.join(missing)}", file=sys.stderr)
+        return 1
+
+    if args.json:
+        from evaluator.metrics import compare_runs
+
+        print(json.dumps(compare_runs(results_a, results_b), ensure_ascii=False, indent=2))
+        return 0
+
+    print(render_comparison(results_a, results_b, label_a=run_a[:16], label_b=run_b[:16]))
     return 0
 
 
@@ -344,6 +478,18 @@ def _build_parser() -> argparse.ArgumentParser:
     report.add_argument("--failures", action="store_true", help="print full failure details")
     report.add_argument("--out", help="also write report files to this directory")
 
+    compare = sub.add_parser(
+        "compare", help="compare two stored runs, guardrail-vs-guardrail (paired on shared cases)"
+    )
+    compare.add_argument("--db", default=DEFAULT_DB)
+    compare.add_argument(
+        "run_ids",
+        nargs=2,
+        metavar="RUN_ID",
+        help="two run ids to compare (baseline then candidate)",
+    )
+    compare.add_argument("--json", action="store_true")
+
     runs = sub.add_parser("runs", help="list stored runs")
     runs.add_argument("--db", default=DEFAULT_DB)
     runs.add_argument("--limit", type=int, default=20)
@@ -352,6 +498,28 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _add_execution_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--adapter",
+        choices=("server", "claude-code"),
+        default="server",
+        help="which automode to measure: server (our AgentGate service, default) or "
+        "claude-code (Claude Code's native auto-mode classifier via the Agent SDK)",
+    )
+    parser.add_argument(
+        "--sandbox",
+        help="claude-code only: workspace directory for the Claude Code sessions. MUST be a "
+        "disposable sandbox with no secrets and no network egress — an allowed command runs.",
+    )
+    parser.add_argument(
+        "--i-have-a-sandbox",
+        action="store_true",
+        help="claude-code only: affirm --sandbox is a disposable, network-isolated sandbox. "
+        "Required, because a classifier allow executes the case's command.",
+    )
+    parser.add_argument(
+        "--claude-model",
+        help="claude-code only: model alias/id for the Claude Code session (default: the SDK's)",
+    )
     parser.add_argument("--url", help="service base URL (env SECURITY_SERVICE_URL)")
     parser.add_argument("--token", help="bearer token (env SECURITY_SERVICE_TOKEN)")
     parser.add_argument("--profile-id", help="AgentGate profile_id to evaluate against")
