@@ -10,7 +10,7 @@ from agentgate.domain.dialogue import Dialogue
 from agentgate.domain.policy import Policy
 from agentgate.domain.session import SessionState
 from agentgate.domain.verdict import Verdict
-from agentgate.engine.decision import Decision
+from agentgate.engine.decision import Decision, DecisionRecord
 from agentgate.engine.gate import Gate
 from agentgate.engine.timings import Latency
 from agentgate.normalize import normalize
@@ -248,6 +248,21 @@ class FakeSessionRecords:
 
     async def cache_put(self, session_id, action_hash, decision_id, expires_at) -> None:
         self.cache_puts.append((session_id, action_hash, decision_id))
+
+
+class FakeReplayRecords:
+    """The keyed decisions a replay store restores from, in memory."""
+
+    def __init__(self, records: list[DecisionRecord] | None = None, error: Exception | None = None) -> None:
+        self._records = list(records or [])
+        self._error = error
+        self.cutoffs: list[datetime] = []
+
+    async def load_replayable(self, newer_than: datetime) -> list[DecisionRecord]:
+        if self._error is not None:
+            raise self._error
+        self.cutoffs.append(newer_than)
+        return [r for r in self._records if r.ts > newer_than]
 
 
 class RecordingDecisionWriter:
