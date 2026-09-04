@@ -1,0 +1,41 @@
+# Everything the image does not need. The Dockerfile copies explicit paths,
+# so nothing here would land in the image anyway -- but the whole context is
+# read on every build, and .venv alone is ~59 MB of macOS binaries that a
+# Linux container could not use if it wanted to.
+
+# Local virtualenv: built for the host, rebuilt inside the image by uv sync.
+.venv/
+
+# Secrets. The server keeps its own .env next to docker-compose.yml.
+.env
+.env.*
+
+# Byte code and tool caches: regenerated, host-specific.
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+
+# Decision log: runtime output, and on the server it lives in a volume.
+logs/
+
+# Not part of the runtime.
+tests/
+docs/
+*.md
+Makefile
+docker-compose.yml
+
+# OS and editor droppings.
+.DS_Store
+._*
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/
+
+# Git metadata: the image is built from a copied tree, not from a clone.
+.git/
+.gitignore

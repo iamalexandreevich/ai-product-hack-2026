@@ -1,4 +1,37 @@
+# Secrets. service/.env holds live VDS credentials and provider keys.
 .env
+.env.*
+
+# Agent working directories.
 .claude
 .superpowers
+
+# Python byte code and tool caches.
 __pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+
+# Virtualenvs.
+.venv/
+venv/
+
+# macOS. Finder writes .DS_Store into any directory it opens, including ones
+# nobody edited, so these appear on their own and get committed by accident.
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+
+# Windows.
+Thumbs.db
+Desktop.ini
+
+# Editors.
+.idea/
+.vscode/
+*.swp
+*~
