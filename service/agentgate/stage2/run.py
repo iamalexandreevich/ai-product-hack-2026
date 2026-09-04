@@ -5,14 +5,9 @@ anticipate, resolves to DecisionKind.ask — never allow, never deny.
 Only the happy path (a valid A/D/U from the model) can produce anything
 else.
 
-An action bashlex could not structurally parse (`flags.unparseable`) is
-refused before any prompt is built and before the LLM is ever called:
-`commands`/`paths`/`domains` are empty by construction for such an
-action (see normalize/shell.py), so nothing about it was actually
-verified, and _MAP has no cross-check that would stop a classifier
-from answering "A" about an action it never saw. Short-circuiting here,
-rather than trusting the model to notice `unparseable=true` in the
-flags line, is what makes that unreachable.
+Nothing here guards against an action bashlex could not parse: stage 1's
+UnparseableRule settles those before the cascade reaches this module, so
+the classifier is never asked about an action it could not have seen.
 """
 
 import logging
@@ -37,14 +32,6 @@ async def run_stage2(
     client: LLMClient,
     stage1_note: str,
 ) -> Verdict:
-    if action.flags.unparseable:
-        return Verdict(
-            decision=DecisionKind.ask,
-            stage=2,
-            reason="action could not be structurally parsed and was never verified",
-            model=model_name,
-        )
-
     system = build_system_prompt(profile)
     user = build_user_message(action, user_request, stage1_note)
     try:

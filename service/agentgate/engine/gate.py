@@ -28,17 +28,16 @@ from agentgate.normalize import normalize
 from agentgate.normalize.model import NormalizedAction
 from agentgate.profiles.loader import with_workspace
 from agentgate.profiles.schema import ModelConfig, Profile
+from agentgate.rules.base import RuleChain
 from agentgate.session.cache_key import allow_cache_key
 from agentgate.session.escalation import should_escalate
 from agentgate.session.state import SessionState, SessionStateStore
-from agentgate.stage1.chain import run_stage1
 from agentgate.stage2.client import LLMClient
 from agentgate.stage2.run import run_stage2
 
 log = logging.getLogger(__name__)
 
 STAGE1_PASSED = "passed: no hard-deny match, not in allowlist"
-STAGE1_SKIPPED = "skipped: command unparseable"
 
 
 @dataclass(frozen=True)
@@ -58,12 +57,14 @@ class Gate:
         self,
         profiles: dict[str, Profile],
         default_profile: str,
+        rules: RuleChain,
         state_store: SessionStateStore,
         http: httpx.AsyncClient,
         allow_cache_ttl_seconds: int = 86400,
     ) -> None:
         self._profiles = profiles
         self._default_profile = default_profile
+        self._rules = rules
         self._states = state_store
         self._http = http
         self._allow_cache_ttl_seconds = allow_cache_ttl_seconds
@@ -125,14 +126,14 @@ class Gate:
         self, request: DecideRequest, action: NormalizedAction, context: _Context, timings: Timings
     ) -> Verdict:
         with timings.stage(1):
-            verdict = None if action.flags.unparseable else run_stage1(action, context.profile)
+            verdict = self._rules.evaluate(action, context.profile)
         if verdict is not None:
             return verdict
-        note = STAGE1_SKIPPED if action.flags.unparseable else STAGE1_PASSED
         with timings.stage(2):
             client = LLMClient(context.model_name, context.model_config, self._http)
             return await run_stage2(
-                action, request.user_request, context.profile, context.model_name, client, note
+                action, request.user_request, context.profile,
+                context.model_name, client, STAGE1_PASSED,
             )
 
     def _escalate(self, state: SessionState | None, profile: Profile, verdict: Verdict) -> Verdict:

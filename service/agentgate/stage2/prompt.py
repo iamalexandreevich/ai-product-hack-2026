@@ -4,11 +4,11 @@ The prompt contents are a closed list, on purpose: system prompt +
 profile + prose slots + [TASK] + [ACTION] + [FLAGS] + [STAGE1]. Nothing
 else may reach the model — no `metadata` (caller-supplied, unvetted)
 and no `raw` command text at all: an action that bashlex could not
-structure (`flags.unparseable`) is refused by `run_stage2` before this
-module is ever called (see agentgate.stage2.run), so `action.raw` has
-no path into a prompt anywhere in this package. Never widen this list
-without updating service/CLAUDE.md's "decisions never come from the
-raw string" rule and this module's docstring together.
+structure (`flags.unparseable`) is settled by stage 1's UnparseableRule
+before this module is ever called, so `action.raw` has no path into a
+prompt anywhere in this package. Never widen this list without updating
+service/CLAUDE.md's "decisions never come from the raw string" rule and
+this module's docstring together.
 
 The message body is line-oriented with no escaping convention of its
 own, so every attacker-reachable value that could itself contain a

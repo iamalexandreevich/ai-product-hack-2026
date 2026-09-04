@@ -8,6 +8,9 @@ import httpx
 
 from agentgate.api.schemas import DecideRequest
 from agentgate.engine.decision import Decision
+from agentgate.normalize import normalize
+from agentgate.normalize.model import NormalizedAction
+from agentgate.profiles.loader import with_workspace
 from agentgate.profiles.schema import Profile
 
 WORKSPACE = "/home/u/repo"
@@ -30,6 +33,53 @@ def profile(**overrides) -> Profile:
     }
     data.update(overrides)
     return Profile.model_validate(data)
+
+
+def stage1_profile(**overrides) -> Profile:
+    """The operator profile the stage 1 chain runs against in tests, with
+    ``${WORKSPACE}`` already bound -- rules read the resolved profile, so an
+    unbound one would measure nothing real.
+    """
+    data = {
+        "id": "t",
+        "allowed_paths": ["${WORKSPACE}", "/tmp/agentgate-scratch"],
+        "protected_paths": [".env*", ".git/hooks/**"],
+        "network": {"mode": "allowlist", "allowed_domains": ["pypi.org", "github.com"]},
+        "safe_prefixes": [["npm", "test"], ["pytest"]],
+        "models": {"default": "m", "configs": {"m": {"base_url": "http://x/v1", "model": "q"}}},
+    }
+    data.update(overrides)
+    return with_workspace(Profile.model_validate(data), WORKSPACE)
+
+
+def hard_deny_profile(**overrides) -> Profile:
+    """The profile the hard-deny table tests run against: its protected
+    paths and branches are what those tables assert on.
+    """
+    data = {
+        "id": "t",
+        "allowed_paths": ["${WORKSPACE}", "/tmp/agentgate-scratch"],
+        "protected_paths": [".env*", ".git/hooks/**", ".claude/**", "AGENTS.md", "~/.ssh/**", "~/.aws/**"],
+        "protected_branches": ["main", "release/*"],
+        "network": {"mode": "allowlist", "allowed_domains": ["pypi.org"]},
+        "models": {"default": "m", "configs": {"m": {"base_url": "http://x/v1", "model": "q"}}},
+    }
+    data.update(overrides)
+    return with_workspace(Profile.model_validate(data), WORKSPACE)
+
+
+def shell_action(raw: str, cwd: str = WORKSPACE) -> NormalizedAction:
+    """What a shell command normalizes to -- the only input a rule sees."""
+    return normalize(
+        DecideRequest(harness="t", tool="shell", raw=raw, args={"cwd": cwd}, user_request="x")
+    )
+
+
+def unparseable_action(cwd: str = WORKSPACE) -> NormalizedAction:
+    """An action whose command bashlex could not parse: a single
+    unterminated quote leaves commands, paths and domains empty.
+    """
+    return shell_action('echo "unterminated', cwd)
 
 
 def decide_request(raw: str, session_id: str | None = "s1", **overrides) -> DecideRequest:

@@ -24,6 +24,7 @@ from agentgate.config import Settings, get_settings
 from agentgate.engine.gate import Gate
 from agentgate.log.jsonl import JsonlLogger
 from agentgate.profiles.loader import load_profiles
+from agentgate.rules.chain import STAGE1
 from agentgate.session.memory import InMemorySessionStateStore
 from agentgate.store.db import make_engine, make_session_factory
 from agentgate.store.keys import ApiKeyRepo
@@ -75,7 +76,7 @@ async def build_app(settings: Settings | None = None):
         JsonlDecisionWriter(JsonlLogger(settings.log_path)),
         PostgresDecisionWriter(decision_repo, session_repo, settings.allow_cache_ttl_seconds),
     ])
-    gate = Gate(profiles, settings.default_profile, store, httpx.AsyncClient(),
+    gate = Gate(profiles, settings.default_profile, STAGE1, store, httpx.AsyncClient(),
                 allow_cache_ttl_seconds=settings.allow_cache_ttl_seconds)
     app = create_app(settings, gate, writer, decision_repo, profiles,
                      db_probe=make_db_probe(engine), key_repo=key_repo)

@@ -2,6 +2,7 @@ import httpx
 
 from agentgate.api.schemas import DecisionKind
 from agentgate.engine.gate import Gate
+from agentgate.rules.chain import STAGE1
 from agentgate.session.memory import InMemorySessionStateStore
 from tests.factories import WORKSPACE, FakeLLM, decide_request, profile
 
@@ -10,6 +11,7 @@ def gate(llm: FakeLLM, **profile_overrides) -> Gate:
     return Gate(
         profiles={"default": profile(**profile_overrides)},
         default_profile="default",
+        rules=STAGE1,
         state_store=InMemorySessionStateStore(),
         http=httpx.AsyncClient(transport=httpx.MockTransport(llm)),
         allow_cache_ttl_seconds=86400,
@@ -74,13 +76,19 @@ async def test_llm_failure_is_ask():
 async def test_unparseable_skips_llm():
     # An unparseable action has empty commands/paths/domains by construction
     # (see normalize/shell.py), so nothing about it was actually verified --
-    # run_stage2 refuses it before building a prompt or calling the LLM, so
-    # it must never reach the classifier at all. Covered explicitly by
-    # tests/test_stage2_run.py::test_unparseable_action_short_circuits_without_calling_llm.
+    # stage 1's UnparseableRule settles it and the classifier is never asked
+    # about a command it could not have seen.
     llm = FakeLLM("U", "unclear")
     decision = await gate(llm).decide(decide_request('echo "unterminated'))
     assert llm.calls == 0 and decision.verdict.decision is DecisionKind.ask
     assert decision.action.to_dict()["flags"]["unparseable"] is True
+
+
+async def test_unparseable_is_reported_as_stage_one_naming_no_model():
+    # The classifier was never called, so reporting stage 2 with a model name
+    # would be telemetry about a call that never happened.
+    response = (await gate(FakeLLM()).decide(decide_request('echo "unterminated'))).to_response()
+    assert (response.stage, response.rule_id, response.model) == (1, "unparseable", None)
 
 
 async def test_allow_cache_hit():
@@ -139,7 +147,8 @@ async def test_model_override_is_used():
         return httpx.Response(200, json={"choices": [{"message": {"content": '{"decision":"A"}'}}]})
 
     g = Gate(
-        profiles={"default": profile()}, default_profile="default", state_store=InMemorySessionStateStore(),
+        profiles={"default": profile()}, default_profile="default", rules=STAGE1,
+        state_store=InMemorySessionStateStore(),
         http=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
     )
     decision = await g.decide(decide_request("npm install a", model="m2"))

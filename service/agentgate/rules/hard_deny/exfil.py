@@ -1,0 +1,363 @@
+"""Sending a secret out of the machine.
+
+Direction-aware: a secret merely READ by a command is not an exfil; the
+rule fires when a secret is what gets transmitted -- an upload flag's
+value, an scp/rsync source bound for a remote destination, a redirect
+into a network command, or a pipeline whose sending end actually consumes
+the piped stdin.
+
+Unlike the destructive/protected-write/privilege rules, everything here
+skips a token that still holds an unresolved expansion. Those rules read
+structural properties that survive fabrication (a basename, a ".."
+segment); this one asks whether THIS SPECIFIC path is being sent, and a
+fabricated value answers that question wrongly in both directions.
+"""
+
+import re
+
+from agentgate.domain.verdict import Verdict
+from agentgate.normalize.model import NormalizedAction, SimpleCommand
+from agentgate.normalize.paths import looks_like_path, looks_unresolved, matches_any, resolve_path
+from agentgate.profiles.schema import Profile
+from agentgate.rules.hard_deny.shared import (
+    DOWNLOADERS,
+    LAST_ARG_WRITE_COMMANDS,
+    by_pipeline,
+    effective_argv,
+)
+
+_SECRET_PATTERNS = [
+    ".env*", "*.pem", "id_rsa*", "id_ed25519*", "*.key", "*.p12",
+    "credentials", ".netrc", ".git-credentials",
+    "~/.ssh/**", "~/.aws/**", "~/.kube/**",
+]
+_NETWORK_COMMANDS = {"curl", "wget", "nc", "ncat", "netcat", "ssh", "scp", "sftp", "rsync", "ftp", "telnet", "socat"}
+
+# Flags whose value is transmitted outward — the argument becomes request
+# body/upload content. A secret file named here is a real exfil.
+_UPLOAD_FLAGS = {
+    "-T", "--upload-file",
+    "-d", "--data", "--data-ascii", "--data-binary", "--data-raw", "--data-urlencode",
+    "-F", "--form",
+    "--post-file", "--post-data",
+}
+# Single-dash upload flags, indexed by their option LETTER. curl accepts
+# these with an ATTACHED value ("-T.env" == "-T .env") and also BUNDLED
+# into a short-option cluster where the upload letter need not come first
+# ("-sT .env", "-sSfF file=@.env"). Long-form flags handle their attached
+# case via "--flag=value" in _flag_value.
+_SHORT_UPLOAD_LETTERS = {f[1]: f for f in _UPLOAD_FLAGS if len(f) == 2 and f[0] == "-" and f[1] != "-"}
+# Cluster scanning is scoped to curl, the only command for which -T/-d/-F
+# mean "upload". Scanning clusters for every network command would misread
+# unrelated short options as sends — `rsync -avzd` (-d is --dirs),
+# `ssh -T` (disable pty), `wget -qT 5` (-T is a timeout) — and a false
+# positive in an unescalatable rule permanently blocks ordinary work. The
+# attached-value form below stays command-agnostic: it requires the upload
+# letter to LEAD the token, which no unrelated cluster does by accident.
+_CLUSTERING_UPLOAD_COMMANDS = {"curl"}
+# Flags whose value is read locally (an identity/credential file used to
+# authenticate, or a CA bundle used to verify the peer) or is itself a
+# local write target (an output/download destination). Neither is a send,
+# no matter what _SECRET_PATTERNS the value happens to match — e.g. a
+# *.pem CA bundle passed to --cacert, or a *.pem download destination
+# passed to -o. These values are recognized and explicitly skipped rather
+# than merely "not in _UPLOAD_FLAGS", so a flag stage 1 doesn't know about
+# still falls through to being ignored.
+_IGNORE_VALUE_FLAGS = {
+    "-i", "--identity", "--key", "--cert", "--cacert", "--capath",
+    "-o", "--output", "-O", "-out", "-e",
+}
+# scp/rsync flags that take a following value which is NOT a positional
+# source/destination argument — without this, an identity file passed to
+# -i is collected as if it were a source file to transfer.
+_SCP_RSYNC_VALUE_FLAGS = {"-i", "-e", "-F", "-o", "-l", "-P", "--rsh", "--exclude"}
+# scp/rsync "user@host:path" or "host:path" remote destination shape.
+_REMOTE_DEST = re.compile(r"^([^/@\s]+@)?[^/@:\s]+:")
+
+# Commands whose default behavior forwards local stdin to the far end with
+# NO flag required at all: ssh forwards stdin to the remote command's
+# stdin, nc/ncat/netcat/socat/telnet pipe stdin straight onto the
+# connection. Distinct from curl/wget-family tools, which ignore stdin
+# entirely unless told to use it with an explicit upload flag.
+_STDIN_FORWARDING_COMMANDS = {"ssh", "nc", "ncat", "netcat", "socat", "telnet"}
+
+
+class ExfilRule:
+    id = "hard-deny.exfil"
+    hard = True
+
+    def evaluate(self, action: NormalizedAction, profile: Profile) -> Verdict | None:
+        for cmds in by_pipeline(action).values():
+            upstream_secret: str | None = None
+            for c in cmds:
+                argv = effective_argv(c.argv)
+                exe = argv[0] if argv else ""
+                if exe in _NETWORK_COMMANDS:
+                    candidate = next(
+                        (p for p in _sent_secret_paths(c, action.cwd) if _is_secret(p, profile)), None
+                    )
+                    if candidate is None and upstream_secret and _consumes_piped_stdin(argv):
+                        # Nothing is sent by this command's own flags, but a
+                        # secret an EARLIER command in the pipeline read is
+                        # flowing into it via `|`, and this command's own
+                        # invocation shows it sends what arrives on stdin.
+                        candidate = upstream_secret
+                    if candidate:
+                        return Verdict.deny(
+                            self.id, f"network command '{exe}' sends secret file {candidate}",
+                            "Never send secret files over the network; ask the user if credentials are needed",
+                            hard=True,
+                        )
+                for p in _read_role_paths(c, action.cwd):
+                    if _is_secret(p, profile):
+                        upstream_secret = p
+        return None
+
+
+def _is_secret(path: str, profile: Profile) -> bool:
+    return matches_any(path, _SECRET_PATTERNS, profile.workspace)
+
+
+def _sent_secret_paths(cmd: SimpleCommand, cwd: str) -> list[str]:
+    """Paths this command actually SENDS outward: the value of an
+    upload-style flag, an scp/rsync source whose destination is remote, or
+    this command's own stdin redirect (`<`) when the command is a network
+    command. Deliberately does not fire on the value of an
+    identity/credential/output flag — reading or writing a local file is
+    not a send, even when the file matches a secret pattern by name.
+    """
+    out: list[str] = []
+    argv = effective_argv(cmd.argv)
+    if not argv:
+        return out
+    exe = argv[0]
+    i = 1
+    while i < len(argv):
+        tok = argv[i]
+        matched = _match_upload_flag(tok, exe)
+        if matched:
+            _, val = matched
+            consumed_next = False
+            if val is None and i + 1 < len(argv):
+                val = argv[i + 1]
+                consumed_next = True
+            if val:
+                out.extend(_upload_flag_value_paths(val, cwd))
+            i += 2 if consumed_next else 1
+            continue
+        name, inline_val = _flag_value(tok)
+        if name in _IGNORE_VALUE_FLAGS:
+            if inline_val is None and i + 1 < len(argv) and not argv[i + 1].startswith("-"):
+                i += 2
+            else:
+                i += 1
+            continue
+        i += 1
+    if exe in ("scp", "rsync"):
+        positionals = _positional_args(argv, _SCP_RSYNC_VALUE_FLAGS)
+        if len(positionals) >= 2 and _looks_remote(positionals[-1]):
+            for src in positionals[:-1]:
+                if not looks_unresolved(src):
+                    out.append(resolve_path(src, cwd))
+    if exe in _NETWORK_COMMANDS and cmd.stdin_from and not looks_unresolved(cmd.stdin_from):
+        out.append(cmd.stdin_from)
+    return out
+
+
+def _read_role_paths(cmd: SimpleCommand, cwd: str) -> list[str]:
+    """Like _cmd_paths, but excludes tokens that are a write destination or
+    an identity/credential/output flag's value. Seeds the pipe-borne
+    upstream-secret tracker, so a command's own output target or
+    authentication file is not mistaken for something it read and could
+    forward downstream via `|`.
+    """
+    argv = effective_argv(cmd.argv)
+    excluded = _excluded_read_paths(cmd, argv, cwd)
+    return [p for p in _cmd_paths(cmd, cwd) if p not in excluded]
+
+
+def _cmd_paths(cmd: SimpleCommand, cwd: str) -> list[str]:
+    """Every path this command's argv/redirects/stdin plausibly touches, in
+    any role (read, write, or otherwise).
+    """
+    out: list[str] = []
+    argv = effective_argv(cmd.argv)
+    for tok in argv[1:]:
+        t = tok[1:] if tok.startswith("@") else tok
+        if looks_unresolved(t):
+            continue
+        if looks_like_path(t):
+            out.append(resolve_path(t, cwd))
+    for r in cmd.redirects:
+        if not looks_unresolved(r.target):
+            out.append(r.target)
+    if cmd.stdin_from and not looks_unresolved(cmd.stdin_from):
+        out.append(cmd.stdin_from)
+    return out
+
+
+def _excluded_read_paths(cmd: SimpleCommand, argv: list[str], cwd: str) -> set[str]:
+    """Resolved paths _read_role_paths must NOT treat as a genuine read:
+    the value of an output/identity/credential flag (the same set
+    _sent_secret_paths treats as "not a send", so the two direction
+    judgments cannot drift apart), the write destination of a write
+    command (cp/mv/install/ln's last positional; ALL of tee's positionals,
+    since every one of them is a write target and tee's only read is its
+    own stdin), and any ">"-direction redirect target.
+    """
+    resolved: set[str] = set()
+    if not argv:
+        return resolved
+    exe = argv[0]
+    i = 1
+    while i < len(argv):
+        tok = argv[i]
+        name, inline_val = _flag_value(tok)
+        if name in _IGNORE_VALUE_FLAGS:
+            val = inline_val
+            consumed_next = False
+            if val is None and i + 1 < len(argv) and not argv[i + 1].startswith("-"):
+                val = argv[i + 1]
+                consumed_next = True
+            if val:
+                t = val[1:] if val.startswith("@") else val
+                if t and not looks_unresolved(t):
+                    resolved.add(resolve_path(t, cwd))
+            i += 2 if consumed_next else 1
+            continue
+        i += 1
+    if exe == "tee":
+        for a in argv[1:]:
+            if not a.startswith("-") and not looks_unresolved(a):
+                resolved.add(resolve_path(a, cwd))
+    elif exe in LAST_ARG_WRITE_COMMANDS:
+        positionals = [a for a in argv[1:] if not a.startswith("-")]
+        if positionals and not looks_unresolved(positionals[-1]):
+            resolved.add(resolve_path(positionals[-1], cwd))
+    for r in cmd.redirects:
+        if ">" in r.op and not looks_unresolved(r.target):
+            resolved.add(r.target)
+    return resolved
+
+
+def _consumes_piped_stdin(argv: list[str]) -> bool:
+    """True if THIS command's own invocation shows it actually sends
+    whatever arrives on its stdin — the only condition under which a secret
+    an EARLIER pipeline command read can be attributed to this network
+    command's send.
+
+    Without this gate, any secret-shaped read anywhere upstream would arm
+    the very next network command in the pipe even when that command does
+    not touch its stdin at all: a bare `curl URL` GET, or a `curl -d
+    @literal` whose data comes from an explicit source, both ignore what
+    the previous pipeline stage produced. curl/wget only consume stdin when
+    an upload flag's value is explicitly "-" or "@-"; ssh and the raw-stream
+    tools forward stdin by default with no flag needed.
+    """
+    if not argv:
+        return False
+    exe = argv[0]
+    if exe in _STDIN_FORWARDING_COMMANDS:
+        return True
+    if exe not in DOWNLOADERS:
+        return False
+    i = 1
+    while i < len(argv):
+        tok = argv[i]
+        matched = _match_upload_flag(tok, exe)
+        if matched:
+            _, val = matched
+            if val is None and i + 1 < len(argv):
+                val = argv[i + 1]
+            if val is not None:
+                field_val = val
+                if "=" in field_val:
+                    _, _, field_val = field_val.partition("=")
+                v = field_val[1:] if field_val.startswith("@") else field_val
+                if v == "-":
+                    return True
+            i += 1
+            continue
+        i += 1
+    return False
+
+
+def _match_upload_flag(tok: str, exe: str = "") -> tuple[str, str | None] | None:
+    """Return (flag_name, inline_value_or_None) if ``tok`` names an upload
+    flag, else None. Handles "--flag=value", the attached short-flag form
+    ("-T.env" == "-T .env"), the bare "--flag"/"-T" form (value follows as
+    the next argv token, handled by the caller), and — for ``exe`` in
+    _CLUSTERING_UPLOAD_COMMANDS — an upload letter bundled anywhere inside
+    a short-option cluster.
+    """
+    name, inline_val = _flag_value(tok)
+    if name in _UPLOAD_FLAGS:
+        return name, inline_val
+    if not tok.startswith("-") or tok.startswith("--"):
+        return None
+    body = tok[1:]
+    if body and body[0] in _SHORT_UPLOAD_LETTERS:
+        return _SHORT_UPLOAD_LETTERS[body[0]], body[1:] or None
+    if exe not in _CLUSTERING_UPLOAD_COMMANDS:
+        return None
+    for k, ch in enumerate(body):
+        if ch in _SHORT_UPLOAD_LETTERS:
+            # Everything after the upload letter is its attached value if
+            # non-empty; otherwise the value is the next argv token and
+            # the caller consumes it.
+            return _SHORT_UPLOAD_LETTERS[ch], body[k + 1:] or None
+        if not ch.isalpha():
+            # Not a plain option cluster (e.g. "-4", "-w@fmt") — stop
+            # rather than guessing at a letter sitting inside a value.
+            break
+    return None
+
+
+def _upload_flag_value_paths(val: str, cwd: str) -> list[str]:
+    """Resolve an upload flag's value into the path(s) it actually sends.
+    Handles curl's -F/--form "name=@path" shape as well as the plain
+    "@path" shape every other upload flag uses.
+    """
+    field_val = val
+    if "=" in field_val:
+        _, _, field_val = field_val.partition("=")
+    v = field_val[1:] if field_val.startswith("@") else field_val
+    if v and not looks_unresolved(v) and looks_like_path(v):
+        return [resolve_path(v, cwd)]
+    return []
+
+
+def _flag_value(tok: str) -> tuple[str, str | None]:
+    """Split a "--flag=value" token into ("--flag", "value"); otherwise
+    return (tok, None) so the value (if any) is looked up in argv[i+1].
+    """
+    if tok.startswith("--") and "=" in tok:
+        name, _, val = tok.partition("=")
+        return name, val
+    return tok, None
+
+
+def _looks_remote(s: str) -> bool:
+    return "://" in s or bool(_REMOTE_DEST.match(s))
+
+
+def _positional_args(argv: list[str], value_flags: set[str]) -> list[str]:
+    """Walk argv[1:], skipping recognized flags and — for flags in
+    ``value_flags`` — their following value, returning the remaining
+    positional tokens in order. Tells a command's real positional
+    arguments apart from a flag's own value.
+    """
+    out: list[str] = []
+    i = 1
+    while i < len(argv):
+        tok = argv[i]
+        if tok.startswith("-"):
+            name, inline_val = _flag_value(tok)
+            if name in value_flags and inline_val is None and i + 1 < len(argv):
+                i += 2
+                continue
+            i += 1
+            continue
+        out.append(tok)
+        i += 1
+    return out

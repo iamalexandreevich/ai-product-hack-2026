@@ -15,6 +15,7 @@ from agentgate.api.schemas import DecisionKind
 from agentgate.config import Settings
 from agentgate.engine.gate import Gate
 from agentgate.log.jsonl import JsonlLogger
+from agentgate.rules.chain import STAGE1
 from agentgate.session.memory import InMemorySessionStateStore
 from agentgate.store.writer import CompositeDecisionWriter, JsonlDecisionWriter, PostgresDecisionWriter
 from tests.factories import WORKSPACE, FakeLLM, profile
@@ -40,7 +41,7 @@ def build(tmp_path, token=None, bind="127.0.0.1:8400", llm=None, db_ok=True, gat
     settings = Settings(db_url="postgresql+asyncpg://x", token=token, bind=bind, log_path=tmp_path / "d.jsonl")
     profiles = {"default": profile()}
     llm = llm or FakeLLM()
-    gate = gate or Gate(profiles, "default", InMemorySessionStateStore(), httpx.AsyncClient(transport=httpx.MockTransport(llm)))
+    gate = gate or Gate(profiles, "default", STAGE1, InMemorySessionStateStore(), httpx.AsyncClient(transport=httpx.MockTransport(llm)))
 
     class FakeDecisionRepo:
         def __init__(self):
