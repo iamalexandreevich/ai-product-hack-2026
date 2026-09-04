@@ -81,3 +81,9 @@ def test_per_turn_caps_cover_exactly_the_turn_roles():
 def test_cap_for_rejects_an_unknown_role():
     with pytest.raises(KeyError):
         History().cap_for("wizard")
+
+
+def test_cap_for_answers_for_every_turn_role():
+    from agentgate.api.schemas import TurnRole
+
+    assert all(isinstance(History().cap_for(role.value), int) for role in TurnRole)

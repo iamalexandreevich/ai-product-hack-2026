@@ -2,9 +2,12 @@
 
 Pure data, no I/O. Two facts about it matter to the rest of the service:
 
-- `digest()` is taken over the turns exactly as the harness sent them,
-  before any truncation, and enters the allow-cache key. Two identical
-  actions with different histories therefore never share a cached `allow`.
+- `digest()` is taken over the five fields of each turn (role, author,
+  content, tool, call_id) exactly as the harness sent them, before any
+  truncation, and enters the allow-cache key. Two identical actions with
+  different histories therefore never share a cached `allow`. Growing
+  `Turn` with a new field does not change the digest unless that field is
+  added here too, on purpose.
 - `fit()` is what reaches the prompt: capped per role, oldest turns dropped
   first, the newest turn never dropped. It runs only when stage 2 runs.
 
@@ -38,10 +41,10 @@ class Dialogue:
 
     def digest(self) -> str:
         payload = json.dumps(
-            [turn.model_dump(mode="json") for turn in self.turns],
-            ensure_ascii=False, separators=(",", ":"), sort_keys=True,
+            [[turn.role.value, turn.author.value, turn.content, turn.tool, turn.call_id] for turn in self.turns],
+            ensure_ascii=False, separators=(",", ":"),
         )
-        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        return hashlib.sha256(payload.encode("utf-8", "surrogatepass")).hexdigest()
 
     def last_human_request(self) -> str | None:
         for turn in reversed(self.turns):
@@ -62,7 +65,7 @@ class Dialogue:
         while len(kept) > 1 and _content_chars(kept) > budget.budget_chars:
             kept.pop(0)
             omitted += 1
-        return Dialogue(tuple(kept), omitted)
+        return Dialogue(tuple(kept), self.omitted + omitted)
 
 
 def _content_chars(turns: list[Turn]) -> int:

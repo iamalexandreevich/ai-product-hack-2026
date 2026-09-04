@@ -118,6 +118,17 @@ def test_openapi_decide_examples_validate_against_the_models(committed_openapi):
             assert example["value"]["suggest"], name
 
 
+def test_response_examples_show_every_response_field():
+    """A response field missing from an example teaches an integrator that
+    the field does not exist. Stricter than model_validate: pydantic accepts
+    an example missing an optional field just as readily as a complete one."""
+    from agentgate.api.examples import RESPONSE_EXAMPLES
+    from agentgate.api.schemas import DecideResponse
+
+    for name, example in RESPONSE_EXAMPLES.items():
+        assert set(example["value"]) == set(DecideResponse.model_fields), name
+
+
 def test_openapi_documents_every_v1_endpoint(committed_openapi):
     assert set(committed_openapi["paths"]) == {
         "/v1/decide",

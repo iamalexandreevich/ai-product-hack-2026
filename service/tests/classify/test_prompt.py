@@ -6,6 +6,7 @@ from agentgate.domain.policy import Policy
 from agentgate.normalize import normalize
 from agentgate.profiles.schema import Profile
 from agentgate.classify.prompt import build_system_prompt, build_user_message
+from tests.factories import dialogue, turn
 
 WS = "/home/u/repo"
 PROFILE_DATA = {
@@ -134,9 +135,6 @@ def test_newline_in_domain_cannot_inject_a_line():
     assert len(m.splitlines()) == 5
     domains_line = next(line for line in m.splitlines() if line.startswith("paths="))
     assert json.dumps(a.domains[0], ensure_ascii=False) in domains_line
-
-
-from tests.factories import dialogue, turn
 
 
 def _shell(raw: str = "echo hi"):

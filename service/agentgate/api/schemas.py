@@ -244,9 +244,9 @@ class DecideRequest(BaseModel):
         if len(v) > HISTORY_MAX_TURNS:
             raise ValueError(f"history exceeds {HISTORY_MAX_TURNS} turns")
         size = sum(
-            len(turn.content.encode("utf-8"))
-            + len((turn.tool or "").encode("utf-8"))
-            + len((turn.call_id or "").encode("utf-8"))
+            len(turn.content.encode("utf-8", "surrogatepass"))
+            + len((turn.tool or "").encode("utf-8", "surrogatepass"))
+            + len((turn.call_id or "").encode("utf-8", "surrogatepass"))
             for turn in v
         )
         if size > HISTORY_MAX_BYTES:

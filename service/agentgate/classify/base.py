@@ -13,6 +13,7 @@ last turn the human actually wrote.
 from dataclasses import dataclass
 from typing import Protocol
 
+from agentgate.api.schemas import USER_REQUEST_MAX_CHARS
 from agentgate.domain.dialogue import Dialogue
 from agentgate.domain.policy import Policy
 from agentgate.domain.verdict import Verdict
@@ -34,7 +35,7 @@ class ReviewCase:
     ) -> "ReviewCase":
         intent = user_request or dialogue.last_human_request() or ""
         return cls(
-            action=action, intent=intent, dialogue=dialogue.fit(policy.history),
+            action=action, intent=intent[-USER_REQUEST_MAX_CHARS:], dialogue=dialogue.fit(policy.history),
             policy=policy, stage1_note=stage1_note,
         )
 

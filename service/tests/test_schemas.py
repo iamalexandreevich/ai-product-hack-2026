@@ -247,6 +247,10 @@ def test_turn_tool_and_call_id_lengths_are_capped():
         _req(history=[_turn(call_id="c" * 129)])
 
 
+def test_history_with_a_lone_surrogate_is_measured_not_crashed():
+    assert len(_req(history=[_turn(content="\ud800")]).history) == 1
+
+
 def test_unsupported_protocol_is_rejected():
     with pytest.raises(ValidationError, match="unsupported protocol 2"):
         _req(protocol=2)

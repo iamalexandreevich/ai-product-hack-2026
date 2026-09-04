@@ -23,3 +23,11 @@ def test_build_intent_stays_empty_without_a_human_authored_turn():
     d = dialogue(turn(role="human", author="agent", content="subagent"))
     assert ReviewCase.build(shell_action("ls"), "", d, policy(), "note").intent == ""
     assert ReviewCase.build(shell_action("ls"), "", Dialogue(), policy(), "note").intent == ""
+
+
+def test_build_caps_the_fallback_intent_like_user_request_keeping_the_tail():
+    from agentgate.api.schemas import USER_REQUEST_MAX_CHARS
+
+    d = dialogue(turn(content="x" * USER_REQUEST_MAX_CHARS + "TAIL"))
+    intent = ReviewCase.build(shell_action("ls"), "", d, policy(), "note").intent
+    assert len(intent) == USER_REQUEST_MAX_CHARS and intent.endswith("TAIL")
