@@ -15,7 +15,7 @@ from agentgate.shell.commands import WriteTarget, spec_for
 
 # Options asking a command to rewrite its input files in place. Prefix
 # matched: sed's -i takes an optional attached backup suffix ("-i.bak").
-IN_PLACE_FLAGS: tuple[str, ...] = ("-i", "--in-place")
+_IN_PLACE_FLAGS: tuple[str, ...] = ("-i", "--in-place")
 
 
 class PathRole(Enum):
@@ -32,11 +32,6 @@ class PathRole(Enum):
     # is excluded: sed -i both reads and writes its file, and calling it
     # write-only would hide a read a caller must still account for.
     WRITE_ONLY = auto()
-
-
-def edits_in_place(argv: Sequence[str]) -> bool:
-    """True if this argv asks the command to rewrite its inputs in place."""
-    return any(a.startswith(IN_PLACE_FLAGS) for a in argv[1:])
 
 
 def command_paths(argv: Sequence[str], cwd: str, role: PathRole) -> tuple[str, ...]:
@@ -71,7 +66,12 @@ def _written_positionals(argv: Sequence[str], role: PathRole) -> tuple[str, ...]
     if spec.write_target is WriteTarget.LAST_POSITIONAL:
         return positionals[-1:] if len(positionals) >= 2 else ()
     if spec.write_target is WriteTarget.POSITIONALS_AFTER_FIRST:
-        if role is PathRole.WRITE_ONLY or not edits_in_place(argv):
+        if role is PathRole.WRITE_ONLY or not _edits_in_place(argv):
             return ()
         return positionals[1:]
     return ()
+
+
+def _edits_in_place(argv: Sequence[str]) -> bool:
+    """True if this argv asks the command to rewrite its inputs in place."""
+    return any(a.startswith(_IN_PLACE_FLAGS) for a in argv[1:])

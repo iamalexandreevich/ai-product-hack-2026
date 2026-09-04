@@ -225,10 +225,6 @@ def commands_with_role(role: Role) -> frozenset[str]:
     return frozenset(name for name, spec in COMMANDS.items() if role in spec.roles)
 
 
-def commands_with_write_target(target: WriteTarget) -> frozenset[str]:
-    return frozenset(name for name, spec in COMMANDS.items() if spec.write_target is target)
-
-
 def every_upload_flag() -> frozenset[str]:
     """Every option any command sends its value outward through."""
     return frozenset().union(*(spec.upload_flags for spec in COMMANDS.values()))
