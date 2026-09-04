@@ -25,26 +25,38 @@ class Replay:
     The answer is the wire response, built once by DecisionRecord.to_response;
     the identity is what a retry must match before it is trusted with it. A
     key is caller-supplied and shared across sessions, so the key alone is not
-    proof that two calls are the same call.
+    proof that two calls are the same call. Six fields make up that identity:
+    `session_id`, `harness`, `tool` and `raw` name the call; `cwd` and
+    `profile_id` name the context it was decided under. `cwd` matters because
+    a sessionless call has no other anchor for `${WORKSPACE}` -- two calls
+    with the same command but a different `cwd` may have been evaluated
+    against different workspaces. `profile_id` matters because the same
+    command can be allowed under one profile and denied under another; without
+    it a replay could hand back the wrong profile's verdict.
     """
 
     session_id: str | None
     harness: str
     tool: str
     raw: str
+    cwd: str | None
+    profile_id: str
     response: DecideResponse
 
     @classmethod
     def of(cls, record: DecisionRecord) -> "Replay":
         return cls(
             session_id=record.session_id, harness=record.harness, tool=record.tool.value,
-            raw=record.raw, response=record.to_response(),
+            raw=record.raw, cwd=record.normalized.get("cwd"), profile_id=record.profile_id,
+            response=record.to_response(),
         )
 
-    def answers(self, request: DecideRequest) -> bool:
+    def answers(self, request: DecideRequest, default_profile: str) -> bool:
         return (
             self.session_id == request.session_id and self.harness == request.harness
             and self.tool == request.tool.value and self.raw == request.raw
+            and self.cwd == request.args.cwd
+            and self.profile_id == (request.profile_id or default_profile)
         )
 
 

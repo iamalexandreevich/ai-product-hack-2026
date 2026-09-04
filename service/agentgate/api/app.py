@@ -337,9 +337,10 @@ def create_app(
         storing a second row. The key is opaque to the service, and three of its
         properties are load-bearing: a key longer than 128 characters is ignored
         (the call is decided normally); a repeat under the same key whose request
-        differs in `session_id`, `harness`, `tool` or `raw` is *not* replayed but
-        decided afresh; and the key is global to the service, scoped neither by
-        session nor by credential, so a harness must make it unique per tool call.
+        differs in `session_id`, `harness`, `tool`, `raw`, `args.cwd` or the
+        resolved `profile_id` is *not* replayed but decided afresh; and the key is
+        global to the service, scoped neither by session nor by credential, so a
+        harness must make it unique per tool call.
 
         The request and response examples below are paired by name: `allow_safe_test`,
         `deny_unknown_package`, `ask_uncertain_db_cleanup`. The fourth response example
@@ -356,7 +357,7 @@ def create_app(
         key = _replay_key(request)
         if key is not None:
             replayed = await _replayed(replay, key)
-            if replayed is not None and replayed.answers(parsed):
+            if replayed is not None and replayed.answers(parsed, settings.default_profile):
                 return replayed.response
         try:
             decision = await gate.decide(parsed)

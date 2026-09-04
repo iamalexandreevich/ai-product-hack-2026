@@ -495,6 +495,34 @@ async def test_a_replay_requires_the_same_request_identity(tmp_path, field):
     assert one.json()["decision_id"] != two.json()["decision_id"]
 
 
+async def test_a_sessionless_replay_requires_the_same_cwd(tmp_path):
+    classifier = FakeClassifier(stage2_verdict("A"))
+    app, _, _, _ = build(tmp_path, classifier=classifier)
+    headers = {"idempotency-key": "k-cwd"}
+    first = await call(app, "POST", "/v1/decide", json=body(raw="npm install lodash", session_id=None), headers=headers)
+    second = await call(app, "POST", "/v1/decide", json=body(raw="npm install lodash", session_id=None, args={"cwd": "/elsewhere"}), headers=headers)
+    assert first.json()["decision_id"] != second.json()["decision_id"]
+
+
+async def test_a_replay_requires_the_same_profile(tmp_path):
+    classifier = FakeClassifier(stage2_verdict("A"))
+    app, _, _, _ = build(tmp_path, classifier=classifier)
+    headers = {"idempotency-key": "k-profile"}
+    first = await call(app, "POST", "/v1/decide", json=body(raw="npm install lodash"), headers=headers)
+    second = await call(app, "POST", "/v1/decide", json=body(raw="npm install lodash", profile_id="nope"), headers=headers)
+    assert second.json()["rule_id"] == "api.unknown-profile"
+    assert first.json()["decision_id"] != second.json()["decision_id"]
+
+
+async def test_an_explicit_default_profile_still_replays(tmp_path):
+    classifier = FakeClassifier(stage2_verdict("A"))
+    app, _, _, _ = build(tmp_path, classifier=classifier)
+    headers = {"idempotency-key": "k-default"}
+    first = await call(app, "POST", "/v1/decide", json=body(raw="npm install lodash"), headers=headers)
+    second = await call(app, "POST", "/v1/decide", json=body(raw="npm install lodash", profile_id="default"), headers=headers)
+    assert first.json()["decision_id"] == second.json()["decision_id"]
+
+
 class RaisingReplayStore:
     async def get(self, key):
         raise RuntimeError("replay backend down")
