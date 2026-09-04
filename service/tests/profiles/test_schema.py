@@ -1,6 +1,6 @@
 import pytest
 
-from agentgate.profiles.schema import DenyWindow, NetworkMode, Profile
+from agentgate.profiles.schema import DenyWindow, History, NetworkMode, Profile
 from tests.factories import minimal_profile_data
 
 
@@ -48,3 +48,29 @@ def test_profile_hash_is_a_sha256_hex_digest():
 def test_profile_hash_is_stable_across_calls():
     p = Profile.model_validate(minimal_profile_data())
     assert p.profile_hash() == p.profile_hash()
+
+
+def test_history_budget_has_the_spec_defaults():
+    h = History()
+    assert h.budget_chars == 12000
+    assert (h.cap_for("human"), h.cap_for("assistant"), h.cap_for("toolcall"), h.cap_for("toolresult")) == (
+        2048, 1500, 1000, 1500,
+    )
+
+
+def test_history_budget_is_read_from_the_profile_and_enters_the_hash():
+    from tests.factories import profile
+
+    plain = profile()
+    tuned = profile(history={"budget_chars": 100, "per_turn_chars": {"toolresult": 10}})
+    assert tuned.history.budget_chars == 100 and tuned.history.cap_for("toolresult") == 10
+    assert tuned.history.cap_for("human") == 2048
+    assert tuned.profile_hash() != plain.profile_hash()
+
+
+def test_history_budget_rejects_zero():
+    from pydantic import ValidationError
+    from tests.factories import profile
+
+    with pytest.raises(ValidationError):
+        profile(history={"budget_chars": 0})

@@ -868,6 +868,22 @@ components:
       - git_sha
       title: Health
       description: Response of `GET /healthz`. Always delivered with HTTP 200.
+    History:
+      properties:
+        budget_chars:
+          type: integer
+          minimum: 1.0
+          title: Budget Chars
+          default: 12000
+        per_turn_chars:
+          $ref: '#/components/schemas/PerTurnChars'
+      type: object
+      title: History
+      description: |-
+        How much of the dialogue reaches the stage-2 prompt.
+
+        Characters, not tokens: the service has no tokenizer, and `user_request`
+        is already budgeted in characters.
     LatencyMs:
       properties:
         stage1:
@@ -972,6 +988,31 @@ components:
       - ask
       - open
       title: NetworkMode
+    PerTurnChars:
+      properties:
+        human:
+          type: integer
+          minimum: 1.0
+          title: Human
+          default: 2048
+        assistant:
+          type: integer
+          minimum: 1.0
+          title: Assistant
+          default: 1500
+        toolcall:
+          type: integer
+          minimum: 1.0
+          title: Toolcall
+          default: 1000
+        toolresult:
+          type: integer
+          minimum: 1.0
+          title: Toolresult
+          default: 1500
+      type: object
+      title: PerTurnChars
+      description: Per-role cap on one turn's content, in characters.
     Profile:
       properties:
         id:
@@ -1007,6 +1048,8 @@ components:
           $ref: '#/components/schemas/Escalation'
         prose:
           $ref: '#/components/schemas/Prose'
+        history:
+          $ref: '#/components/schemas/History'
         rules:
           items:
             additionalProperties: true

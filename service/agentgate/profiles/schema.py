@@ -66,6 +66,29 @@ class Prose(BaseModel):
     soft_deny: str = ""
 
 
+class PerTurnChars(BaseModel):
+    """Per-role cap on one turn's content, in characters."""
+
+    human: int = Field(default=2048, ge=1)
+    assistant: int = Field(default=1500, ge=1)
+    toolcall: int = Field(default=1000, ge=1)
+    toolresult: int = Field(default=1500, ge=1)
+
+
+class History(BaseModel):
+    """How much of the dialogue reaches the stage-2 prompt.
+
+    Characters, not tokens: the service has no tokenizer, and `user_request`
+    is already budgeted in characters.
+    """
+
+    budget_chars: int = Field(default=12000, ge=1)
+    per_turn_chars: PerTurnChars = Field(default_factory=PerTurnChars)
+
+    def cap_for(self, role: str) -> int:
+        return getattr(self.per_turn_chars, role)
+
+
 class Profile(BaseModel):
     """A policy profile as the service loaded it. Server-side configuration; a
     harness never receives this in normal operation. Contains no secret values
@@ -80,6 +103,7 @@ class Profile(BaseModel):
     models: ModelsConfig
     escalation: Escalation = Field(default_factory=Escalation)
     prose: Prose = Field(default_factory=Prose)
+    history: History = Field(default_factory=History)
     rules: list[dict[str, Any]] = Field(default_factory=list)
 
     @cached_property
