@@ -18,9 +18,10 @@ from agentgate.api.schemas import DecisionKind
 from agentgate.bootstrap import build_service
 from agentgate.config import Settings
 from agentgate.domain.session import SessionState
+from agentgate.session.replay import InMemoryReplayStore
 from agentgate.store.repo import DecisionRepo, SessionRepo
 from tests.conftest import TEST_DB_URL, requires_db
-from tests.factories import decide_request, decision, session_state
+from tests.factories import WORKSPACE, decide_request, decision, session_state, shell_action
 
 pytestmark = requires_db
 
@@ -43,6 +44,14 @@ class RecordingStore:
         return None
 
     async def cache_put(self, session_id, key, decision_id, ttl_seconds) -> None: ...
+
+
+class _NoRestore(InMemoryReplayStore):
+    """An injected replay store, restored the same way the injected session
+    state store is: build_service calls `restore()` on whatever it is given,
+    not only on the one it builds itself."""
+
+    async def restore(self) -> None: ...
 
 
 def write_profile(profiles_dir, profile_id="default"):
@@ -90,7 +99,7 @@ async def _seed(session_factory) -> tuple[SessionState, str]:
 async def test_build_service_restores_the_persisted_session(session_factory, tmp_path):
     seeded, _ = await _seed(session_factory)
     service = await build_service(settings_for(tmp_path))
-    restored = await service.state_store.get_or_create("s1", "t", "default", "/w")
+    restored = await service.state_store.get_or_create("s1", "t", "default", lambda: "/w")
     assert restored.deny_total == seeded.deny_total
     assert restored.decisions_total == seeded.decisions_total
 
@@ -138,3 +147,43 @@ async def test_build_service_raises_when_default_profile_missing(session_factory
 async def test_build_service_rejects_non_localhost_bind_without_token(tmp_path):
     with pytest.raises(ValueError, match="AGENTGATE_TOKEN"):
         await build_service(settings_for(tmp_path, bind="0.0.0.0:8400"))
+
+
+async def test_build_service_restores_replayable_decisions(session_factory, tmp_path):
+    stored_id = str(ULID())
+    await DecisionRepo(session_factory).insert(decision(
+        id=stored_id, request=decide_request("ls", session_id=None), action=shell_action("ls"),
+        idempotency_key="restored",
+    ))
+    service = await build_service(settings_for(tmp_path))
+    async with httpx.AsyncClient(transport=ASGITransport(app=service.app), base_url="http://test") as c:
+        r = await c.post("/v1/decide", json={
+            "harness": "t", "tool": "shell", "raw": "ls", "args": {"cwd": WORKSPACE}, "user_request": "task",
+        }, headers={"idempotency-key": "restored"})
+    # The stored id coming back is the proof: the same command decided afresh
+    # would allow too, but under an id of its own.
+    assert r.json()["decision_id"] == stored_id
+
+
+async def test_a_restored_key_does_not_answer_a_different_request(session_factory, tmp_path):
+    """The restored answer belongs to the call it was taken for, not to the key.
+
+    A key is caller-supplied and global to the service, so a different action
+    arriving under it must be judged, not handed a stranger's `allow`.
+    """
+    await DecisionRepo(session_factory).insert(decision(
+        id=str(ULID()), request=decide_request("ls", session_id=None), action=shell_action("ls"),
+        idempotency_key="restored-too",
+    ))
+    service = await build_service(settings_for(tmp_path))
+    async with httpx.AsyncClient(transport=ASGITransport(app=service.app), base_url="http://test") as c:
+        r = await c.post("/v1/decide", json={
+            "harness": "t", "tool": "shell", "raw": "rm -rf /", "args": {"cwd": "/"}, "user_request": "x",
+        }, headers={"idempotency-key": "restored-too"})
+    assert r.json()["decision"] == "deny" and r.json()["rule_id"] == "hard-deny.destructive"
+
+
+async def test_build_service_uses_the_replay_store_it_was_given(session_factory, tmp_path):
+    replay = _NoRestore()
+    service = await build_service(settings_for(tmp_path), replay_store=replay)
+    assert service.replay_store is replay

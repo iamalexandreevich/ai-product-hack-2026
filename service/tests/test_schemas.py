@@ -4,14 +4,20 @@ import pytest
 from pydantic import ValidationError
 
 from agentgate.api.schemas import (
+    HISTORY_MAX_BYTES,
+    HISTORY_MAX_TURNS,
     METADATA_MAX_BYTES,
+    PROTOCOL,
     RAW_MAX_BYTES,
     USER_REQUEST_MAX_CHARS,
+    Author,
     DecideRequest,
     DecideResponse,
     DecisionKind,
     LatencyMs,
     Tool,
+    Turn,
+    TurnRole,
 )
 
 
@@ -169,3 +175,97 @@ def test_response_roundtrip():
     assert data["decision"] == "deny"
     assert data["model"] is None
     assert data["cached"] is False
+
+
+# --- v2: history, protocol -------------------------------------------------
+
+
+def _turn(**over) -> dict:
+    base = dict(role="human", author="human", content="fix the build")
+    base.update(over)
+    return base
+
+
+def test_history_defaults_to_empty_and_protocol_to_current():
+    r = _req()
+    assert r.history == [] and r.protocol == PROTOCOL == 1
+
+
+def test_turn_parses_role_author_tool_and_call_id():
+    r = _req(history=[_turn(role="toolresult", author="system", tool="bash", call_id="c1", content="ok")])
+    turn = r.history[0]
+    assert turn.role is TurnRole.toolresult and turn.author is Author.system
+    assert turn.tool == "bash" and turn.call_id == "c1" and turn.content == "ok"
+
+
+def test_turn_is_immutable():
+    turn = Turn(role="human", author="human", content="x")
+    with pytest.raises(ValidationError):
+        turn.content = "y"
+
+
+@pytest.mark.parametrize("field", ["role", "author"], ids=["role", "author"])
+def test_unknown_role_or_author_is_rejected(field):
+    with pytest.raises(ValidationError) as exc:
+        _req(history=[_turn(**{field: "wizard"})])
+    assert "history" in _field_names(exc.value)
+
+
+def test_history_over_turn_limit_is_rejected():
+    with pytest.raises(ValidationError, match=f"exceeds {HISTORY_MAX_TURNS} turns"):
+        _req(history=[_turn()] * (HISTORY_MAX_TURNS + 1))
+
+
+def test_history_at_turn_limit_is_accepted():
+    assert len(_req(history=[_turn()] * HISTORY_MAX_TURNS).history) == HISTORY_MAX_TURNS
+
+
+def test_history_over_byte_limit_is_rejected():
+    # Cyrillic is two bytes per character: half the byte limit in characters,
+    # plus one more character, is one byte over the limit.
+    big = _turn(content="ж" * (HISTORY_MAX_BYTES // 2 + 1))
+    with pytest.raises(ValidationError, match=f"exceeds {HISTORY_MAX_BYTES} bytes"):
+        _req(history=[big])
+
+
+def test_history_at_byte_limit_is_accepted():
+    exact = _turn(content="ж" * (HISTORY_MAX_BYTES // 2))
+    assert len(_req(history=[exact]).history) == 1
+
+
+def test_tool_and_call_id_count_toward_the_byte_limit():
+    almost = _turn(content="x" * (HISTORY_MAX_BYTES - 4), tool="abcd")
+    assert len(_req(history=[almost]).history) == 1
+    with pytest.raises(ValidationError, match="exceeds"):
+        _req(history=[_turn(content="x" * (HISTORY_MAX_BYTES - 4), tool="abcd", call_id="e")])
+
+
+def test_turn_tool_and_call_id_lengths_are_capped():
+    with pytest.raises(ValidationError):
+        _req(history=[_turn(tool="t" * 65)])
+    with pytest.raises(ValidationError):
+        _req(history=[_turn(call_id="c" * 129)])
+
+
+def test_history_with_a_lone_surrogate_is_measured_not_crashed():
+    assert len(_req(history=[_turn(content="\ud800")]).history) == 1
+
+
+def test_unsupported_protocol_is_rejected():
+    with pytest.raises(ValidationError, match="unsupported protocol 2"):
+        _req(protocol=2)
+
+
+def test_response_carries_protocol_by_default():
+    r = DecideResponse(decision=DecisionKind.allow, stage=1, latency_ms=LatencyMs(total=1), decision_id="01J")
+    assert r.protocol == PROTOCOL
+
+
+def test_identity_digest_ignores_metadata():
+    assert _req(metadata={"run": "a"}).identity_digest() == _req(metadata={"run": "b"}).identity_digest()
+
+
+def test_identity_digest_separates_requests_differing_only_in_paths():
+    one = _req(tool="file_write", raw="", args={"cwd": "/r", "paths": ["/r/ok.txt"]})
+    other = _req(tool="file_write", raw="", args={"cwd": "/r", "paths": ["/r/.env"]})
+    assert one.identity_digest() != other.identity_digest()

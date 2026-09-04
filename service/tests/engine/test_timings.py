@@ -1,4 +1,4 @@
-from agentgate.engine.timings import Latency, Timings
+from agentgate.engine.timings import Timings
 
 
 def test_unmeasured_stages_are_none():
@@ -26,8 +26,3 @@ def test_stage_is_recorded_even_when_the_body_raises():
     except RuntimeError:
         pass
     assert timings.finish().stage2_ms is not None
-
-
-def test_to_schema_maps_onto_the_wire_model():
-    schema = Latency(total_ms=7, stage1_ms=1, stage2_ms=5).to_schema()
-    assert (schema.stage1, schema.stage2, schema.total) == (1, 5, 7)

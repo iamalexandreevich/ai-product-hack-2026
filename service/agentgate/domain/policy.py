@@ -10,7 +10,7 @@ Resolving on every call was both repeated work and the reason a later
 import os
 from dataclasses import dataclass
 
-from agentgate.profiles.schema import Escalation, Network, Profile, Prose
+from agentgate.profiles.schema import Escalation, History, Network, Profile, Prose
 
 
 @dataclass(frozen=True)
@@ -56,6 +56,10 @@ class Policy:
     @property
     def prose(self) -> Prose:
         return self.profile.prose
+
+    @property
+    def history(self) -> History:
+        return self.profile.history
 
 
 def _expand(path: str, workspace: str) -> str:

@@ -2,14 +2,16 @@
 each other -- renaming a test module must not break three others.
 """
 
+from collections.abc import Callable
 from datetime import datetime, timezone
 
-from agentgate.api.schemas import DecideRequest, DecisionKind
-from agentgate.classify.base import Classifier
+from agentgate.api.schemas import DecideRequest, DecisionKind, Turn
+from agentgate.classify.base import Classifier, ReviewCase
+from agentgate.domain.dialogue import Dialogue
 from agentgate.domain.policy import Policy
-from agentgate.domain.session import SessionState
+from agentgate.domain.session import SessionState, SessionStateStore
 from agentgate.domain.verdict import Verdict
-from agentgate.engine.decision import Decision
+from agentgate.engine.decision import Decision, DecisionRecord
 from agentgate.engine.gate import Gate
 from agentgate.engine.timings import Latency
 from agentgate.normalize import normalize
@@ -94,17 +96,19 @@ def hard_deny_policy(**overrides) -> Policy:
 
 
 class FakeClassifier:
-    """A Classifier that answers what it was told to, and counts calls."""
+    """A Classifier that answers what it was told to, and keeps what it was asked."""
 
     def __init__(self, verdict: Verdict | None = None, name: str = "m") -> None:
         self.name = name
         self.calls = 0
+        self.cases: list[ReviewCase] = []
         self._verdict = verdict or Verdict(
             decision=DecisionKind.allow, stage=2, model=name, raw_response={"choices": []}
         )
 
-    async def classify(self, action, user_request, policy, stage1_note) -> Verdict:
+    async def classify(self, case: ReviewCase) -> Verdict:
         self.calls += 1
+        self.cases.append(case)
         return self._verdict
 
 
@@ -130,7 +134,11 @@ def classifiers(*fakes: Classifier) -> dict[str, dict[str, Classifier]]:
     return {"default": {fake.name: fake for fake in fakes}}
 
 
-def gate(classifier: Classifier | None = None, **profile_overrides) -> Gate:
+def gate(
+    classifier: Classifier | None = None,
+    state_store: SessionStateStore | None = None,
+    **profile_overrides,
+) -> Gate:
     """A Gate over one profile whose only model is the given classifier."""
     classifier = classifier if classifier is not None else FakeClassifier()
     return Gate(
@@ -138,16 +146,16 @@ def gate(classifier: Classifier | None = None, **profile_overrides) -> Gate:
         default_profile="default",
         classifiers=classifiers(classifier),
         rules=STAGE1,
-        state_store=InMemorySessionStateStore(),
+        state_store=state_store if state_store is not None else InMemorySessionStateStore(),
         allow_cache_ttl_seconds=86400,
     )
 
 
-def gate_for_binding_tests() -> Gate:
+def gate_for_binding_tests(state_store: SessionStateStore | None = None) -> Gate:
     """A Gate whose classifier always allows, so a case that reaches stage 2
     is visible as "stage 1 said nothing" rather than as an accidental refusal.
     """
-    return gate(allowed_paths=["${WORKSPACE}", "/tmp/agentgate-scratch"])
+    return gate(state_store=state_store, allowed_paths=["${WORKSPACE}", "/tmp/agentgate-scratch"])
 
 
 def shell_action(raw: str, cwd: str = WORKSPACE) -> NormalizedAction:
@@ -171,6 +179,16 @@ def decide_request(raw: str, session_id: str | None = "s1", **overrides) -> Deci
     )
     data.update(overrides)
     return DecideRequest.model_validate(data)
+
+
+def turn(role: str = "human", author: str = "human", content: str = "fix the build", **overrides) -> Turn:
+    data = dict(role=role, author=author, content=content)
+    data.update(overrides)
+    return Turn.model_validate(data)
+
+
+def dialogue(*turns: Turn) -> Dialogue:
+    return Dialogue.of(turns)
 
 
 def session_state(session_id: str = "s1", **overrides) -> SessionState:
@@ -235,6 +253,55 @@ class FakeSessionRecords:
 
     async def cache_put(self, session_id, action_hash, decision_id, expires_at) -> None:
         self.cache_puts.append((session_id, action_hash, decision_id))
+
+
+class CountingWorkspaceStore:
+    """A session store that counts how often the workspace detector actually ran.
+
+    It wraps the producer the gate hands to ``get_or_create`` rather than the
+    detector itself, so the count is of detections the store asked for -- which
+    is the whole contract: a workspace is produced when a session is created,
+    not on every request of an existing one.
+    """
+
+    def __init__(self, inner: SessionStateStore | None = None) -> None:
+        self._inner = inner if inner is not None else InMemorySessionStateStore()
+        self.detections = 0
+
+    async def get_or_create(
+        self, session_id: str, harness: str, profile_id: str, workspace: Callable[[], str]
+    ) -> SessionState:
+        def counted() -> str:
+            self.detections += 1
+            return workspace()
+
+        return await self._inner.get_or_create(session_id, harness, profile_id, counted)
+
+    async def save(self, state: SessionState) -> None:
+        await self._inner.save(state)
+
+    async def cache_get(self, session_id: str, key: str) -> str | None:
+        return await self._inner.cache_get(session_id, key)
+
+    async def cache_put(
+        self, session_id: str, key: str, decision_id: str, ttl_seconds: int
+    ) -> None:
+        await self._inner.cache_put(session_id, key, decision_id, ttl_seconds)
+
+
+class FakeReplayRecords:
+    """The keyed decisions a replay store restores from, in memory."""
+
+    def __init__(self, records: list[DecisionRecord] | None = None, error: Exception | None = None) -> None:
+        self._records = list(records or [])
+        self._error = error
+        self.cutoffs: list[datetime] = []
+
+    async def load_replayable(self, newer_than: datetime) -> list[DecisionRecord]:
+        if self._error is not None:
+            raise self._error
+        self.cutoffs.append(newer_than)
+        return [r for r in self._records if r.ts > newer_than]
 
 
 class RecordingDecisionWriter:

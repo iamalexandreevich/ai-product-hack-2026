@@ -115,6 +115,12 @@
       "description": "ULID of the stored decision. Stable identifier for the record in the database and in the JSONL log.",
       "title": "Decision Id",
       "type": "string"
+    },
+    "protocol": {
+      "default": 1,
+      "description": "Protocol version of this response. Always `1` in this release.",
+      "title": "Protocol",
+      "type": "integer"
     }
   },
   "required": [

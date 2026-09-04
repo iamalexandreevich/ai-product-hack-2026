@@ -8,19 +8,19 @@
 
 | Версия | Что видит сервис | Спека | Статус |
 |---|---|---|---|
-| **v1** | последний tool-call + последнее сообщение пользователя | `2026-09-03-agentgate-v1-design.md` | **реализуется** |
-| **v2** | v1 + предшествующий диалог: `assistant` + `toolcall` + `toolresult` + `human` | `v2-dialogue-context.md` | спроектировать |
+| **v1** | последний tool-call + последнее сообщение пользователя | `2026-09-03-agentgate-v1-design.md` | реализовано |
+| **v2** | v1 + предшествующий диалог: `assistant` + `toolcall` + `toolresult` + `human` | `2026-09-04-agentgate-v2-design.md` (постановка — `v2-dialogue-context.md`) | **реализовано** |
 | **v3** | v2 + оценка самих `tool-result` | `v3-tool-result-evaluation.md` | спроектировать |
 | **v4** | v3 + Context Guard: маскирование промпт-инъекций внутри `tool-result` | `v4-context-guard.md` | спроектировать |
 | **v5** | *(другая ось)* модель как тройка `base_url` / `api_key` / `model_name`; ризонинг выключен, SO включён | `v5-model-binding.md` | спроектировать |
 
-## Где мы сейчас: v1, подтверждено кодом
+## Где мы сейчас: v2 реализован
 
-- `DecideRequest` (`service/agentgate/api/schemas.py`) несёт `tool`, `raw`, `args`, `user_request`. Полей под историю нет.
-- `build_user_message` (`service/agentgate/stage2/prompt.py`) рендерит `[TASK]`, `[ACTION]`, `[FLAGS]`, `[STAGE1]`.
-- Закрытый список содержимого промпта истории не содержит.
+- `DecideRequest` (`service/agentgate/api/schemas.py`) несёт `history` и `protocol` вдобавок к `tool`, `raw`, `args`, `user_request`.
+- `build_user_message` (`service/agentgate/classify/prompt.py`) рендерит `[TASK]`, `[HISTORY]`, `[ACTION]`, `[FLAGS]`, `[STAGE1]`.
+- Закрытый список содержимого промпта включает `[HISTORY]`.
 
-Граница v1 задана спекой сознательно, а не является недоделкой.
+Граница v2 задана спекой сознательно, а не является недоделкой: `/v1/inspect` и оценка `toolresult` в неё не входят и приезжают на v3, семантическое маскирование промпт-инъекций (Context Guard) — на v4.
 
 ## v5 — модель как тройка параметров
 

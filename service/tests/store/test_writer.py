@@ -13,11 +13,13 @@ from tests.factories import (
 
 
 class FakeDecisionRepo:
-    def __init__(self) -> None:
+    def __init__(self, insert_returns: bool = True) -> None:
         self.inserted: list[Decision] = []
+        self._insert_returns = insert_returns
 
-    async def insert(self, decision) -> None:
+    async def insert(self, decision) -> bool:
         self.inserted.append(decision)
+        return self._insert_returns
 
 
 class CollectingLogger:
@@ -126,3 +128,16 @@ async def test_postgres_writer_writes_the_rows_in_foreign_key_order():
         decision(state=session_state(), cache_key="k" * 64)
     )
     assert repos.order == ["session", "decision", "cache"]
+
+
+async def test_postgres_writer_skips_the_cache_row_when_the_insert_was_skipped(caplog):
+    # `insert` returns False when a row with this idempotency key already
+    # existed -- a concurrent repeat must not then write a cache row whose
+    # decision_id references a row that was never inserted.
+    sessions, decisions = FakeSessionRecords(), FakeDecisionRepo(insert_returns=False)
+    with caplog.at_level(logging.WARNING):
+        await PostgresDecisionWriter(decisions, sessions, 86400).write(
+            decision(state=session_state(), cache_key="k" * 64)
+        )
+    assert sessions.cache_puts == []
+    assert "01J0" in caplog.text

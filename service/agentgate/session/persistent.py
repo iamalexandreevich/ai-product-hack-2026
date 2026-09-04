@@ -20,6 +20,7 @@ that way:
   across two modules.
 """
 
+from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Protocol
 
@@ -60,7 +61,7 @@ class PersistentSessionStateStore:
                 await self._inner.cache_put(session_id, key, decision_id, ttl_seconds)
 
     async def get_or_create(
-        self, session_id: str, harness: str, profile_id: str, workspace: str
+        self, session_id: str, harness: str, profile_id: str, workspace: Callable[[], str]
     ) -> SessionState:
         return await self._inner.get_or_create(session_id, harness, profile_id, workspace)
 

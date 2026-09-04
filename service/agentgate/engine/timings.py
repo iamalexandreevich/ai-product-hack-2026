@@ -11,17 +11,12 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 
-from agentgate.api.schemas import LatencyMs
-
 
 @dataclass(frozen=True)
 class Latency:
     total_ms: int
     stage1_ms: int | None = None
     stage2_ms: int | None = None
-
-    def to_schema(self) -> LatencyMs:
-        return LatencyMs(stage1=self.stage1_ms, stage2=self.stage2_ms, total=self.total_ms)
 
 
 class Timings:

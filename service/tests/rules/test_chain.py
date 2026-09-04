@@ -199,3 +199,12 @@ def test_dotenv_template_variants_not_hard_denied_by_shipped_profile():
     for p in ("/home/u/repo/.env.example", "/home/u/repo/.env.sample", "/home/u/repo/.env.tmp", "/home/u/repo/.env.template", "/home/u/repo/.env.dist"):
         d = STAGE1.evaluate(req("file_write", paths=[p]), DEFAULT)
         assert d is None or d.rule_id != "hard-deny.protected-write", p
+
+
+def test_rules_have_no_way_to_receive_a_dialogue():
+    # The rule signature is the enforcement: stage 1 is history-blind by type.
+    import inspect
+
+    from agentgate.rules.base import Rule
+
+    assert list(inspect.signature(Rule.evaluate).parameters) == ["self", "action", "policy"]

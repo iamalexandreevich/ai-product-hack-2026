@@ -5,10 +5,10 @@ from tests.factories import FakeClock, session_state
 
 async def test_state_survives_a_save_and_reload():
     store = InMemorySessionStateStore()
-    state = await store.get_or_create("s1", "h", "p", "/w")
+    state = await store.get_or_create("s1", "h", "p", lambda: "/w")
     state.record(DecisionKind.deny)
     await store.save(state)
-    assert (await store.get_or_create("s1", "h", "p", "/w")).deny_total == 1
+    assert (await store.get_or_create("s1", "h", "p", lambda: "/w")).deny_total == 1
 
 
 async def test_cache_returns_what_was_put_under_that_key():
@@ -45,5 +45,5 @@ async def test_preload_makes_a_seeded_state_the_stores_own():
     store = InMemorySessionStateStore()
     seeded = session_state("s2", deny_total=5)
     store.preload([seeded])
-    again = await store.get_or_create("s2", "h", "p", "/w")
+    again = await store.get_or_create("s2", "h", "p", lambda: "/w")
     assert again is seeded and again.deny_total == 5

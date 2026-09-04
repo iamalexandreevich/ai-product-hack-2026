@@ -46,6 +46,7 @@ class Health(BaseModel):
             "was built without it (local builds)."
         )
     )
+    protocol: int = Field(description="Protocol version this service speaks on `POST /v1/decide`.")
 
 
 class Error(BaseModel):

@@ -19,12 +19,13 @@ class InMemorySessionStateStore:
         self._cache: dict[tuple[str, str], tuple[str, float]] = {}
 
     async def get_or_create(
-        self, session_id: str, harness: str, profile_id: str, workspace: str
+        self, session_id: str, harness: str, profile_id: str, workspace: Callable[[], str]
     ) -> SessionState:
         state = self._states.get(session_id)
         if state is None:
             state = SessionState(
-                session_id=session_id, harness=harness, profile_id=profile_id, workspace=workspace
+                session_id=session_id, harness=harness, profile_id=profile_id,
+                workspace=workspace(),
             )
             self._states[session_id] = state
         return state

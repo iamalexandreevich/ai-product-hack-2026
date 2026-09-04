@@ -7,11 +7,12 @@ two extra failure paths beyond the pipeline's own three outcomes:
 
 - an invalid request body (malformed JSON, or JSON that fails
   `DecideRequest` validation) -> 200 `ask`, stage 0, rule_id
-  "api.invalid-request". The route takes a raw `Request` rather than a
-  `DecideRequest` parameter specifically so FastAPI's automatic body
-  validation (which would raise `RequestValidationError` -> 422) never
-  triggers; the body is parsed and validated by hand instead, and both
-  failure modes are caught explicitly.
+  "api.invalid-request" ("api.unsupported-protocol" for an unknown `protocol`,
+  "api.history-too-large" for `history` over its turn or byte limit). The
+  route takes a raw `Request` rather than a `DecideRequest` parameter
+  specifically so FastAPI's automatic body validation (which would raise
+  `RequestValidationError` -> 422) never triggers; the body is parsed and
+  validated by hand instead, and both failure modes are caught explicitly.
 - any exception escaping `Gate.decide` -> 200 `ask`, rule_id
   "api.internal-error". `Gate.decide` has no top-level try/except of its own
   (see agentgate.engine.gate's docstring) -- this handler is the outermost
@@ -35,6 +36,7 @@ describe an endpoint the service does not serve.
 import importlib.metadata
 import logging
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import replace
 from typing import Annotated, Any
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Path, Query, Request
@@ -46,17 +48,23 @@ from agentgate.api.examples import REQUEST_EXAMPLES, RESPONSE_EXAMPLES
 from agentgate.api.openapi import install_openapi
 from agentgate.api.responses import DecisionListResponse, Error, Health
 from agentgate.api.schemas import (
+    IDEMPOTENCY_KEY_MAX_CHARS,
     METADATA_MAX_BYTES,
+    PROTOCOL,
     RAW_MAX_BYTES,
     USER_REQUEST_MAX_CHARS,
     DecideRequest,
     DecideResponse,
+    HistoryTooLarge,
     LatencyMs,
+    UnsupportedProtocol,
 )
 from agentgate.config import Settings
+from agentgate.domain.replay import Replay, ReplayStore
 from agentgate.domain.verdict import Verdict
 from agentgate.engine.gate import Gate
 from agentgate.profiles.schema import Profile
+from agentgate.session.replay import InMemoryReplayStore
 from agentgate.store.keys import ApiKeyRepo
 from agentgate.store.repo import DecisionRepo
 from agentgate.store.writer import DecisionWriter
@@ -121,6 +129,14 @@ returns a previously granted identical action with `cached: true` and
 `session_id` there are no counters and no cache, and the decision is recorded
 with a null session.
 
+## History and idempotency (v2)
+
+`history` is the dialogue that preceded the action, oldest turn first, each turn
+with a `role` and an `author`; only `author: human` turns count as the user's
+words. The service truncates it to the profile budget before it reaches the
+stage-2 model and never shows it to stage 1. A repeat of a call with the same
+`Idempotency-Key` header replays the stored decision unchanged.
+
 ## Implementation status
 
 All four routes are implemented, tested and running in v1. `POST /v1/decide`,
@@ -164,6 +180,21 @@ DECIDE_OPENAPI: dict[str, Any] = {
             }
         },
     },
+    "parameters": [
+        {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": False,
+            "schema": {"type": "string"},
+            "description": (
+                "Opaque key a harness attaches to one tool call and repeats on a retry. A "
+                "repeat with the same key and the same request — a sha256 over everything but "
+                "`metadata` — returns the stored decision unchanged, without touching session "
+                "counters or storing a second row. A key longer than 128 characters is ignored. "
+                "A repeat under the same key with a different request is decided afresh."
+            ),
+        }
+    ],
     "responses": {"422": None},
 }
 
@@ -177,6 +208,55 @@ def _refuse(rule_id: str, reason: str) -> DecideResponse:
     )
 
 
+def _reason_for(error: Mapping[str, Any]) -> str:
+    location = ".".join(str(part) for part in error.get("loc", ()))
+    return f"invalid request: {location}: {error.get('msg')}"
+
+
+def _refusal_for(errors: list[Any]) -> DecideResponse:
+    """The fail-closed answer to a failed body validation.
+
+    Two limits get their own rule ids so an integrator can tell them from a
+    malformed body. They are recognised by the exception type the validator
+    raised -- pydantic hands it back under ``ctx.error`` -- rather than by the
+    wording of a message, which is free to change. A body can fail several
+    fields at once, so every error is scanned, not just the first.
+    """
+    for error in errors:
+        raised = error.get("ctx", {}).get("error")
+        if isinstance(raised, UnsupportedProtocol):
+            return _refuse("api.unsupported-protocol", _reason_for(error))
+        if isinstance(raised, HistoryTooLarge):
+            return _refuse("api.history-too-large", _reason_for(error))
+    return _refuse("api.invalid-request", _reason_for(errors[0]))
+
+
+async def _replayed(replay: ReplayStore, key: str) -> Replay | None:
+    """A replay store that is down means "no replay", never a 500: the client
+    would read a 5xx as fail-open and run the action unjudged."""
+    try:
+        return await replay.get(key)
+    except Exception:  # noqa: BLE001 - fail-closed: decide normally instead of failing the call
+        log.exception("replay store lookup failed")
+        return None
+
+
+async def _remember(replay: ReplayStore, key: str, entry: Replay, ttl_seconds: int) -> None:
+    """A store that cannot keep the answer costs a retry one extra decision,
+    which is the price of the answer this call already has."""
+    try:
+        await replay.put(key, entry, ttl_seconds)
+    except Exception:  # noqa: BLE001 - fail-closed: an unstorable decision is still a decision
+        log.exception("replay store write failed")
+
+
+def _replay_key(request: Request) -> str | None:
+    key = request.headers.get("idempotency-key", "")
+    if not key or len(key) > IDEMPOTENCY_KEY_MAX_CHARS:
+        return None
+    return key
+
+
 def create_app(
     settings: Settings,
     gate: Gate,
@@ -185,6 +265,7 @@ def create_app(
     profiles: Mapping[str, Profile],
     db_probe: Callable[[], Awaitable[bool]] | None = None,
     key_repo: ApiKeyRepo | None = None,
+    replay: ReplayStore | None = None,
 ) -> FastAPI:
     app = FastAPI(
         title="AgentGate",
@@ -194,6 +275,7 @@ def create_app(
         servers=SERVERS,
         openapi_tags=TAGS,
     )
+    replay = replay if replay is not None else InMemoryReplayStore()
     auth = Depends(make_require_token(settings, key_repo=key_repo, cache_ttl_seconds=settings.api_key_cache_ttl_seconds))
 
     @app.post(
@@ -246,6 +328,21 @@ def create_app(
         a stage that did not run. `decision_id` is a ULID and the primary key of the
         stored decision — quote it in bug reports.
 
+        **v2 fields.** `history` carries the dialogue that preceded the action
+        (see the `Turn` schema); it is optional, and an empty history behaves exactly
+        like v1. `protocol` names the contract version; this service answers `1` and
+        refuses any other value as `ask` with `rule_id: api.unsupported-protocol`. An
+        `Idempotency-Key` request header makes a repeat of the same call return the
+        same decision (same `decision_id`) without touching session counters or
+        storing a second row. The key is opaque to the service, and three of its
+        properties are load-bearing: a key longer than 128 characters is ignored
+        (the call is decided normally); a repeat under the same key is replayed
+        only when the request is byte-for-byte the same request — the identity is
+        a sha256 over everything but `metadata`, so a difference anywhere else
+        (`args.paths`, `history`, `user_request`, `profile_id`, …) is decided
+        afresh; and the key is global to the service, scoped neither by session
+        nor by credential, so a harness must make it unique per tool call.
+
         The request and response examples below are paired by name: `allow_safe_test`,
         `deny_unknown_package`, `ask_uncertain_db_cleanup`. The fourth response example
         has no request counterpart because it shows what an invalid request produces.
@@ -257,14 +354,20 @@ def create_app(
         try:
             parsed = DecideRequest.model_validate(payload)
         except ValidationError as exc:
-            first = exc.errors()[0]
-            location = ".".join(str(part) for part in first.get("loc", ()))
-            return _refuse("api.invalid-request", f"invalid request: {location}: {first.get('msg')}")
+            return _refusal_for(exc.errors())
+        key = _replay_key(request)
+        if key is not None:
+            replayed = await _replayed(replay, key)
+            if replayed is not None and replayed.answers(parsed):
+                return replayed.response
         try:
             decision = await gate.decide(parsed)
         except Exception as exc:  # noqa: BLE001 - fail-closed: no exception may escape as a 500
             log.exception("Gate.decide failed")
             return _refuse("api.internal-error", f"internal error: {type(exc).__name__}")
+        if key is not None:
+            decision = replace(decision, idempotency_key=key)
+            await _remember(replay, key, Replay.of(decision.to_record()), settings.allow_cache_ttl_seconds)
         background.add_task(writer.write, decision)
         return decision.to_response()
 
@@ -376,7 +479,8 @@ def create_app(
         `degraded` body, not a 5xx, signals a dependency is down. `git_sha` is the
         commit the running image was built from, or `null` for a build without it. A single `/healthz`
         right after a container start can briefly report `db: false` during connection
-        warmup and then recover.
+        warmup and then recover. `protocol` is the contract version served on
+        `POST /v1/decide`.
         """
         db_ok = True
         if db_probe is not None:
@@ -385,7 +489,10 @@ def create_app(
             except Exception:  # noqa: BLE001 - a broken probe means "not ok", not a 500 from /healthz
                 log.warning("database probe failed", exc_info=True)
                 db_ok = False
-        return Health(status="ok" if db_ok else "degraded", db=db_ok, llm=None, git_sha=settings.git_sha)
+        return Health(
+            status="ok" if db_ok else "degraded", db=db_ok, llm=None,
+            git_sha=settings.git_sha, protocol=PROTOCOL,
+        )
 
     install_openapi(app)
     return app

@@ -7,7 +7,7 @@ its own sandbox to the filesystem root: allowed_paths becomes ["/"], and
 """
 
 from agentgate.api.schemas import DecisionKind
-from tests.factories import decide_request, gate_for_binding_tests
+from tests.factories import CountingWorkspaceStore, decide_request, gate_for_binding_tests
 
 FIRST_CWD = "/home/u/repo"
 
@@ -45,3 +45,13 @@ async def test_a_new_session_picks_up_its_own_first_cwd():
         decide_request("ls -la", session_id="s2", args={"cwd": "/tmp/other"})
     )
     assert decision.state.workspace == "/tmp/other"
+
+
+async def test_the_workspace_is_detected_once_per_session_not_once_per_request():
+    # detect_workspace walks the filesystem from cwd to the root; on a session
+    # whose workspace is already fixed every one of those walks is waste.
+    store = CountingWorkspaceStore()
+    g = gate_for_binding_tests(store)
+    await g.decide(decide_request("ls -la", session_id="s1", args={"cwd": FIRST_CWD}))
+    await g.decide(decide_request("git status", session_id="s1", args={"cwd": FIRST_CWD}))
+    assert store.detections == 1

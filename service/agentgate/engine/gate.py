@@ -22,7 +22,8 @@ from datetime import datetime, timezone
 from ulid import ULID
 
 from agentgate.api.schemas import DecideRequest, DecisionKind
-from agentgate.classify.base import Classifier
+from agentgate.classify.base import Classifier, ReviewCase
+from agentgate.domain.dialogue import Dialogue
 from agentgate.domain.policy import Policy
 from agentgate.domain.session import SessionState, SessionStateStore
 from agentgate.domain.verdict import Verdict
@@ -72,6 +73,8 @@ class Gate:
         timings = Timings()
         decision_id = str(ULID())
         profile_id = request.profile_id or self._default_profile
+        dialogue = Dialogue.of(request.history)
+        history_digest = dialogue.digest()
 
         resolved = await self._resolve(request, profile_id)
         if isinstance(resolved, Verdict):
@@ -80,24 +83,28 @@ class Gate:
             # has none to keep.
             profile = self._profiles.get(profile_id)
             profile_hash = profile.profile_hash() if profile is not None else ""
-            return self._finish(decision_id, request, resolved, timings, profile_id, profile_hash)
+            return self._finish(
+                decision_id, request, resolved, timings, profile_id, profile_hash,
+                history_digest=history_digest,
+            )
 
         action = normalize(request)
         cache_key = allow_cache_key(
-            resolved.policy.profile_hash, action.action_hash(), request.user_request
+            resolved.policy.profile_hash, action.action_hash(), request.user_request, history_digest
         )
         if await self._cache_hit(resolved, cache_key):
             return self._finish(
                 decision_id, request, Verdict.allow("cache", stage=0), timings, profile_id,
                 resolved.policy.profile_hash, action, resolved.state, cache_key, cached=True,
+                history_digest=history_digest,
             )
 
-        verdict = await self._evaluate(request, action, resolved, timings)
+        verdict, seen = await self._evaluate(request, action, dialogue, resolved, timings)
         verdict = self._escalate(resolved.state, resolved.policy, verdict)
         await self._settle_session(resolved.state, verdict, cache_key, decision_id)
         return self._finish(
             decision_id, request, verdict, timings, profile_id, resolved.policy.profile_hash,
-            action, resolved.state, cache_key,
+            action, resolved.state, cache_key, history_digest=history_digest, dialogue=seen,
         )
 
     async def _resolve(self, request: DecideRequest, profile_id: str) -> "_Context | Verdict":
@@ -112,10 +119,12 @@ class Gate:
         if request.session_id:
             state = await self._states.get_or_create(
                 request.session_id, request.harness, profile_id,
-                detect_workspace(request.args.cwd),
+                lambda: detect_workspace(request.args.cwd),
             )
         # A session keeps the workspace its first request established: a later
         # `cwd` must not be able to widen the allowed paths under the agent.
+        # Hence the detector goes to the store unevaluated: it walks the
+        # filesystem, and past a session's first request the walk is waste.
         workspace = state.workspace if state is not None else detect_workspace(request.args.cwd)
         return _Context(
             policy=Policy.bind(profile, workspace), profile_id=profile_id,
@@ -128,16 +137,17 @@ class Gate:
         return await self._states.cache_get(context.state.session_id, cache_key) is not None
 
     async def _evaluate(
-        self, request: DecideRequest, action: NormalizedAction, context: _Context, timings: Timings
-    ) -> Verdict:
+        self, request: DecideRequest, action: NormalizedAction, dialogue: Dialogue,
+        context: _Context, timings: Timings,
+    ) -> tuple[Verdict, Dialogue | None]:
+        """The verdict, and the dialogue the classifier saw -- None when stage 1 settled it."""
         with timings.stage(1):
             verdict = self._rules.evaluate(action, context.policy)
         if verdict is not None:
-            return verdict
+            return verdict, None
         with timings.stage(2):
-            return await context.classifier.classify(
-                action, request.user_request, context.policy, STAGE1_PASSED
-            )
+            case = ReviewCase.build(action, request.user_request, dialogue, context.policy, STAGE1_PASSED)
+            return await context.classifier.classify(case), case.dialogue
 
     def _escalate(self, state: SessionState | None, policy: Policy, verdict: Verdict) -> Verdict:
         if state is None or verdict.hard or verdict.decision is DecisionKind.ask:
@@ -164,9 +174,11 @@ class Gate:
         self, decision_id: str, request: DecideRequest, verdict: Verdict, timings: Timings,
         profile_id: str, profile_hash: str, action: NormalizedAction | None = None,
         state: SessionState | None = None, cache_key: str | None = None, cached: bool = False,
+        history_digest: str = "", dialogue: Dialogue | None = None,
     ) -> Decision:
         return Decision(
             id=decision_id, ts=datetime.now(timezone.utc), request=request, verdict=verdict,
             latency=timings.finish(), profile_id=profile_id, profile_hash=profile_hash,
             action=action, state=state, cache_key=cache_key, cached=cached,
+            history_digest=history_digest, dialogue=dialogue,
         )
