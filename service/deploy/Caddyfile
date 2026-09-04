@@ -1,3 +1,6 @@
-{$AGENTGATE_PUBLIC_HOST} {
+# AGENTGATE_PUBLIC_HOST is the canonical name; AGENTGATE_PUBLIC_ALIASES is an
+# optional space-separated list of extra names served by the same site (used
+# while integrators migrate from an old name). Both come from the server .env.
+{$AGENTGATE_PUBLIC_HOST} {$AGENTGATE_PUBLIC_ALIASES} {
 	reverse_proxy gate:8400
 }
