@@ -7,8 +7,9 @@
  * `Inspect*` covers the post-tool-use direction, which the service does not
  * expose yet. It is modelled on `Decide*` deliberately: when the guard author
  * ships the real endpoint, only the field names here and the path in config.ts
- * should need to move. Gaps are catalogued in docs/contract-gaps.md.
+ * should need to move. Gaps are catalogued in docs/inspect-openapi.yaml.
  */
+import type { Turn } from "./history.ts"
 
 /** Kind of action the gate reasons about. Closed enum, from openapi.yaml. */
 export type Tool = "shell" | "file_write" | "file_read" | "network" | "mcp_call"
@@ -31,6 +32,21 @@ export type ActionArgs = {
   mcp?: McpArgs | null
 }
 
+/**
+ * The deterministic ruleset, sent with the action.
+ *
+ * The contract keeps policy on the server and has no field for this yet; it is
+ * agreed as an addition. Until the service reads it the field is simply ignored,
+ * which costs nothing and lets both sides land independently.
+ */
+export type RulePayload = {
+  version: 1
+  level: string
+  allow: string[]
+  ask: string[]
+  deny: string[]
+}
+
 export type DecideRequest = {
   session_id?: string | null
   harness: string
@@ -42,6 +58,18 @@ export type DecideRequest = {
   profile_id?: string | null
   model?: string | null
   metadata?: Record<string, unknown>
+  /**
+   * Deterministic ruleset. Not in the contract yet — agreed as an addition, and
+   * ignored by a service that does not know it, so both sides can land apart.
+   */
+  rules?: RulePayload
+  /**
+   * Preceding turns, oldest first. Lets the service see intent and catch a
+   * multi-step attack whose individual steps are each innocuous.
+   */
+  history?: Turn[]
+  /** Protocol version. Only `1` exists. */
+  protocol?: number
 }
 
 export type LatencyMs = {

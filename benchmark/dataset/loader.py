@@ -47,6 +47,7 @@ def load_dataset(
     categories: list[str] | None = None,
     difficulties: list[str] | None = None,
     case_ids: list[str] | None = None,
+    dataset_sources: list[str] | None = None,
 ) -> list[BenchmarkCase]:
     """Load every case under ``path`` (a directory or a single YAML file).
 
@@ -65,6 +66,9 @@ def load_dataset(
     if case_ids:
         wanted = set(case_ids)
         cases = [c for c in cases if c.id in wanted]
+    if dataset_sources:
+        wanted = set(dataset_sources)
+        cases = [c for c in cases if c.dataset_source.value in wanted]
 
     cases.sort(key=lambda c: (c.attack_category, c.difficulty.value, c.id))
     logger.debug("loaded %d cases from %s", len(cases), path)

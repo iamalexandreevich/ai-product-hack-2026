@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="ru" data-lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OPENMAGI — шлюз политик для кодинг-агентов</title>
+<meta name="description" content="Шлюз политик между любым кодинг-агентом и вашей машиной. Каждый вызов инструмента проверяется до выполнения.">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0B0714">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%230B0714'/%3E%3Cpath d='M16 3l11 6.5v13L16 29 5 22.5v-13z' fill='none' stroke='%237B4FD6' stroke-width='2.5'/%3E%3Ccircle cx='16' cy='16' r='3.5' fill='%23B6FF2E'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@900&family=JetBrains+Mono:wght@400;700&family=Noto+Sans+JP:wght@700;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./styles.css">
+<script>document.documentElement.classList.add('js');</script>
+</head>
+<body>
+<span class="sr-only" aria-live="polite" id="live"></span>
+<div id="top-sentinel" class="top-sentinel"></div>
+
+<header class="site-header" id="header">
+  <a href="#" class="wordmark"><span>OPEN</span><span class="wordmark__accent">MAGI</span></a>
+  <nav class="nav">
+    <a class="nav__link" data-link="github" href="#" target="_blank" rel="noopener"><span data-i18n="github">GitHub</span> ↗</a>
+    <button type="button" class="lang-toggle" id="lang-toggle" data-i18n-aria="lang" aria-label="Переключить язык"><span class="lang-toggle__en">EN</span><span class="lang-toggle__slash">/</span><span class="lang-toggle__ru">RU</span></button>
+  </nav>
+</header>
+
+<main>
+<section class="hero">
+  <div class="hero__inner">
+    <h1 class="hero__title" data-appear style="--delay:0s"><span class="hero__line" data-i18n="h1a">Ваш агент может всё.</span><span class="hero__line hero__line--dim"><span data-i18n="h1b">Теперь он должен </span><em class="hero__accent" data-i18n="h1c">спросить.</em></span></h1>
+    <p class="hero__lead" data-appear style="--delay:.08s" data-i18n="sub">Шлюз политик между любым кодинг-агентом и вашей машиной. Каждый вызов инструмента проверяется до выполнения.</p>
+    <div class="hero__cta" data-appear style="--delay:.16s">
+      <button type="button" class="cmd" data-copy data-i18n-aria="copy" aria-label="Скопировать команду установки">
+        <span class="cmd__prompt" aria-hidden="true">$</span>
+        <code class="cmd__text" data-cmd></code>
+        <svg class="cmd__icon cmd__icon--copy" width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="6" y="6" width="9" height="9"></rect><rect x="3" y="3" width="9" height="9"></rect></svg>
+        <svg class="cmd__icon cmd__icon--check" width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 9.5 7.5 14 15 4"></polyline></svg>
+      </button>
+      <p class="hero__note" data-i18n="note">Kilo Code, OpenCode и Pi определяются автоматически.</p>
+    </div>
+  </div>
+</section>
+
+<section class="term" id="term">
+  <div class="term__inner">
+    <div class="term__content">
+      <div class="section-head section-head--term" data-appear>
+        <span class="section-tag">01 — <span data-i18n="termTag">сессия</span></span>
+        <h2 class="section-title section-title--term" data-i18n="termTitle">Отказ не ломает сессию.</h2>
+        <p class="section-sub section-sub--term" data-i18n="termSub">Гейт блокирует один вызов. Агент выбирает безопасный путь и доводит задачу до конца.</p>
+      </div>
+      <div class="terminal">
+        <div class="terminal__bar">
+          <span class="terminal__dot"></span><span class="terminal__dot"></span><span class="terminal__dot"></span>
+          <span class="terminal__path" data-i18n="termPath">~/work/api</span>
+        </div>
+        <div class="terminal__log" id="log"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section metrics" id="metrics">
+  <div class="section__inner metrics__inner" data-appear>
+    <div class="section-head">
+      <span class="section-tag">02 — <span data-i18n="mTag">бенчмарк</span></span>
+      <h2 class="section-title" data-i18n="mTitle">Каждая цифра с методикой.</h2>
+    </div>
+    <div class="metrics__grid" id="metrics-grid"></div>
+    <p class="metrics__note"><span data-i18n="mNote">Методика, размер выборки и дата прогона: </span><a data-link="benchmark" href="#" target="_blank" rel="noopener" class="metrics__link" data-i18n="mLink">benchmark/</a> — <span data-i18n="mPending">прогона ещё нет, цифры появятся после первого бенчмарка.</span></p>
+  </div>
+</section>
+
+<section class="section policy" id="policy">
+  <div class="section__inner policy__inner" data-appear>
+    <div class="section-head">
+      <span class="section-tag">03 — <span data-i18n="rTag">политика</span></span>
+      <h2 class="section-title" data-i18n="rTitle">Что гейт останавливает по умолчанию.</h2>
+      <p class="section-sub" data-i18n="rSub">Нажмите на паттерн или введите свою команду. Демо работает офлайн.</p>
+    </div>
+    <div class="policy__box">
+      <div class="rules" id="rules"></div>
+      <div class="probe">
+        <label class="probe__field">
+          <span class="probe__prompt" aria-hidden="true">$</span>
+          <input type="text" id="probe" class="probe__input" data-i18n-placeholder="placeholder" placeholder="попробуйте команду…" spellcheck="false" autocomplete="off" autocapitalize="off">
+        </label>
+        <div class="probe__state" id="probe-state"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section harnesses" id="harnesses">
+  <div class="section__inner harnesses__inner" data-appear>
+    <div class="section-head">
+      <span class="section-tag">04 — <span data-i18n="hTag">харнессы</span></span>
+      <h2 class="section-title" data-i18n="hTitle">Работает там, где уже работает ваш агент.</h2>
+      <p class="section-sub section-sub--wide" data-i18n="hSub">Одна установка. Хук записывается сюда:</p>
+    </div>
+    <div class="harnesses__grid" id="harnesses-grid"></div>
+  </div>
+</section>
+</main>
+
+<footer class="footer">
+  <div class="footer__inner" data-appear>
+    <button type="button" class="cmd" data-copy data-i18n-aria="copy" aria-label="Скопировать команду установки">
+      <span class="cmd__prompt" aria-hidden="true">$</span>
+      <code class="cmd__text" data-cmd></code>
+      <svg class="cmd__icon cmd__icon--copy" width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="6" y="6" width="9" height="9"></rect><rect x="3" y="3" width="9" height="9"></rect></svg>
+      <svg class="cmd__icon cmd__icon--check" width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 9.5 7.5 14 15 4"></polyline></svg>
+    </button>
+    <div class="footer__row">
+      <a data-link="github" href="#" target="_blank" rel="noopener" data-i18n="github">GitHub</a>
+      <span data-i18n="fLicense">Лицензия MIT</span>
+      <span data-i18n="fTeam">Сделано командой AgentGate</span>
+      <span>© <span data-i18n="fYear">2026</span></span>
+    </div>
+  </div>
+</footer>
+
+<script type="module" src="./app.js"></script>
+</body>
+</html>

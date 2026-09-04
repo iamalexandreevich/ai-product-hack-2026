@@ -20,9 +20,11 @@ import json
 import logging
 import sys
 import uuid
+from collections import Counter
 from pathlib import Path
 from urllib.parse import urlparse
 
+from automode.server import ServerAutomodeAdapter
 from client.security_service import SecurityServiceClient
 from config import service_config_from_env
 from dataset.loader import DatasetLoadError, load_dataset
@@ -30,7 +32,8 @@ from dataset.validator import difficulty_coverage, validate_dataset
 from reporting.report import build_summary, render_failures, render_text, write_reports
 from runner.executor import BenchmarkRunner
 from runner.recorder import Recorder
-from schemas.result import RunConfig
+from schemas.case import DatasetSource
+from schemas.result import ExecutionMode, RunConfig
 from storage.sqlite import BenchmarkStore
 
 DEFAULT_DATASET = "attacks/cases"
@@ -82,6 +85,11 @@ def _cmd_validate(args: argparse.Namespace) -> int:
     print(f"cases: {len(report.cases)} in {len(coverage)} categor(ies)")
     for category, difficulties in sorted(coverage.items()):
         print(f"  {category:<32} {len(difficulties):>2}  {', '.join(sorted(difficulties))}")
+    sources = Counter(case.dataset_source.value for case in report.cases)
+    print(
+        "dataset sources: "
+        + (", ".join(f"{name} {n}" for name, n in sorted(sources.items())) or "none")
+    )
     print(f"errors: {len(report.errors)}   warnings: {len(report.warnings)}")
 
     if args.strict_warnings and report.warnings:
@@ -109,6 +117,7 @@ def _cmd_benchmark(args: argparse.Namespace) -> int:
             categories=args.category or None,
             difficulties=args.difficulty or None,
             case_ids=args.case_id or None,
+            dataset_sources=args.dataset_source or None,
         )
     except DatasetLoadError as exc:
         print(str(exc), file=sys.stderr)
@@ -138,6 +147,7 @@ def _cmd_benchmark(args: argparse.Namespace) -> int:
         return 2
 
     run_config = RunConfig(
+        adapter_name=ServerAutomodeAdapter.name,
         service_url=service_config.url,
         profile_id=service_config.profile_id,
         model=service_config.model,
@@ -148,9 +158,11 @@ def _cmd_benchmark(args: argparse.Namespace) -> int:
         category_filter=list(args.category or []),
         difficulty_filter=list(args.difficulty or []),
         case_filter=list(args.case_id or []),
+        dataset_source_filter=list(args.dataset_source or []),
         dataset_path=str(dataset_path),
         pricing_table_path=service_config.pricing.source_path,
         session_mode=args.session_mode,
+        execution_mode=ExecutionMode(args.execution_mode),
     )
 
     if args.dry_run:
@@ -232,7 +244,8 @@ async def _execute(
             jsonl_path=out_dir / f"stream-{run_id}.jsonl",
             progress=progress,
         ) as recorder:
-            runner = BenchmarkRunner(client, run_config, run_id=run_id, on_result=recorder.record)
+            adapter = ServerAutomodeAdapter(client, session_mode=run_config.session_mode)
+            runner = BenchmarkRunner(adapter, run_config, run_id=run_id, on_result=recorder.record)
             results = await runner.run(cases)
 
         if store is not None:
@@ -311,6 +324,13 @@ def _build_parser() -> argparse.ArgumentParser:
     benchmark.add_argument("--difficulty", action="append", default=None)
     benchmark.add_argument("--case-id", action="append", default=None)
     benchmark.add_argument(
+        "--dataset-source",
+        action="append",
+        choices=[source.value for source in DatasetSource],
+        default=None,
+        help="run only cases from this population (baseline / team); repeatable",
+    )
+    benchmark.add_argument(
         "--subset",
         action="store_true",
         help="skip the 'exactly five cases per category' validation rule",
@@ -345,6 +365,16 @@ def _add_execution_args(parser: argparse.ArgumentParser) -> None:
         default="per_case",
         help="per_case isolates the service cache and escalation counters (default)",
     )
+    parser.add_argument(
+        "--execution-mode",
+        choices=[mode.value for mode in ExecutionMode],
+        default=ExecutionMode.SINGLE_DECISION.value,
+        help=(
+            "what the run measures: single_decision (default) sends one action per case; "
+            "harness_loop marks a run driven by a real harness, where wall clock covers the "
+            "whole task including deny-retry and ask-wait loops"
+        ),
+    )
     parser.add_argument("--strict", action="store_true", help="score only the primary expectation")
     parser.add_argument("--db", default=DEFAULT_DB)
     parser.add_argument("--no-db", action="store_true")
@@ -361,7 +391,9 @@ def _add_execution_args(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="exit non-zero when any case fails (useful in CI)",
     )
-    parser.set_defaults(subset=False, category=None, difficulty=None, case_id=None)
+    parser.set_defaults(
+        subset=False, category=None, difficulty=None, case_id=None, dataset_source=None
+    )
 
 
 def _has_filters(args: argparse.Namespace) -> bool:
@@ -369,6 +401,7 @@ def _has_filters(args: argparse.Namespace) -> bool:
         getattr(args, "category", None)
         or getattr(args, "difficulty", None)
         or getattr(args, "case_id", None)
+        or getattr(args, "dataset_source", None)
     )
 
 

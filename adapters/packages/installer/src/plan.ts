@@ -7,7 +7,7 @@ import { findBuild, loadManifest } from "./manifest.ts"
 import { PLUGIN_PI_SPEC, PLUGIN_SPEC, PLUGIN_TUI_SPEC, PLUGIN_V2_SPEC, type GatePaths } from "./paths.ts"
 import { wrapperPath } from "./wrapper.ts"
 
-export type InstallMode = "patched" | "fallback" | "v2" | "pi"
+export type InstallMode = "patched" | "fallback" | "v2" | "pi" | "codex" | "dsh"
 
 export type InstallPlan = {
   target: Detected
@@ -28,19 +28,51 @@ export function planInstall(
   paths: GatePaths,
   manifestFile: string,
 ): InstallPlan {
+  if (target.id === "codex") {
+    // No patch: Codex's own hooks are enough. The gated copy lives in its own
+    // CODEX_HOME so the user's `codex` keeps running without our plugin.
+    return {
+      target,
+      mode: "codex",
+      buildBinary: null,
+      wrapper: wrapperPath(paths.binDir, target.id),
+      pluginSpec: "gate@agentgate",
+      tuiSpec: "gate@agentgate",
+      configKey: "plugin",
+      needsPermissionBaseline: false,
+      restartHint: `run: ${target.id}-gate`,
+    }
+  }
+
+  if (target.id === "dsh") {
+    // No patch: the harness exposes exactly the two seams we need. Gating is a
+    // profile of its own, so the user's profiles are untouched.
+    return {
+      target,
+      mode: "dsh",
+      buildBinary: null,
+      wrapper: wrapperPath(paths.binDir, target.id),
+      pluginSpec: "@agentgate/dsh-gate",
+      tuiSpec: "@agentgate/dsh-gate",
+      configKey: "plugin",
+      needsPermissionBaseline: false,
+      restartHint: `run: ${target.id}-gate`,
+    }
+  }
+
   if (target.id === "pi") {
-    // Pi loads the extension directly from settings.json — no patch, no wrapper,
-    // no build, no baseline permission. The mode key is freed in keybindings.json.
+    // No patch. The extension is registered in a settings.json of our own,
+    // reached through PI_CODING_AGENT_DIR, so plain `pi` stays ungated.
     return {
       target,
       mode: "pi",
       buildBinary: null,
-      wrapper: null,
+      wrapper: wrapperPath(paths.binDir, target.id),
       pluginSpec: PLUGIN_PI_SPEC,
       tuiSpec: PLUGIN_PI_SPEC,
       configKey: "plugin",
       needsPermissionBaseline: false,
-      restartHint: "restart pi (or run /reload in the TUI)",
+      restartHint: `run: ${target.id}-gate`,
     }
   }
 

@@ -1,6 +1,8 @@
 # Server-only overlay: `docker compose -f docker-compose.yml -f docker-compose.deploy.yml`.
-# Adds Caddy as the TLS terminator in front of `gate`. Local development
-# uses docker-compose.yml alone and never starts Caddy.
+# Adds Caddy as the TLS terminator in front of `gate` and as the static
+# server of the landing page (frontend/site, rsynced by `make deploy` to
+# AGENTGATE_SITE_DIR on the server). Local development uses
+# docker-compose.yml alone and never starts Caddy.
 services:
   caddy:
     image: caddy:2
@@ -9,9 +11,11 @@ services:
     environment:
       AGENTGATE_PUBLIC_HOST: ${AGENTGATE_PUBLIC_HOST:?set AGENTGATE_PUBLIC_HOST in .env (the public DNS name Caddy serves)}
       AGENTGATE_PUBLIC_ALIASES: ${AGENTGATE_PUBLIC_ALIASES:-}
+      AGENTGATE_SITE_HOSTS: ${AGENTGATE_SITE_HOSTS:?set AGENTGATE_SITE_HOSTS in .env (names of the static landing page)}
     ports: ["80:80", "443:443"]
     volumes:
       - "./deploy/Caddyfile:/etc/caddy/Caddyfile:ro"
       - "caddydata:/data"
+      - "${AGENTGATE_SITE_DIR:-/opt/openmagi-site}:/srv/site:ro"
 volumes:
   caddydata: {}

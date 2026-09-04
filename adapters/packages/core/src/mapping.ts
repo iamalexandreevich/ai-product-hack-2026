@@ -4,7 +4,7 @@
  * The enum cannot express what the harnesses actually do, so every mapping here
  * is lossy on purpose and the harness-native name is preserved separately in
  * `tool_name` (see metadata in request.ts). The lossy cases are written up in
- * docs/contract-gaps.md; when the service grows a `tool_name` field this file
+ * docs/inspect-openapi.yaml; when the service grows a `tool_name` field this file
  * stops throwing information away.
  *
  * Argument shapes below were read off a live opencode 1.17.18 session, not

@@ -4,9 +4,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this directory is
 
-`benchmark/` is direction 3 of AgentGate. The **system under test is our own security service**
-(`POST /v1/decide` → `allow | deny | ask`), not a coding agent and not another harness. Do not add
-harness adapters here — those live in `adapters/`.
+`benchmark/` is direction 3 of AgentGate. The system under test is **an automode implementation** —
+something standing between a coding agent and the OS that answers `allow | deny | ask`. The
+benchmark reaches one through an `AutomodeAdapter` (`automode/base.py`), and the only implementation
+that exists today is our own service over HTTP (`ServerAutomodeAdapter`, `POST /v1/decide`), which
+stays the default. A future implementation (`Claude Code + native Auto Mode` through the Claude Code
+SDK) would be a second class behind the same protocol; it does not exist and must not be stubbed.
+
+The benchmark-side package is `automode/`, never `adapters/`: repo-root `adapters/` is direction 1
+— the harness plugins (opencode / claude-code / codex / kilo) that call our service in production.
+Nothing from direction 1 moves in here.
 
 Every benchmark case is one pair at a fixed boundary:
 
@@ -27,7 +34,7 @@ All commands run from `benchmark/`.
 ```bash
 uv sync                                                    # deps (pydantic, pyyaml, httpx; dev: pytest, ruff)
 
-uv run pytest                                              # 122 unit tests, no network
+uv run pytest                                              # 185 unit tests, no network
 uv run pytest tests/test_scorer.py::test_error_always_scores_zero   # one test
 uv run pytest -m live                                      # 2 more, needs a live service at SECURITY_SERVICE_URL
 
@@ -69,13 +76,28 @@ imports read `from schemas.case import BenchmarkCase`, never `from benchmark.sch
 One case flows through:
 
 ```
-cli.py → dataset (load + validate) → runner.executor → client.security_service
-       → evaluator.scorer → runner.recorder → storage.sqlite + reporting.report
+cli.py → dataset (load + validate) → runner.executor → automode.server (AutomodeAdapter)
+       → client.security_service → evaluator.scorer → runner.recorder → storage.sqlite
+       → evaluator.metrics → reporting.report
 ```
 
-Each module owns one boundary: `client/` is the only place that knows the HTTP contract, `evaluator/`
-is the only place that decides pass/fail, `reporting/` never re-derives anything the result schema
-does not already carry.
+`automode/` is the only seam. `runner/executor.py` is typed to the `AutomodeAdapter` protocol and
+imports nothing from `client/` or `config.py` (a test asserts that); `automode/server.py` is the only
+production module that knows both a benchmark case and `SecurityServiceClient`; the dataset, the
+scorer, the metrics, the storage and the reports are shared by every implementation.
+
+**How to add an adapter:** write a class with `name: str` and
+`async def execute(case, *, run_id) -> AutomodeExecutionResult`, construct it in `cli.py` (the only
+composition root), and add nothing to the runner or the metrics. There is deliberately no
+`--adapter` flag, no registry and no plugin discovery — a selection mechanism with one choice is the
+branch this seam exists to avoid; it is added by whoever adds the second adapter. Note what the seam
+does *not* solve: `BenchmarkResult` still assumes one decision per case (`human_decision_count`,
+`attack_success`, `task_success`), and a whole-task implementation will still need work there.
+
+Each module owns one boundary: `client/` is the only place that knows the HTTP contract,
+`evaluator/scorer.py` is the only place that decides pass/fail, `evaluator/metrics.py` is the only
+place that computes an aggregate, and `reporting/` formats what those two returned — it never
+derives a number of its own.
 
 ### The invariant that shapes most of the code: never invent service data
 
@@ -98,6 +120,37 @@ directly available, and each is handled the same way: **produce a value plus a p
   distinct from `unavailable`.
 
 When adding a field to `schemas/result.py`, carry this pattern forward.
+
+### Aggregate metrics
+
+`evaluator/metrics.py` computes ASR, Utility, FP, Friction, decision latency and price from raw
+results alone, so any of them can be recomputed later from `results-<run_id>.jsonl` or from
+`benchmark_results.result_json`. Three rules hold that together:
+
+- **Ground truth comes from the case, not the response.** `BenchmarkResult.attack_success` is true
+  only where the service permitted an action the case declares unacceptable — `allow` alone is not
+  "the attack succeeded". Ground-truth properties (`attack_success`, `task_success`, `blocked`,
+  `human_decision_count`, `false_positive`) are derived, never stored, so nothing duplicates.
+- **A case without a decision is a failed measurement, not a result.** Transport errors and timeouts
+  are excluded from every rate and counted separately as `*_without_decision`.
+- **Missing is missing, and free is not missing.** Price has three states: known, a real `0.0` with
+  `cost_source: no_model_call` (stage 0/1 never calls a model, derived from the `stage` the service
+  reports), and unknown as `None` plus a reason. Collapsing the last two would make the average price
+  per request meaningless, since the cascade's whole point is that most requests never reach the
+  classifier. Task slowdown is `None` with a reason that names what is missing in the current
+  `execution_mode`.
+- **One shape per breakdown.** `metrics["by"][<dimension>]` maps a group name to the same flat row
+  (ASR, Utility, FP, friction, latency, price). Add a dimension by adding a key there; never add a
+  parallel `<metric>_by_<dimension>` map, and never mirror a metric into a second summary block.
+
+`dataset_source` (`baseline | team`, `team` by default) splits the population so ASR is measurable
+on an imported corpus separately from cases written here. Everything in `attacks/cases/` today is
+`team`.
+
+`RunConfig.execution_mode` records what a run measured: `single_decision` (one action per case, what
+the benchmark does today) or `harness_loop` (a real harness drives the task, so wall clock covers
+retries after a `deny` and waits after an `ask`). It exists so a per-decision latency and a per-task
+latency can never be compared by accident.
 
 ### Scoring
 
@@ -137,6 +190,9 @@ difficulties present and unique, globally unique ids, file name = `id`, director
 
 Other conventions:
 
+- `dataset_source` marks where a case came from: omit it for cases written here (`team`), set
+  `baseline` only for cases imported from an external corpus. Never relabel existing cases to make a
+  comparison look better.
 - `expected_stage` and `expected_rule_id_prefix` are informational and never scored. Only use rule
   ids the spec actually documents (`hard-deny.*`, `profile.*`, `allowlist.*`, `packages.*`,
   `escalation`) — inventing one contradicts the "never invent" invariant above.

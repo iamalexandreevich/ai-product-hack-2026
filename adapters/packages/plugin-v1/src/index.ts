@@ -41,6 +41,7 @@ import {
   resolveIn,
   resolveOut,
   writeMode,
+  readRules,
 } from "../../core/src/index.ts"
 import type { CallContext, GateConfig, Mode, OutAction } from "../../core/src/index.ts"
 import { HarnessState } from "./harness.ts"
@@ -72,7 +73,9 @@ const plugin = async ({ client, directory, worktree }: any, options: any = {}) =
       sessionId,
       callId,
       userRequest: await sessions.userRequestFor(sessionId),
+      history: await sessions.historyFor(sessionId),
       mode: mode(),
+      rules: readRules(config.rulesPath),
       profileId: config.profileId,
       model: config.model,
       parentSessionId: await sessions.parent(sessionId),
@@ -100,6 +103,7 @@ const plugin = async ({ client, directory, worktree }: any, options: any = {}) =
       status: decided.status,
       source: decided.source,
       rule: decided.ruleId,
+      turns: context.history?.length ?? 0,
     })
     return decided
   }
@@ -139,7 +143,8 @@ const plugin = async ({ client, directory, worktree }: any, options: any = {}) =
         .filter((part: any) => part?.type === "text")
         .map((part: any) => part.text)
         .join("\n")
-      sessions.recordHumanMessage(input?.sessionID ?? output?.message?.sessionID, text)
+      const sessionId = input?.sessionID ?? output?.message?.sessionID
+      sessions.recordHumanMessage(sessionId, text, output?.message?.id)
     },
 
     /** Patched build only. Declared in the SDK on stock builds but never called. */
@@ -171,6 +176,7 @@ const plugin = async ({ client, directory, worktree }: any, options: any = {}) =
       if (harness.patched && verdicts.peek(input.callID)) return
 
       const action = mapToolCall(input.tool, output?.args ?? {}, cwd)
+      sessions.history.recordToolCall(input.sessionID, input.tool, input.callID, action.raw)
       // Nothing to inherit here: the harness has not evaluated its rules yet.
       const decided = await decideOutgoing(action, input.sessionID, input.callID, "ask")
       verdicts.set(input.callID, decided)
@@ -186,6 +192,9 @@ const plugin = async ({ client, directory, worktree }: any, options: any = {}) =
     "tool.execute.after": async (input: any, output: any) => {
       if (mode() === "off") return
       const action = mapToolCall(input.tool, input?.args ?? {}, cwd)
+      sessions.history.recordToolResult(
+        input.sessionID, input.tool, input.callID, String(output?.output ?? ""),
+      )
       const replacement = await inspectIncoming(
         action,
         input.sessionID,
@@ -214,6 +223,16 @@ const plugin = async ({ client, directory, worktree }: any, options: any = {}) =
       if (mode() === "off") return
       for (const message of output?.messages ?? []) {
         for (const part of message?.parts ?? []) {
+          // The agent's own prose: what it said it was about to do, which is
+          // often the only place a multi-step plan is stated outright.
+          if (part?.type === "text" && message?.info?.role === "assistant") {
+            sessions.history.record(
+              message.info.sessionID,
+              { role: "assistant", author: "agent", content: String(part.text ?? "") },
+              part.id ?? undefined,
+            )
+            continue
+          }
           if (part?.type !== "tool" || part?.state?.status !== "error") continue
           if (part.state[INSPECTED]) continue
           part.state[INSPECTED] = true

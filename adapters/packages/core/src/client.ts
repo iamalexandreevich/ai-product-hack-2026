@@ -16,8 +16,12 @@ import { nullLogger } from "./log.ts"
 import type { DecideRequest, DecideResponse, InspectRequest, InspectResponse } from "./protocol.ts"
 
 export type GuardFailure = {
-  /** unreachable: no answer at all. refused: answered non-2xx. malformed: unparseable answer. */
-  kind: "unreachable" | "refused" | "malformed"
+  /**
+   * unreachable: no answer at all. refused: answered non-2xx. malformed:
+   * unparseable answer. not_implemented: the route does not exist (404/405/501)
+   * — the service is healthy, it just does not offer this direction yet.
+   */
+  kind: "unreachable" | "refused" | "malformed" | "not_implemented"
   detail: string
 }
 
@@ -104,6 +108,14 @@ export class GuardClient {
 
     if (!res.ok) {
       const detail = `HTTP ${res.status}`
+      // A missing route is not a broken guard: the service simply does not
+      // implement this direction yet (PostToolUse is not in the v1 contract).
+      // Kept separate from `refused` so `in` can pass through while `out`
+      // still escalates to ask.
+      if (res.status === 404 || res.status === 405 || res.status === 501) {
+        this.log(`guard ${which} not implemented`, { url, detail })
+        return { ok: false, failure: { kind: "not_implemented", detail } }
+      }
       this.log(`guard ${which} refused`, { url, detail, ms: Date.now() - started })
       return { ok: false, failure: { kind: "refused", detail } }
     }

@@ -21,7 +21,12 @@ import {
   resolveIn,
   resolveOut,
   createLogger,
-} from "@agentgate/gate-core"
+  readRules,
+  History,
+  // Relative, not "@agentgate/gate-core": dsh loads this file through a symlink
+  // and Node resolves the real path, so a relative import works from either —
+  // and the repo's own tests no longer need an install-time link to exist.
+} from "../../core/src/index.ts"
 
 export const name = "gate"
 export const inject = ["tools"]
@@ -30,6 +35,7 @@ const HARNESS = { name: "dsh", version: process.env.DSH_VERSION ?? "unknown", pa
 
 export function apply(ctx) {
   const config = loadConfig()
+  const history = new History()
   const log = createLogger(config.logPath)
   const client = new GuardClient(config, log)
   log(`[dsh] gate plugin loaded (guard=${config.url})`)
@@ -39,7 +45,9 @@ export function apply(ctx) {
     sessionId: exec.session?.id ?? null,
     callId,
     userRequest: "",
+    history: history.forRequest(exec.session?.id ?? null),
     mode: readMode(config.statePath),
+    rules: readRules(config.rulesPath),
     profileId: config.profileId,
     model: config.model,
     // exec.agent is a cordis service proxy: reading or serialising it outside an
@@ -56,6 +64,7 @@ export function apply(ctx) {
     const callId = exec.id ?? exec.callId ?? randomUUID()
     const args = exec.arguments ?? exec.args ?? {}
     const action = mapToolCall(exec.name, args, process.cwd())
+    history.recordToolCall(exec.session?.id ?? null, exec.name, callId, action.raw)
     const context = contextFor(exec, callId)
 
     const result =
@@ -99,6 +108,7 @@ export function apply(ctx) {
 
     const callId = exec.id ?? exec.callId ?? randomUUID()
     const action = mapToolCall(exec.name, exec.arguments ?? exec.args ?? {}, process.cwd())
+    history.recordToolResult(exec.session?.id ?? null, exec.name, callId, text)
     const context = contextFor(exec, callId)
     const status = result?.isError ? "error" : "completed"
 
