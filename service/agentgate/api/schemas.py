@@ -1,9 +1,11 @@
 """Pydantic v2 request/response models for the /v1/decide API.
 
 These models are the shared contract between the service, the harness
-adapters, and the benchmark work streams. Field names, types, and enum
-values are exported as JSON Schema into ../../contracts via
-scripts/export_contracts.py; keep them in sync.
+adapters, and the benchmark work streams. Field names, types, enum values
+*and the prose describing them* are exported as JSON Schema into
+../../contracts by scripts/export_contracts.py and as OpenAPI by
+scripts/export_openapi.py, so a field and its documentation are edited in
+one place and cannot drift apart.
 """
 
 import json
@@ -18,6 +20,8 @@ METADATA_MAX_BYTES = 16384
 
 
 class Tool(str, Enum):
+    """Kind of action a harness can ask the gate about."""
+
     shell = "shell"
     file_write = "file_write"
     file_read = "file_read"
@@ -26,34 +30,111 @@ class Tool(str, Enum):
 
 
 class DecisionKind(str, Enum):
+    """The three possible answers. All of them are delivered with HTTP 200: `deny` and `ask` are decisions, not errors."""
+
     allow = "allow"
     deny = "deny"
     ask = "ask"
 
 
 class McpArgs(BaseModel):
-    server: str
-    tool: str
-    arguments: dict[str, Any] = Field(default_factory=dict)
+    server: str = Field(description="Name of the MCP server.")
+    tool: str = Field(description="Name of the tool being called on that server.")
+    arguments: dict[str, Any] = Field(
+        default_factory=dict, description="Arguments passed to the MCP tool."
+    )
 
 
 class ActionArgs(BaseModel):
-    cwd: str = Field(min_length=1)
-    paths: list[str] = Field(default_factory=list)
-    domains: list[str] = Field(default_factory=list)
-    mcp: McpArgs | None = None
+    cwd: str = Field(
+        min_length=1,
+        description="Absolute path of the agent's working directory. Must be non-empty.",
+    )
+    paths: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Paths the action touches, for `file_read` and `file_write`. "
+            "**Ignored for `shell`** — the service extracts paths itself from the "
+            "command's syntax tree. Sending them for `shell` is harmless."
+        ),
+    )
+    domains: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Domains the action contacts, for `network`. **Ignored for `shell`** "
+            "— the service extracts domains itself from the command."
+        ),
+    )
+    mcp: McpArgs | None = Field(
+        default=None,
+        description="Server, tool and arguments of an MCP call. Used for `tool: mcp_call`.",
+    )
 
 
 class DecideRequest(BaseModel):
-    session_id: str | None = Field(default=None, max_length=128)
-    harness: str = Field(min_length=1, max_length=64)
-    tool: Tool
-    raw: str = ""
-    args: ActionArgs
-    user_request: str
-    profile_id: str | None = Field(default=None, max_length=64)
-    model: str | None = Field(default=None, max_length=64)
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    """One proposed agent action, plus the intent behind it."""
+
+    session_id: str | None = Field(
+        default=None,
+        max_length=128,
+        description=(
+            "Harness session identifier, at most 128 characters. Optional, but "
+            "without it the service keeps no per-session counters and no allow "
+            "cache, and the decision is stored with a null session."
+        ),
+    )
+    harness: str = Field(
+        min_length=1,
+        max_length=64,
+        description=(
+            "Free-form name of the calling harness: `opencode`, `claude-code`, "
+            "`codex`, `kilo`, `bench`, … 1-64 characters."
+        ),
+    )
+    tool: Tool = Field(description="Kind of action being gated.")
+    raw: str = Field(
+        default="",
+        description=(
+            f"Raw payload as text. **Required and non-blank for `tool: shell`**, "
+            f"where it is the command line stage 1 parses; for the other tools it "
+            f"is the raw payload. At most {RAW_MAX_BYTES} **bytes** of UTF-8, not "
+            f"characters — Cyrillic costs 2 bytes per character. Over the limit "
+            f"the request is refused fail-closed as `ask` with HTTP 200."
+        ),
+    )
+    args: ActionArgs = Field(description="Structured arguments of the action.")
+    user_request: str = Field(
+        description=(
+            f"The user's last message, used as intent for the classifier. Not "
+            f"rejected when long: the server truncates it to "
+            f"{USER_REQUEST_MAX_CHARS} characters **keeping the tail**."
+        )
+    )
+    profile_id: str | None = Field(
+        default=None,
+        max_length=64,
+        description=(
+            "Server-side policy profile to apply; defaults to `default`. The "
+            "harness never sees the profile contents."
+        ),
+    )
+    model: str | None = Field(
+        default=None,
+        max_length=64,
+        description=(
+            "Name of a model configuration inside the profile. Overrides the "
+            "profile's `models.default`."
+        ),
+    )
+    metadata: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            f"Arbitrary JSON, stored with the decision and echoed back by the "
+            f"decision feed. It never reaches the decision logic or the stage-2 "
+            f"prompt. At most {METADATA_MAX_BYTES} bytes when serialized as "
+            f"UTF-8 JSON."
+        ),
+    )
 
     @field_validator("raw")
     @classmethod
@@ -85,18 +166,66 @@ class DecideRequest(BaseModel):
 
 
 class LatencyMs(BaseModel):
-    stage1: int | None = None
-    stage2: int | None = None
-    total: int
+    """Per-stage timing of one decision. A stage that did not run is `null`."""
+
+    stage1: int | None = Field(
+        default=None, description="Milliseconds spent in stage 1, or `null` if it did not run."
+    )
+    stage2: int | None = Field(
+        default=None, description="Milliseconds spent in stage 2, or `null` if it did not run."
+    )
+    total: int = Field(description="Total milliseconds the service spent on this decision.")
 
 
 class DecideResponse(BaseModel):
-    decision: DecisionKind
-    reason: str = ""
-    suggest: str = ""
-    stage: int
-    rule_id: str | None = None
-    model: str | None = None
-    latency_ms: LatencyMs
-    cached: bool = False
-    decision_id: str
+    """The gate's answer to one proposed action."""
+
+    decision: DecisionKind = Field(
+        description="The gate's answer. Always delivered with HTTP 200."
+    )
+    reason: str = Field(
+        default="",
+        description=(
+            "Text handed to the agent verbatim as the tool result. Always present "
+            "and non-empty for `deny` and `ask`; an empty string for `allow`."
+        ),
+    )
+    suggest: str = Field(
+        default="",
+        description=(
+            "A safe alternative to show the user. Empty string when there is "
+            "nothing to suggest."
+        ),
+    )
+    stage: int = Field(
+        description=(
+            "Who decided: `1` deterministic stage 1, `2` the LLM classifier, `0` "
+            "an allow-cache hit or an API-level refusal such as an invalid body."
+        )
+    )
+    rule_id: str | None = Field(
+        default=None,
+        description=(
+            "Identifier of the stage-1 rule that fired (`hard-deny.exfil`, "
+            "`profile.path`, `allowlist.readonly`, `escalation`, …), or `null` "
+            "when stage 2 decided."
+        ),
+    )
+    model: str | None = Field(
+        default=None,
+        description="Name of the model configuration used, if stage 2 ran; `null` otherwise.",
+    )
+    latency_ms: LatencyMs = Field(description="Latency per stage and in total.")
+    cached: bool = Field(
+        default=False,
+        description=(
+            "True when this answer came from the per-session `allow` cache. Only "
+            "`allow` is ever cached; `deny` and `ask` never are."
+        ),
+    )
+    decision_id: str = Field(
+        description=(
+            "ULID of the stored decision. Stable identifier for the record in the "
+            "database and in the JSONL log."
+        )
+    )

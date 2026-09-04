@@ -31,11 +31,12 @@ the spec's "Отзыв ограничен временем жизни кэша")
 import logging
 import secrets
 import time
+from collections.abc import Callable
 
 from fastapi import BackgroundTasks, Header, HTTPException
 
 from agentgate.config import Settings
-from agentgate.store.keys import hash_key
+from agentgate.store.keys import ApiKeyRepo, hash_key
 
 log = logging.getLogger(__name__)
 
@@ -43,6 +44,33 @@ log = logging.getLogger(__name__)
 DEFAULT_KEY_CACHE_TTL_SECONDS = 45.0
 
 _BEARER_PREFIX = "Bearer "
+
+BEARER_SCHEME = {
+    "type": "http",
+    "scheme": "bearer",
+    "description": """\
+`Authorization: Bearer <credential>`. The credential is EITHER the static
+`AGENTGATE_TOKEN` (set in the service's environment) OR an issued API key. A
+request authenticates if the bearer matches either one; both are checked in
+constant time.
+
+**API keys** are minted by the operator from the CLI, never over HTTP:
+`python -m agentgate keys create --label <name>` (also `keys list`,
+`keys revoke <key_id>`). A key is shown exactly once at creation, looks like
+`agk_` followed by 43 URL-safe characters, and is stored only as a SHA-256 hash
+— the plaintext is never persisted or logged. A revoked or expired key stops
+working within a short in-process cache TTL (revocation is not instant, up to a
+minute). Hand each integrator their own key so it can be revoked individually.
+
+OpenAPI cannot express the conditional rule, so it is stated here: on a
+non-localhost bind a credential is required (the service will not start without a
+token, and issued keys are also accepted); on a localhost bind with no token and
+no keys, every request passes (dev mode) — which is why the scheme is declared
+optional in `security`. `GET /healthz` never requires a credential. A missing,
+wrong, expired or revoked credential all return the same opaque HTTP 401 (the
+body does not say which); every other failure is a 200 `ask`, not a 401.
+""",
+}
 
 
 class _KeyVerifier:
@@ -60,7 +88,9 @@ class _KeyVerifier:
     by a transient failure.
     """
 
-    def __init__(self, key_repo, ttl_seconds: float, now_fn=time.monotonic) -> None:
+    def __init__(
+        self, key_repo: ApiKeyRepo, ttl_seconds: float, now_fn: Callable[[], float]
+    ) -> None:
         self._repo = key_repo
         self._ttl = ttl_seconds
         self._now = now_fn
@@ -87,7 +117,7 @@ class _KeyVerifier:
         return key_id
 
 
-async def _touch_last_used_safe(key_repo, key_id: str) -> None:
+async def _touch_last_used_safe(key_repo: ApiKeyRepo, key_id: str) -> None:
     """Best-effort `last_used_at` update, run after the response is sent.
 
     Mirrors the "persist after response, swallow the error" discipline
@@ -102,9 +132,9 @@ async def _touch_last_used_safe(key_repo, key_id: str) -> None:
 
 def make_require_token(
     settings: Settings,
-    key_repo=None,
+    key_repo: ApiKeyRepo | None = None,
     cache_ttl_seconds: float = DEFAULT_KEY_CACHE_TTL_SECONDS,
-    now_fn=time.monotonic,
+    now_fn: Callable[[], float] = time.monotonic,
 ):
     """Build the `require_token` dependency for one app instance.
 
@@ -122,8 +152,8 @@ def make_require_token(
     verifier = _KeyVerifier(key_repo, cache_ttl_seconds, now_fn) if key_repo is not None else None
 
     async def require_token(
-        authorization: str | None = Header(default=None),
-        background: BackgroundTasks = None,  # type: ignore[assignment] -- FastAPI always injects a real instance
+        background: BackgroundTasks,
+        authorization: str | None = Header(default=None, include_in_schema=False),
     ) -> None:
         if expected is None:
             return
@@ -133,8 +163,7 @@ def make_require_token(
             token = authorization[len(_BEARER_PREFIX):]
             key_id = await verifier.verify(token)
             if key_id is not None:
-                if background is not None:
-                    background.add_task(_touch_last_used_safe, key_repo, key_id)
+                background.add_task(_touch_last_used_safe, key_repo, key_id)
                 return
         raise HTTPException(status_code=401, detail="invalid or missing bearer token")
 

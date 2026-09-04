@@ -1,6 +1,6 @@
 import hashlib
-import os
 from enum import Enum
+from functools import cached_property
 from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
@@ -67,6 +67,10 @@ class Prose(BaseModel):
 
 
 class Profile(BaseModel):
+    """A policy profile as the service loaded it. Server-side configuration; a
+    harness never receives this in normal operation. Contains no secret values
+    — only the *names* of the environment variables holding API keys."""
+
     id: str
     allowed_paths: list[str]
     protected_paths: list[str]
@@ -77,21 +81,17 @@ class Profile(BaseModel):
     escalation: Escalation = Field(default_factory=Escalation)
     prose: Prose = Field(default_factory=Prose)
     rules: list[dict[str, Any]] = Field(default_factory=list)
-    workspace: str | None = None
+
+    @cached_property
+    def _hash(self) -> str:
+        return hashlib.sha256(self.model_dump_json().encode("utf-8")).hexdigest()
 
     def profile_hash(self) -> str:
-        payload = self.model_dump_json(exclude={"workspace"})
-        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        """This profile's identity, as recorded on every decision.
 
-    def _expand(self, p: str) -> str:
-        ws = self.workspace or ""
-        return os.path.expanduser(p.replace("${WORKSPACE}", ws))
-
-    def resolved_allowed_paths(self) -> list[str]:
-        return [os.path.normpath(self._expand(p)) for p in self.allowed_paths]
-
-    def resolved_protected_paths(self) -> list[str]:
-        return [self._expand(p) for p in self.protected_paths]
-
-    def public_dict(self) -> dict[str, Any]:
-        return self.model_dump(mode="json")
+        Computed once: profiles are loaded from YAML and never mutated.
+        ``model_copy`` carries the computed value along with it, so a copy
+        with changed fields would report the original's hash -- construct a
+        new Profile rather than copying one.
+        """
+        return self._hash

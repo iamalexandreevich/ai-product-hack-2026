@@ -160,23 +160,35 @@ def test_unknown_subcommand_errors_nonzero_exit(fresh_db, tmp_path, capsys):
 
 
 @requires_db
-def test_keys_branch_never_starts_the_server(fresh_db, tmp_path, monkeypatch):
-    """`python -m agentgate keys create ...` must not call build_app/uvicorn.run."""
-    import sys
+def test_issuing_a_key_needs_no_profiles_and_no_token_for_the_bind(fresh_db, tmp_path, capsys):
+    """The CLI must not go through service assembly to mint a key.
 
+    These settings would fail `build_service` twice over -- a non-localhost
+    bind with no token, and a profiles directory that does not exist -- so a
+    key coming back proves the CLI never assembled the service.
+    """
+    settings = Settings(db_url=TEST_DB_URL, log_path=tmp_path / "d.jsonl",
+                        bind="0.0.0.0:8400", profiles_dir=tmp_path / "no-such-dir")
+    rc = run_keys_cli(["create", "--label", "smoke"], settings=settings)
+    assert rc == 0
+    assert capsys.readouterr().out.strip().startswith("agk_")
+
+
+@requires_db
+def test_keys_argument_dispatches_to_the_cli_instead_of_the_server(fresh_db, tmp_path, monkeypatch, capsys):
+    """`python -m agentgate keys create ...` exits through the CLI.
+
+    `main` never reaches `build_service`/`uvicorn.run` for this argv: it
+    returns an exit code from `run_keys_cli` instead. The profiles directory
+    is deliberately absent, so falling through to the server would raise
+    rather than hang.
+    """
     from agentgate import __main__ as main_mod
     from agentgate.config import get_settings
 
-    called = {"build_app": False, "uvicorn_run": False}
-
-    async def fake_build_app(settings=None):
-        called["build_app"] = True
-        return None, None
-
-    monkeypatch.setattr(main_mod, "build_app", fake_build_app)
-    monkeypatch.setattr(main_mod.uvicorn, "run", lambda *a, **k: called.__setitem__("uvicorn_run", True))
     monkeypatch.setenv("AGENTGATE_DB_URL", TEST_DB_URL)
-    monkeypatch.setattr(sys, "argv", ["agentgate", "keys", "create", "--label", "smoke"])
+    monkeypatch.setenv("AGENTGATE_LOG_PATH", str(tmp_path / "d.jsonl"))
+    monkeypatch.setenv("AGENTGATE_PROFILES_DIR", str(tmp_path / "no-such-dir"))
 
     # This is the one path in the whole suite that lets `run_keys_cli` fall
     # back to the process-global `get_settings()` (production's real
@@ -186,8 +198,8 @@ def test_keys_branch_never_starts_the_server(fresh_db, tmp_path, monkeypatch):
     get_settings.cache_clear()
     try:
         with pytest.raises(SystemExit) as exc_info:
-            main_mod.main()
+            main_mod.main(["keys", "create", "--label", "smoke"])
     finally:
         get_settings.cache_clear()
     assert exc_info.value.code == 0
-    assert called == {"build_app": False, "uvicorn_run": False}
+    assert capsys.readouterr().out.strip().startswith("agk_")

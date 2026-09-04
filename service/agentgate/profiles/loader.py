@@ -13,8 +13,8 @@ from agentgate.profiles.schema import Profile
 # recognized; a pattern that doesn't match this regex is left as-is.
 _ENV_VAR_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(:-(?P<default>[^}]*))?\}")
 
-# WORKSPACE is not an OS environment variable: it is filled in later, per
-# request, by Profile._expand from the detected workspace directory. Env
+# WORKSPACE is not an OS environment variable: it is filled in later, when a
+# profile is bound to a session's workspace (agentgate.domain.policy). Env
 # interpolation must leave "${WORKSPACE}" untouched so that later step can
 # still find it.
 _RESERVED_PLACEHOLDERS = {"WORKSPACE"}
@@ -81,6 +81,3 @@ def detect_workspace(cwd: str) -> str:
             return os.path.abspath(cwd)
         current = parent
 
-
-def with_workspace(profile: Profile, cwd: str) -> Profile:
-    return profile.model_copy(update={"workspace": detect_workspace(cwd)})

@@ -2,7 +2,84 @@
 
 FastAPI-сервис: `POST /v1/decide`, `GET /v1/decisions`, `GET /v1/profiles/{id}`, `GET /healthz`. Конвейер: нормализация по AST → ступень 1 (hard-deny, профиль, allowlist) → ступень 2 (LLM через OpenAI-совместимый API) → эскалация → ответ; решения в Postgres и JSONL.
 
-Спека: `docs/superpowers/service/specs/2026-09-03-agentgate-v1-design.md`. План реализации: `docs/superpowers/service/plans/2026-09-03-agentgate-v1.md`.
+Спека: `docs/superpowers/service/specs/2026-09-03-agentgate-v1-design.md`. План реализации: `docs/superpowers/service/plans/2026-09-03-agentgate-v1.md`. Карта модулей — `service/CLAUDE.md`.
+
+## Как это устроено
+
+Четыре шва, за каждым — протокол, и подстановка своей реализации не требует правок выше по стеку:
+
+| Шов | Протокол | Реализации в проде | Где собирается |
+|---|---|---|---|
+| Правило ступени 1 | `Rule` (`agentgate/rules/base.py`) | 12 правил в `agentgate/rules/` | `STAGE1` в `agentgate/rules/chain.py` |
+| Ступень 2 | `Classifier` (`agentgate/classify/base.py`) | `LLMClassifier` | `bootstrap.build_service` |
+| Состояние сессии | `SessionStateStore` (`agentgate/domain/session.py`) | `InMemorySessionStateStore` внутри `PersistentSessionStateStore` | `bootstrap.build_service` |
+| Запись решения | `DecisionWriter` (`agentgate/store/writer.py`) | `Jsonl…` + `Postgres…` внутри `Composite…` | `bootstrap.build_service` |
+
+Всё, что каскад возвращает, — один тип `Verdict` (`agentgate/domain/verdict.py`): и правило, и классификатор, и allow-кэш, и ранний отказ API.
+
+## Как добавить
+
+### …правило ступени 1
+
+Новый класс и одна строка в списке. `Gate` не меняется, тесты соседних правил не трогаются.
+
+```python
+# agentgate/rules/kubectl_delete.py
+class KubectlDeleteRule:
+    id = "hard-deny.kubectl-delete"
+    hard = True
+
+    def evaluate(self, action: NormalizedAction, policy: Policy) -> Verdict | None:
+        if any(c.argv[:2] == ["kubectl", "delete"] for c in action.commands):
+            return Verdict.deny(self.id, "kubectl delete against a live cluster", hard=True)
+        return None
+```
+
+Импорты: `Verdict` из `agentgate.domain.verdict`, `Policy` из `agentgate.domain.policy`, `NormalizedAction` из `agentgate.normalize.model`. Подключение — строка в `STAGE1` (`agentgate/rules/chain.py`); порядок списка и есть приоритет: `None` означает «моё правило тут ни при чём», и решает следующее. Hard-deny вместо этого добавляется в `HARD_DENY_RULES` (`agentgate/rules/hard_deny/__init__.py`) — до правил профиля и allowlist.
+
+### …модель ступени 2
+
+OpenAI-совместимый провайдер — это запись в `models.configs` профиля и **ни строки кода** (см. «Профили» ниже): `build_classifiers` поднимает по `LLMClassifier` на каждую запись при старте. Провайдер с другим протоколом — класс с `name` и `classify`:
+
+```python
+# agentgate/classify/local_guard.py
+class LocalGuardClassifier:
+    name = "local-guard"
+
+    async def classify(self, action, user_request, policy, stage1_note) -> Verdict:
+        kind = await self._ask_local_model(action, policy)   # ваш транспорт -> DecisionKind
+        return Verdict(decision=kind, stage=2, model=self.name)
+```
+
+Подключение — одна строка в `bootstrap.build_service` после сборки реестра:
+
+```python
+classifiers["default"]["local-guard"] = LocalGuardClassifier()
+```
+
+Ключ реестра — то, что харнесс присылает в поле `model` запроса (или `models.default` профиля). `classify` не имеет права бросать: любой сбой возвращается как `ask` с заполненным `error`, иначе fail-closed держится только внешним обработчиком API.
+
+### …хранилище состояния сессий
+
+Пять методов и одна строка. `PersistentSessionStateStore` оборачивает любой из них и добавляет восстановление из Postgres при старте.
+
+```python
+# agentgate/session/redis.py
+class RedisSessionStateStore:
+    async def get_or_create(self, session_id, harness, profile_id, workspace) -> SessionState: ...
+    async def save(self, state: SessionState) -> None: ...
+    async def cache_get(self, session_id: str, key: str) -> str | None: ...
+    async def cache_put(self, session_id: str, key: str, decision_id: str, ttl_seconds: int) -> None: ...
+    def preload(self, states: list[SessionState]) -> None: ...
+```
+
+Подключение — одна строка в `bootstrap.build_service`:
+
+```python
+store = state_store or PersistentSessionStateStore(RedisSessionStateStore(...), sessions)
+```
+
+Писать в Postgres из этих методов нельзя: строка allow-кэша ссылается на строку решения, которой на момент решения ещё нет (FK), а запись в базу на горячем пути оплачивается каждым вызовом агента. Всю персистентность решения делает `PostgresDecisionWriter` после отправки ответа.
 
 ## Запуск
 
@@ -43,7 +120,7 @@ docker compose up -d --build
 cd service && uv run pytest -q
 ```
 
-С базой (дополнительно прогоняет `tests/test_store.py`, часть `tests/test_main.py`, `tests/test_keys.py`, `tests/test_cli_keys.py`, `tests/e2e/`; база и так поднята для разработки, см. раздел ниже про `agentgate_test`):
+С базой (дополнительно прогоняет `tests/store/test_repo.py`, `tests/store/test_keys.py`, `tests/test_bootstrap.py`, `tests/test_cli_keys.py`, часть `tests/api/test_app.py` и `tests/e2e/`; база и так поднята для разработки, см. раздел ниже про `agentgate_test`):
 
 ```
 cd service
@@ -76,7 +153,7 @@ models:
 
 ## База для тестов хранилища
 
-`docker-compose.yml` поднимает Postgres 16 на `5433` и создаёт основную базу `agentgate` через `POSTGRES_DB`. Вторая база, `agentgate_test`, на которую указывает `AGENTGATE_TEST_DB_URL` (`postgresql+asyncpg://agentgate:agentgate@localhost:5433/agentgate_test`) для `tests/test_store.py`, создаётся автоматически скриптом `scripts/init-test-db.sql`, примонтированным в `/docker-entrypoint-initdb.d/` — Postgres выполняет такие скрипты один раз, при первой инициализации пустого каталога данных.
+`docker-compose.yml` поднимает Postgres 16 на `5433` и создаёт основную базу `agentgate` через `POSTGRES_DB`. Вторая база, `agentgate_test`, на которую указывает `AGENTGATE_TEST_DB_URL` (`postgresql+asyncpg://agentgate:agentgate@localhost:5433/agentgate_test`) для тестов хранилища (`tests/store/`, `tests/e2e/`), создаётся автоматически скриптом `scripts/init-test-db.sql`, примонтированным в `/docker-entrypoint-initdb.d/` — Postgres выполняет такие скрипты один раз, при первой инициализации пустого каталога данных.
 
 Из этого следует: если volume `pgdata` уже существовал до добавления скрипта (переиспользуется поднятый ранее контейнер), инициализация не перезапустится сама. В этом случае — либо `docker compose down -v && docker compose up -d db` (пересоздать том с нуля), либо создать базу вручную: `docker compose exec db psql -U agentgate -c "CREATE DATABASE agentgate_test;"`.
 

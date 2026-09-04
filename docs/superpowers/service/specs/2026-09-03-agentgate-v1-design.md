@@ -63,7 +63,9 @@ service/
   agentgate/
     api/         # роуты /v1/*, pydantic-схемы запроса/ответа
     normalize/   # bashlex AST, пути, домены → NormalizedAction
-    stage1/      # hard_deny.py, profile_check.py, allowlist.py, packages.py (заглушка), chain.py
+    rules/       # base.py (Rule, RuleChain), chain.py (STAGE1), unparseable.py,
+                 # hard_deny/ (одно правило — один модуль), profile_paths.py,
+                 # profile_domains.py, allowlist.py, packages.py (заглушка)
     stage2/      # OpenAI-совместимый клиент, промпт, structured output, fallback-парсер
     profiles/    # загрузка и валидация YAML
     session/     # счётчики эскалации, кэш allow, интерфейс хранилища счётчиков
@@ -171,7 +173,7 @@ HTTP 401 только на отсутствие или неверный токе
 
 ### 5.1. Нормализация
 
-1. `shell`: `raw` разбирается bashlex в AST. Извлекаются простые команды с argv, пайпы, редиректы, подстановки `$(…)` и обратные кавычки, `eval`/`exec`/`source`, присваивания переменных. Если парсер упал — флаг `unparseable=true`, действие идёт в ступень 2 напрямую; при её недоступности → `ask`.
+1. `shell`: `raw` разбирается bashlex в AST. Извлекаются простые команды с argv, пайпы, редиректы, подстановки `$(…)` и обратные кавычки, `eval`/`exec`/`source`, присваивания переменных. Если парсер упал — флаг `unparseable=true`, и действие закрывается ступенью 1 правилом `unparseable`: `ask`, `stage: 1`, `model: null`. Классификатор не вызывается — он отвечал бы о команде, которую не видел: `commands`, `paths` и `domains` у такого действия пусты по построению.
 2. Пути → абсолютные относительно `cwd`; раскрываются `~`, `..`, символические ссылки (без обращения к ФС, только лексически; `realpath` — roadmap).
 3. Домены извлекаются из argv `curl`, `wget`, `git clone`, `pip install git+…`, `npm install <url>`, `ssh`, `scp`.
 4. Для `file_*`, `network`, `mcp_call` структура берётся из `args` как есть.
@@ -181,7 +183,7 @@ HTTP 401 только на отсутствие или неверный токе
 
 ### 5.2. Ступень 1 — детерминированная
 
-Цепочка проверок; каждая — функция `(NormalizedAction, Profile, SessionState) -> Decision | None`. `None` означает «пропускаю дальше». Порядок:
+Цепочка правил (`RuleChain`); каждое — объект с `id`, `hard` и методом `evaluate(NormalizedAction, Profile) -> Verdict | None`. `None` означает «пропускаю дальше»; первый не-`None` побеждает. Порядок:
 
 1. **Hard-deny** (`rule_id: hard-deny.*`), не переопределяется ничем:
    - `exfil`: сетевая команда, где в аргументах, stdin или редиректе есть пути к секретам (`.env*`, `*.pem`, `id_rsa*`, `~/.ssh/**`, `~/.aws/**`, `~/.kube/**`, `*.key`, `*.p12`);
@@ -192,7 +194,7 @@ HTTP 401 только на отсутствие или неверный токе
    - `git-force`: `git push --force`/`-f` в ветки из `protected_branches`.
 2. **Профиль** (`rule_id: profile.*`): пути вне `allowed_paths` → `deny`; домены вне `allowed_domains` → `deny` при `network.mode: allowlist|off`, `ask` при `ask`, пропуск при `open`.
 3. **Safe-allowlist** (`rule_id: allowlist.*`) → `allow`: read-only команды (`ls`, `cat`, `head`, `tail`, `wc`, `grep`, `rg`, `find` без `-delete`/`-exec`, `git status|diff|log|show|branch`, `pwd`, `echo` без редиректов, `which`, `env` без аргументов); `file_read` внутри `allowed_paths`; `file_write` внутри `allowed_paths` вне `protected_paths`; префиксы из `safe_prefixes`. Составная команда (пайп, `&&`, `;`) проходит allowlist только если проходит каждая часть, и в ней нет `eval`, подстановок и редиректов в файлы.
-4. **Пакеты** (`packages.py`): заглушка, всегда `None`. Интерфейс тот же, чтобы модуль slopsquatting встал сюда без изменений цепочки.
+4. **Пакеты** (`rules/packages.py`, `PackagesRule`): заглушка, всегда `None`. Интерфейс тот же, чтобы модуль slopsquatting встал сюда одной строкой в `STAGE1`, без изменений цепочки.
 5. Всё остальное → ступень 2.
 
 Правила из roadmap (Test → Protect, секция `rules:` профиля) встанут между 1 и 2 как элементы того же типа.
@@ -282,7 +284,7 @@ prose:
 rules: []                  # roadmap: Test → Protect, модуль пакетов
 ```
 
-- `${WORKSPACE}` подставляется из `args.cwd` первого запроса сессии (лексически ближайший каталог с `.git`, иначе сам `cwd`); без `session_id` — из `cwd` текущего запроса.
+- `${WORKSPACE}` подставляется из `args.cwd` первого запроса сессии (лексически ближайший каталог с `.git`, иначе сам `cwd`); без `session_id` — из `cwd` текущего запроса. Реализовано: workspace сессии фиксируется при её создании и хранится в `SessionState.workspace`, профиль привязывается к нему через `Policy.bind` (`service/agentgate/domain/policy.py`), поэтому более поздний `cwd` не расширяет `allowed_paths`.
 - Ключи API только через переменные окружения; в YAML — имя переменной.
 - `profile_hash` = sha256 нормализованного содержимого профиля; пишется в каждое решение, чтобы бенчмарк различал политики.
 - `GET /v1/profiles/{id}` отдаёт профиль без значений секретов (имена переменных остаются).

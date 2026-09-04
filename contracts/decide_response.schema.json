@@ -1,6 +1,7 @@
 {
   "$defs": {
     "DecisionKind": {
+      "description": "The three possible answers. All of them are delivered with HTTP 200: `deny` and `ask` are decisions, not errors.",
       "enum": [
         "allow",
         "deny",
@@ -10,6 +11,7 @@
       "type": "string"
     },
     "LatencyMs": {
+      "description": "Per-stage timing of one decision. A stage that did not run is `null`.",
       "properties": {
         "stage1": {
           "anyOf": [
@@ -21,6 +23,7 @@
             }
           ],
           "default": null,
+          "description": "Milliseconds spent in stage 1, or `null` if it did not run.",
           "title": "Stage1"
         },
         "stage2": {
@@ -33,9 +36,11 @@
             }
           ],
           "default": null,
+          "description": "Milliseconds spent in stage 2, or `null` if it did not run.",
           "title": "Stage2"
         },
         "total": {
+          "description": "Total milliseconds the service spent on this decision.",
           "title": "Total",
           "type": "integer"
         }
@@ -47,21 +52,26 @@
       "type": "object"
     }
   },
+  "description": "The gate's answer to one proposed action.",
   "properties": {
     "decision": {
-      "$ref": "#/$defs/DecisionKind"
+      "$ref": "#/$defs/DecisionKind",
+      "description": "The gate's answer. Always delivered with HTTP 200."
     },
     "reason": {
       "default": "",
+      "description": "Text handed to the agent verbatim as the tool result. Always present and non-empty for `deny` and `ask`; an empty string for `allow`.",
       "title": "Reason",
       "type": "string"
     },
     "suggest": {
       "default": "",
+      "description": "A safe alternative to show the user. Empty string when there is nothing to suggest.",
       "title": "Suggest",
       "type": "string"
     },
     "stage": {
+      "description": "Who decided: `1` deterministic stage 1, `2` the LLM classifier, `0` an allow-cache hit or an API-level refusal such as an invalid body.",
       "title": "Stage",
       "type": "integer"
     },
@@ -75,6 +85,7 @@
         }
       ],
       "default": null,
+      "description": "Identifier of the stage-1 rule that fired (`hard-deny.exfil`, `profile.path`, `allowlist.readonly`, `escalation`, …), or `null` when stage 2 decided.",
       "title": "Rule Id"
     },
     "model": {
@@ -87,17 +98,21 @@
         }
       ],
       "default": null,
+      "description": "Name of the model configuration used, if stage 2 ran; `null` otherwise.",
       "title": "Model"
     },
     "latency_ms": {
-      "$ref": "#/$defs/LatencyMs"
+      "$ref": "#/$defs/LatencyMs",
+      "description": "Latency per stage and in total."
     },
     "cached": {
       "default": false,
+      "description": "True when this answer came from the per-session `allow` cache. Only `allow` is ever cached; `deny` and `ask` never are.",
       "title": "Cached",
       "type": "boolean"
     },
     "decision_id": {
+      "description": "ULID of the stored decision. Stable identifier for the record in the database and in the JSONL log.",
       "title": "Decision Id",
       "type": "string"
     }

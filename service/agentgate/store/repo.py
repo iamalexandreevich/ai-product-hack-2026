@@ -6,91 +6,46 @@ to the client without an implicit transaction spanning the response.
 """
 
 from collections import deque
-from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from agentgate.session.state import RECENT_MAXLEN, SessionState
+from agentgate.domain.session import RECENT_MAXLEN, SessionState
+from agentgate.engine.decision import Decision, DecisionRecord
+from agentgate.store.mapper import row_from_record, record_from_row
 from agentgate.store.models import AllowCacheRow, DecisionRow, SessionRow
-
-
-@dataclass
-class DecisionRecord:
-    id: str
-    session_id: str | None
-    ts: datetime
-    harness: str
-    tool: str
-    raw: str
-    normalized: dict
-    user_request: str
-    profile_id: str
-    profile_hash: str
-    decision: str
-    reason: str
-    suggest: str
-    stage: int
-    rule_id: str | None
-    model: str | None
-    model_raw_response: dict | None
-    latency_stage1_ms: int | None
-    latency_stage2_ms: int | None
-    latency_total_ms: int
-    error: str | None
-    cached: bool
-    metadata: dict
-
-    def to_row(self) -> DecisionRow:
-        data = self.__dict__.copy()
-        data["metadata_"] = data.pop("metadata")
-        return DecisionRow(**data)
-
-    @classmethod
-    def from_row(cls, row: DecisionRow) -> "DecisionRecord":
-        return cls(
-            id=row.id, session_id=row.session_id, ts=row.ts, harness=row.harness, tool=row.tool, raw=row.raw,
-            normalized=row.normalized, user_request=row.user_request, profile_id=row.profile_id,
-            profile_hash=row.profile_hash, decision=row.decision, reason=row.reason, suggest=row.suggest,
-            stage=row.stage, rule_id=row.rule_id, model=row.model, model_raw_response=row.model_raw_response,
-            latency_stage1_ms=row.latency_stage1_ms, latency_stage2_ms=row.latency_stage2_ms,
-            latency_total_ms=row.latency_total_ms, error=row.error, cached=row.cached, metadata=row.metadata_,
-        )
-
-    def to_dict(self) -> dict:
-        d = self.__dict__.copy()
-        d["ts"] = self.ts.isoformat()
-        return d
 
 
 class DecisionRepo:
     """Repository for decision rows.
 
-    Ordering requirement: `rec.session_id`, when not ``None``, is a foreign
-    key to ``sessions.id``. The referenced session must already exist —
-    callers doing the post-response write (Task 10) must call
-    ``SessionRepo.upsert`` for the session before ``DecisionRepo.insert`` for
-    its decisions, or `insert` raises ``sqlalchemy.exc.IntegrityError``.
+    Ordering requirement: a decision's session id, when not ``None``, is a
+    foreign key to ``sessions.id``. The referenced session must already
+    exist — the session state store writes it during the decision, before
+    the decision itself reaches this repository, or `insert` raises
+    ``sqlalchemy.exc.IntegrityError``.
     """
 
     def __init__(self, session_factory: async_sessionmaker) -> None:
         self._sf = session_factory
 
-    async def insert(self, rec: DecisionRecord) -> None:
+    async def insert(self, decision: Decision) -> None:
         """Insert one decision.
 
-        Raises ``sqlalchemy.exc.IntegrityError`` if ``rec.session_id`` is not
-        ``None`` and does not reference an existing session (see class
-        docstring for the required call ordering), or if ``rec.id`` collides
+        Raises ``sqlalchemy.exc.IntegrityError`` if the decision's session id
+        is not ``None`` and does not reference an existing session (see class
+        docstring for the required call ordering), or if its id collides
         with an existing decision.
         """
         async with self._sf() as s:
-            s.add(rec.to_row())
+            s.add(row_from_record(decision.to_record()))
             await s.commit()
 
-    async def list(self, session_id: str | None, model: str | None, limit: int, before: str | None) -> list[DecisionRecord]:
+    async def list(
+        self, session_id: str | None, model: str | None, limit: int, before: str | None
+    ) -> list[DecisionRecord]:
         """List decisions ordered by ``id`` descending (newest first).
 
         ``before`` pages backwards: only rows with ``id < before`` are
@@ -109,7 +64,7 @@ class DecisionRepo:
             stmt = stmt.where(DecisionRow.id < before)
         async with self._sf() as s:
             rows = (await s.execute(stmt)).scalars().all()
-        return [DecisionRecord.from_row(r) for r in rows]
+        return [record_from_row(r) for r in rows]
 
 
 class SessionRepo:
