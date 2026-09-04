@@ -647,11 +647,11 @@ def test_fit_caps_a_tool_result_keeping_head_and_tail_with_a_marker():
 
 
 def test_fit_marker_reports_how_many_characters_were_cut():
-    content = "a" * 200
+    content = "z" * 200
     got = dialogue(turn(role="assistant", author="agent", content=content)).fit(budget(assistant=50)).turns[0].content
     marker = got[got.index("…"):got.rindex("…") + 1]
     kept = len(got) - len(marker)
-    assert got.count("a") == kept
+    assert got.count("z") == kept
     assert marker == OMITTED_MARKER.format(n=200 - kept)
     assert len(got) <= 50
 
