@@ -4,7 +4,7 @@
 > Target architecture and current implementation are intentionally described separately.
 >
 > Источники: `docs/project-context/04_architecture/target_architecture.jpg` (целевая архитектура), кодовая база `service/`, `contracts/`, `adapters/`, `benchmark/`, спеки в `docs/superpowers/service/specs/`.
-> Дата анализа: 2026-09-04, ветка `main`, HEAD `547220f`.
+> Дата анализа: 2026-09-04, ветка `main`. Первичный анализ выполнен на HEAD `547220f`; после него файлы бенчмарка восстановлены из ветки `feat/agentgate-benchmark` (`82764b4`), и разделы про бенчмарк (§5.3, §7, §8, §10, §13, §14) обновлены под состояние **после** восстановления.
 
 ## 1. Architecture Overview
 
@@ -203,21 +203,27 @@ AI agent → предложенное действие (tool call) → пере�
 
 ### 5.3 Benchmark
 
-**Важно: в рабочем дереве benchmark присутствует лишь фрагмент.** Полная кодовая база бенчмарка была добавлена коммитом `4ec0f71` и **отменена** коммитом `8e2cb5f` («Revert "--added codebase of the benchmark"»); при последующем мердже `547220f` вернулась только часть файлов.
+**Кодовая база бенчмарка полная и исполняемая.** Ранее в рабочем дереве присутствовал лишь фрагмент: код был добавлен коммитом `4ec0f71`, **отменён** коммитом `8e2cb5f` («Revert "--added codebase of the benchmark"»), а последующий мердж `547220f` протянул в `main` только 5 файлов из 111 — git считал реверт уже применённым. Файлы восстановлены явным `git checkout feat/agentgate-benchmark -- benchmark/` (коммит `82764b4`): 106 файлов добавлено, `benchmark/README.md` возвращён с 8-строчной заглушки к полной версии. В дереве 112 отслеживаемых файлов, 30 Python-модулей, 75 YAML-кейсов.
 
-Фактически в HEAD (`git ls-tree HEAD -- benchmark`) присутствуют: `benchmark/CLAUDE.md`, `benchmark/README.md`, `benchmark/config.py`, `benchmark/client/security_service.py`, `benchmark/reporting/report.py`, `benchmark/tests/test_reporting.py`.
+Проверено исполнением: `cd benchmark && uv sync && uv run pytest` → **122 passed, 2 deselected** (deselected — `live`-тесты, требующие поднятого сервиса); `uv run python cli.py validate --path attacks/cases` → **75 кейсов, 15 категорий, errors: 0, warnings: 0**, код возврата 0.
 
-**Отсутствуют** (при том, что `benchmark/CLAUDE.md` описывает их как существующие): `cli.py`, `schemas/` (`case.py`, `result.py`), `runner/` (`executor.py`, `recorder.py`), `evaluator/scorer.py`, `storage/sqlite`, `attacks/` (таксономия 15 категорий × 5 кейсов = 70 кейсов), `tools/mock_agentgate.py`, `pyproject.toml`, `pricing.example.yaml`.
+Звенья конвейера в коде:
 
-Следствие: **бенчмарк в текущем дереве не запускается.** `benchmark/reporting/report.py` импортирует `from schemas.result import ...`, `benchmark/client/security_service.py` — `from schemas.case import ...`; пакета `schemas` в дереве нет, импорт упадёт. Тест `benchmark/tests/test_reporting.py` по той же причине не соберётся.
+- **`benchmark/cli.py`** — точка входа, подкоманды `validate`, `run`, `benchmark`, `report`, `runs`. *Status:* Implemented.
+- **`benchmark/config.py`** — `ServiceConfig` (URL, токен, timeout, harness, `profile_id`, `model`), `PricingTable` (только явные операторские цены, ничего не выдумывается), `json_path`, чтение из `SECURITY_SERVICE_URL`/`AGENTGATE_URL`, `AGENTGATE_PROFILE_ID`, `AGENTGATE_MODEL`, `BENCHMARK_PRICING_TABLE`. *Status:* Implemented.
+- **`benchmark/schemas/`** — `case.py` (`BenchmarkCase`, pydantic с `extra="forbid"`), `result.py` (`BenchmarkResult`, `RunConfig`, перечисления источников данных). *Status:* Implemented.
+- **`benchmark/dataset/`** — `loader.py` читает YAML-кейсы, `validator.py` проверяет инварианты набора (ровно пять кейсов на категорию, все пять difficulty уникальны, глобально уникальные id, имя файла = id, имя каталога = `attack_category`, нет дублей `human_req` + `raw`) и запускается автоматически перед каждым прогоном, обрывая его при ошибке. *Status:* Implemented.
+- **`benchmark/client/security_service.py`** — единственное место, знающее HTTP-контракт: `build_decide_request` собирает тело `/v1/decide` из пары `human_req` + `assistant_tool_call`; `normalize_response` приводит ответ к `ServiceResponse`, отдельно фиксируя `contract_violation`, когда сервис нарушил «HTTP 200 на любой исход»; `derive_components` выводит задействованные компоненты из `stage`/`rule_id`/`cached` с пометкой `derived`; `extract_usage_and_cost` пробует вытащить токены по настраиваемым JSON-путям и при неудаче возвращает `cost=None` с причиной; `_enrich_model_metadata` дорезолвит провайдера и id модели через `GET /v1/profiles/{id}`. Транспортная ошибка не выбрасывается наружу, а превращается в `ServiceResultType.ERROR`. *Status:* Implemented.
+- **`benchmark/runner/`** — `executor.py` (конкурентность, `session_mode: per_case` по умолчанию), `recorder.py` (стриминг результатов по мере готовности, одиночный сбой не обрывает прогон). *Status:* Implemented.
+- **`benchmark/evaluator/scorer.py`** — детерминированный скоринг без LLM-судьи: `score = 1`, если решение входит в `acceptable_service_results`, `--strict` сужает до `expected_service_result`; транспортная ошибка, таймаут или отсутствие решения всегда дают 0 и отдельно пишутся в `contract_violation`. *Status:* Implemented.
+- **`benchmark/storage/sqlite.py`** — хранение прогонов и результатов. *Status:* Implemented.
+- **`benchmark/reporting/report.py`** — сборка сводки и текстового отчёта: перцентили latency (клиентская и сервисная раздельно, с указанием конкурентности), разбивка по категориям/сложности, `benign_asked_friction`, `false_positive_rate`, разбор провалов по тегам. *Status:* Implemented.
+- **`benchmark/attacks/`** — `taxonomy.md` (15 категорий) и `cases/` (75 YAML: 15 категорий × 5 difficulty). *Status:* Implemented.
+- **`benchmark/tools/mock_agentgate.py`** — контрактно-совместимая заглушка для прогона конвейера без живого сервиса. *Status:* Implemented.
 
-Что реально есть в коде:
+Проектные правила бенчмарка (`benchmark/CLAUDE.md`): система под тестом — сам сервис, а не агент; скоринг детерминированный, LLM-судьи нет; `session_mode: per_case` по умолчанию, чтобы allow-кэш и счётчики эскалации не протекали между кейсами; `benign_utility` — контрольная группа, где `ask` считается friction; ошибка транспорта всегда даёт 0 баллов.
 
-- **`benchmark/config.py`** — `ServiceConfig` (URL, токен, timeout, harness, `profile_id`, `model`), `PricingTable` (только явные операторские цены, ничего не выдумывается), `json_path`, чтение из `SECURITY_SERVICE_URL`/`AGENTGATE_URL`, `AGENTGATE_PROFILE_ID`, `AGENTGATE_MODEL`, `BENCHMARK_PRICING_TABLE`. *Status:* Implemented (модуль самодостаточен).
-- **`benchmark/client/security_service.py`** — единственное место, знающее HTTP-контракт: `build_decide_request` собирает тело `/v1/decide` из пары `human_req` + `assistant_tool_call`; `normalize_response` приводит ответ к `ServiceResponse`, отдельно фиксируя `contract_violation`, когда сервис нарушил «HTTP 200 на любой исход»; `derive_components` выводит задействованные компоненты из `stage`/`rule_id`/`cached` с пометкой `derived`; `extract_usage_and_cost` пробует вытащить токены по настраиваемым JSON-путям и при неудаче возвращает `cost=None` с причиной; `_enrich_model_metadata` дорезолвит провайдера и id модели через `GET /v1/profiles/{id}`. Транспортная ошибка не выбрасывается наружу, а превращается в `ServiceResultType.ERROR`. *Status:* Partially implemented (модуль написан, но не запускается без `schemas/`).
-- **`benchmark/reporting/report.py`** — сборка сводки и текстового отчёта: перцентили latency, разбивка по категориям/сложности, `benign_asked_friction`, `false_positive_rate`, разбор провалов по тегам. *Status:* Partially implemented (та же зависимость от `schemas/`).
-
-Проектные правила бенчмарка (из `benchmark/CLAUDE.md`, статус — документация, не код): система под тестом — сам сервис, а не агент; скоринг детерминированный, LLM-судьи нет; `session_mode: per_case` по умолчанию, чтобы allow-кэш и счётчики эскалации не протекали между кейсами; `benign_utility` — контрольная группа, где `ask` считается friction; ошибка транспорта всегда даёт 0 баллов.
+**Чего у бенчмарка нет — не кода, а измерений.** Ни одного сохранённого прогона против живого сервиса в репозитории и во всей истории git не найдено (`summary-*.json`, `results-*.jsonl`, результатные SQLite отсутствуют). Внешний режим сравнения с конкурентами, обещанный в `benchmark/README.md`, кодом не покрыт: все подкоманды `cli.py` работают против нашего сервиса. Устаревшее место в документации: `benchmark/CLAUDE.md` до сих пор утверждает «`service/` is not implemented yet», хотя сервис v1 достроен.
 
 ---
 
@@ -270,7 +276,7 @@ AI agent → предложенное действие (tool call) → пере�
 | «Параллельные проверки» | Да | Проверки строго последовательны, с коротким замыканием | Target / not implemented | `service/agentgate/stage1/chain.py`, `pipeline.py` |
 | Модуль пакетов (slopsquatting) | Подразумевается кейсом | Пустой слот, всегда `None` | Target / not implemented | `service/agentgate/stage1/packages.py` |
 | Multi-harness интеграции (Claude Code, OpenCode, Codex, Kilo) | Да | Маппинг для двух форм хуков в эталонном клиенте; плагинов нет | Partially implemented | `contracts/hook_client.py`; `adapters/README.md` |
-| Бенчмарк как контур проверки | Да | В HEAD только client/config/reporting; датасет и раннер отсутствуют, импорты не резолвятся | Partially implemented | `git ls-tree HEAD -- benchmark`; `benchmark/CLAUDE.md` |
+| Бенчмарк как контур проверки | Да | Конвейер полный и исполняемый (122 теста, 75 кейсов, валидация без ошибок); измерений против живого сервиса ни одного | Partially implemented | `benchmark/cli.py`, `benchmark/attacks/cases/`; отсутствие `summary-*.json` / `results-*.jsonl` в дереве и истории |
 | Идемпотентность повторных `decide` | Требуется контрактом адаптера | Отсутствует; повтор создаёт вторую строку и дважды двигает счётчики | Target / not implemented | `docs/superpowers/service/specs/adapter-contract-gap-analysis.md` |
 | Fail-closed при недоступности гейта | Спорно | Внутри сервиса — жёстко fail-closed; контракт адаптера по умолчанию fail-open | Unknown / requires team confirmation | `adapter-contract-gap-analysis.md` |
 
@@ -300,7 +306,7 @@ Response (`DecideResponse`): `decision ∈ {allow, deny, ask}`, `reason`, `sugge
 `GET /v1/decisions` (фильтры `session_id`, `model`, `limit ≤ 500`, курсор `before`), `GET /v1/profiles/{id}` (публичное представление профиля, включая `models.configs`), `GET /healthz` (`{status, db, llm}`, всегда HTTP 200; `llm` — всегда `null`). *Evidence:* `service/agentgate/api/app.py`.
 
 **Benchmark → System under test.**
-Тот же публичный контракт: `POST /v1/decide` через `httpx.AsyncClient`, плюс `GET /v1/profiles/{id}` для резолва провайдера/версии модели и `GET /healthz` как проба. Асинхронно, с конфигурируемым concurrency (по описанию в `benchmark/CLAUDE.md`; сам раннер в дереве отсутствует). Бенчмарк не имеет привилегированного доступа внутрь сервиса и ничего не додумывает: чего нет в контракте — помечается `unavailable` с причиной либо `derived`. *Evidence:* `benchmark/client/security_service.py`.
+Тот же публичный контракт: `POST /v1/decide` через `httpx.AsyncClient`, плюс `GET /v1/profiles/{id}` для резолва провайдера/версии модели и `GET /healthz` как проба. Асинхронно, с конфигурируемым concurrency (`benchmark/runner/executor.py`). Бенчмарк не имеет привилегированного доступа внутрь сервиса и ничего не додумывает: чего нет в контракте — помечается `unavailable` с причиной либо `derived`. *Evidence:* `benchmark/client/security_service.py`.
 
 ---
 
@@ -353,9 +359,9 @@ benchmark case (YAML: human_req + assistant_tool_call)
   → reporting.report → метрики (ASR, FP/friction, latency-перцентили, разбивка по категориям и сложности)
 ```
 
-Что из этого подтверждается кодом в HEAD: только звенья **client** (сборка запроса и нормализация ответа — `benchmark/client/security_service.py`), **config** (`benchmark/config.py`) и **reporting** (`benchmark/reporting/report.py`). Звенья dataset, executor, scorer, recorder, storage и сам CLI в рабочем дереве отсутствуют (были добавлены в `4ec0f71` и отменены в `8e2cb5f`), поэтому прогон бенчмарка сейчас невозможен, а присутствующие модули не импортируются из-за отсутствующего пакета `schemas`.
+Все звенья этой цепочки подтверждаются кодом: `dataset/loader.py` + `dataset/validator.py`, `runner/executor.py`, `client/security_service.py`, `evaluator/scorer.py`, `runner/recorder.py`, `storage/sqlite.py`, `reporting/report.py`, точка входа `cli.py`. Прогон возможен и проверен исполнением на подкомандах `validate` и `--help`; 122 собственных теста конвейера проходят. Чего нет — не звена, а **измерения**: ни одного сохранённого прогона против живого AgentGate в репозитории и в истории git нет.
 
-Что бенчмарк проверяет **архитектурно** (по замыслу): исключительно публичный контракт сервиса — `POST /v1/decide` плюс `GET /v1/profiles/{id}` и `GET /healthz`. Он не проверяет ни харнесс, ни адаптеры, ни реальное исполнение команд: система под тестом — граница «последний запрос пользователя + предложенный tool call → вердикт». Из этого следует, что бенчмарк способен измерять качество ступеней 1 и 2, эскалацию (через `session_mode: shared`), latency по ступеням и соблюдение контракта (`contract_violation` при HTTP ≠ 200), но **не** способен измерять то, что находится вне этой границы: многоходовые манипуляции, provenance-цепочки и бюджеты сессии — это зафиксировано в `attacks/taxonomy.md` §5 (файл в дереве отсутствует, ссылка — из `benchmark/CLAUDE.md`).
+Что бенчмарк проверяет **архитектурно** (по замыслу): исключительно публичный контракт сервиса — `POST /v1/decide` плюс `GET /v1/profiles/{id}` и `GET /healthz`. Он не проверяет ни харнесс, ни адаптеры, ни реальное исполнение команд: система под тестом — граница «последний запрос пользователя + предложенный tool call → вердикт». Из этого следует, что бенчмарк способен измерять качество ступеней 1 и 2, эскалацию (через `session_mode: shared`), latency по ступеням и соблюдение контракта (`contract_violation` при HTTP ≠ 200), но **не** способен измерять то, что находится вне этой границы: многоходовые манипуляции, provenance-цепочки и бюджеты сессии — это зафиксировано в `benchmark/attacks/taxonomy.md` §5.
 
 Инвариант «никогда не выдумывать данные сервиса» архитектурно значим: стоимость считается только по явной таблице цен и иначе помечается `unavailable` с причиной; список задействованных компонентов *выводится* из `stage`/`rule_id`/`cached` и помечается `derived`; провайдер и id модели резолвятся через `GET /v1/profiles/{id}` и помечаются `profile_lookup`.
 
@@ -386,7 +392,7 @@ benchmark case (YAML: human_req + assistant_tool_call)
 4. **User Decision реализован лишь наполовину.** Сервис умеет сказать `ask`, но канала возврата решения человека (Approve / Reject / **Comment**) в контракте нет, и UI подтверждения в репозитории нет.
 5. **Session State беднее целевого.** Есть счётчики решений и окно отказов; Files, Secrets, Destinations, Uploads, Cost, Risk Score как измерения состояния сессии отсутствуют.
 6. **Модуль пакетов — заглушка.** `service/agentgate/stage1/packages.py` всегда возвращает `None`, при том что slopsquatting прямо назван в кейсе хакатона.
-7. **Бенчмарк не запускается.** Датасет (70 кейсов, 15 категорий), CLI, раннер, скорер и хранилище отсутствуют в HEAD после revert; оставшиеся модули импортируют несуществующий пакет `schemas`. Никаких измеренных результатов в репозитории нет, и приводить их нельзя.
+7. **У бенчмарка нет измерений.** Конвейер полный и исполняемый (CLI, датасет 75 кейсов в 15 категориях, раннер, скорер, хранилище, отчёты; 122 собственных теста проходят, валидация датасета без ошибок), но против живого AgentGate он не запускался ни разу, и ни одного сохранённого результата прогона в репозитории и в истории git нет — приводить числа нельзя. Отдельно: внешний режим сравнения с конкурентами, обещанный в `benchmark/README.md`, кодом не покрыт.
 8. **Нет идемпотентности `decide`.** Повторный запрос (сетевой таймаут, ретрай клиента) создаст вторую строку решения и дважды сдвинет счётчики сессии, приблизив эскалацию за одно действие. Контракт адаптера идемпотентности требует (`adapter-contract-gap-analysis.md`).
 9. **Конфликт fail-open / fail-closed не решён.** Сервис жёстко fail-closed внутри, контракт адаптера по умолчанию fail-open на клиенте: «положил гард — разрешено всё». Три варианта решения зафиксированы, выбор владельца продукта на момент анализа не сделан.
 10. **Наблюдаемость минимальна.** Есть JSONL, таблица решений и `GET /v1/decisions`; метрик (Prometheus), трейсинга и алертов в коде не найдено. `GET /healthz` всегда возвращает `llm: null` — состояние LLM-провайдера не проверяется.
@@ -403,10 +409,10 @@ benchmark case (YAML: human_req + assistant_tool_call)
 2. Входит ли **SAFE RECOVERY** в скоуп хакатонного демо, и если да — это четвёртое значение `decision` или соглашение поверх `deny` + `suggest`?
 3. Нужен ли **Comment** от человека агенту как часть контракта (новый эндпоинт/поле), или подтверждение целиком остаётся внутри харнесса?
 4. Какой харнесс интегрируем первым и до какой степени: Kilo Code (по кейсу хакатона), Claude Code или OpenCode? Считается ли `hook_client.py` достаточной интеграцией для демо?
-5. Восстанавливаем ли отменённую кодовую базу бенчмарка (датасет 70 кейсов, CLI, раннер, скорер) в этой ветке, и кто владелец этого восстановления?
+5. ~~Восстанавливаем ли отменённую кодовую базу бенчмарка в этой ветке?~~ **Закрыто:** файлы восстановлены из `feat/agentgate-benchmark` (`82764b4`), конвейер исполняем. Открытым остаётся, что делать с ветками `feat/agentgate-benchmark` / `fix/missing-files` — слить, удалить или оставить.
 6. Какая версия по дорожной карте является целью хакатона: остаёмся на v1 или заявляем v2 (история диалога)?
 7. Нужен ли ключ идемпотентности `decide` до демо, или двойной учёт при ретраях принимается как известное ограничение?
-8. Какие метрики считаются результатом проекта (ASR / FP / Friction / Latency) и на каком датасете они будут получены, если бенчмарк восстанавливается не полностью?
+8. Какие метрики считаются результатом проекта (ASR / FP / Friction / Latency), и кто отвечает за первый прогон против живого сервиса — датасет и конвейер готовы, измерений нет ни одного. Отдельный вопрос: нужен ли к финалу внешний режим сравнения с конкурентами, обещанный в `benchmark/README.md`, — в коде его нет.
 
 ---
 
@@ -417,7 +423,7 @@ benchmark case (YAML: human_req + assistant_tool_call)
 | Server | Implemented: API, каскад 1→2, профили, сессии, Postgres + JSONL, API-ключи, Docker | Плюс Context Guard, оценка tool-result, богатое состояние сессии, параллельные проверки | Сервис видит только одно действие + последнее сообщение пользователя |
 | Harness integration | Partially implemented: только эталонный `hook_client.py` (формы Claude Code + OpenCode) | Плагины на харнесс (Kilo, OpenCode, Codex, Claude Code) + обработка всех исходов | Ни одного адаптера в `adapters/`; SAFE RECOVERY и User Decision не обрабатываются |
 | Decision pipeline | Implemented: hard-deny → профиль → allowlist → LLM → эскалация, fail-closed, три исхода | Четыре исхода, оценка проверенного контекста, provenance, risk score | Нет SAFE RECOVERY, нет Context Guard, модуль пакетов — заглушка |
-| Benchmark | Partially implemented: client + config + reporting; датасет/CLI/раннер отсутствуют, импорты не резолвятся | Полный прогон 70 кейсов с метриками ASR / FP / Friction / Latency | Кодовая база отменена коммитом `8e2cb5f` и не восстановлена; измеренных результатов нет |
+| Benchmark | Partially implemented: конвейер полный и исполняемый (CLI, датасет 75 кейсов, раннер, скорер, хранилище, отчёты; 122 теста проходят) | Полный прогон 75 кейсов против живого сервиса с метриками ASR / FP / Friction / Latency | Код восстановлен из `82764b4`; измеренных результатов по-прежнему нет — ни одного прогона против реального AgentGate |
 | Observability | Partially implemented: JSONL + `decisions` в Postgres + `GET /v1/decisions` + `GET /healthz` | Метрики, аудит по сессии (Cost, Risk Score, Secrets, Destinations), атрибуция к ключу | Нет метрик/трейсинга; `healthz.llm` всегда `null`; `key_id` не пишется |
 
 **Пять выводов:**
@@ -425,5 +431,5 @@ benchmark case (YAML: human_req + assistant_tool_call)
 - Архитектурный фундамент уже стоит и проверен исполнением: перехват до действия, нормализация в AST, детерминированная ступень до LLM, трёхзначный вердикт, fail-closed на каждом пути, полная запись решений — этого достаточно, чтобы демонстрировать основной flow end-to-end (`service/tests/e2e/test_e2e.py`).
 - Наибольшее расхождение с целевой архитектурой — **весь верхний контур схемы**: Context Guard и проверка данных до входа в контекст агента отсутствуют полностью и вынесены в v4.
 - Второе по значимости расхождение — **интеграционный слой**: заявленная мультихарнессность держится на одном эталонном CLI-клиенте, каталог `adapters/` пуст.
-- Третье — **бенчмарк**: контур измерения, на который опирается вся аргументация «безопасность как метрика команды», сейчас не запускается; никаких результатов заявлять нельзя.
-- До финала критично закрыть: минимум одну реальную интеграцию с харнессом, восстановление/пересборку бенчмарка с прогоном на датасете и явное решение по конфликту fail-open/fail-closed — оно определяет, верно ли утверждение «`allow` по ошибке невозможен» для системы, а не только для сервиса.
+- Третье — **бенчмарк**: инструмент измерения готов и исполняем, но ни одного измерения против живого сервиса не сделано, поэтому никаких числовых результатов заявлять нельзя.
+- До финала критично закрыть: минимум одну реальную интеграцию с харнессом, первый прогон бенчмарка против живого сервиса и явное решение по конфликту fail-open/fail-closed — оно определяет, верно ли утверждение «`allow` по ошибке невозможен» для системы, а не только для сервиса.

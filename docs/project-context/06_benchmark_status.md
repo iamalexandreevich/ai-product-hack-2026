@@ -2,14 +2,12 @@
 
 Status: Intermediate / Testing
 
-> Дата анализа: 2026-09-04, ветка `main`, HEAD `547220f`.
+> Дата анализа: 2026-09-04, ветка `main`. Первичный анализ выполнен на HEAD `547220f`, когда в дереве было 6 файлов бенчмарка из 112; **файлы с тех пор восстановлены** из ветки `feat/agentgate-benchmark` (`82764b4`) командой `git checkout feat/agentgate-benchmark -- benchmark/` — 106 файлов добавлено, `README.md` возвращён к полной версии. Разбор того, как они были потеряны, сохранён в разделе «Состояние репозитория».
 >
-> **Главная находка вынесена вперёд, потому что она меняет прочтение всего остального документа: в рабочем дереве и в `HEAD` бенчмарка нет.** Из 112 файлов бенчмарка, существующих в git, в `HEAD` присутствуют 6. Отсутствуют `cli.py`, `schemas/`, `dataset/`, `evaluator/`, `runner/`, `storage/`, `tools/`, `pyproject.toml`, все 75 YAML-кейсов и 8 из 9 файлов тестов. Полный код цел и лежит в коммите `82764b4` (ветка `feat/agentgate-benchmark`); он потерян при слиянии, а не удалён намеренно — разбор в разделе «Состояние репозитория».
+> **Главная находка теперь другая, и она тоже меняет прочтение всего документа: код бенчмарка есть и исполняется, а измерений нет ни одного.** Конвейер полный, датасет валиден, собственные тесты проходят — но против живого AgentGate бенчмарк не запускался ни разу, и ни одного сохранённого результата прогона в репозитории и во всей истории git не существует. То есть у проекта есть инструмент измерения и нет измерений.
 >
-> Поэтому все проверки исполнением ниже выполнены **не в рабочем дереве**, а на дереве коммита `82764b4`, распакованном во временный каталог (`git archive 82764b4 benchmark`). Это честно измеряет качество кода, лежащего в git, и ничего не говорит о работоспособности каталога `benchmark/` в его текущем виде: в нём бенчмарк не запускается вообще.
->
-> Проверки, на которые опираются выводы (все офлайн, без обращений к внешним API и без платных запросов):
-> - `uv sync --frozen && uv run pytest` → **122 passed, 2 deselected** за 1.15 с.
+> Первичные проверки выполнялись на дереве коммита `82764b4`, распакованном во временный каталог; после восстановления они **перепроверены прямо в рабочем дереве** и дали те же результаты. Все офлайн, без обращений к внешним API и без платных запросов:
+> - `uv sync && uv run pytest` → **122 passed, 2 deselected** (deselected — два `live`-теста, требующие поднятого сервиса).
 > - `uv run python cli.py validate --path attacks/cases` → **75 кейсов, 15 категорий, errors: 0, warnings: 0**, код возврата 0.
 > - `uv run ruff check .` → All checks passed; `ruff format --check .` → 33 files already formatted.
 > - Полный прогон конвейера против локальной заглушки `tools/mock_agentgate.py` → 75 кейсов исполнены, отчёты и SQLite записаны. **Цифры этого прогона в документ не переносятся и результатами не являются** — см. «Current results».
@@ -39,9 +37,9 @@ assistant_tool_call  -> tool + raw + args   (действие, которое п
 
 ---
 
-## Состояние репозитория: почему бенчмарк не запускается из рабочего дерева
+## Состояние репозитория: как файлы были потеряны и как восстановлены
 
-Это не дефект кода бенчмарка, а дефект слияния, и чинится он отдельно от всего остального.
+Раздел сохранён как разбор инцидента — он объясняет, почему бенчмарка какое-то время не было в дереве, и что именно сделано. Это был не дефект кода бенчмарка, а дефект слияния.
 
 | Коммит | Что сделал |
 |---|---|
@@ -52,17 +50,17 @@ assistant_tool_call  -> tool + raw + args   (действие, которое п
 
 Слияние разрешило только modify/delete-конфликты — то есть ровно те файлы, которые ветка успела изменить после `4ec0f71`. Для остальных 106 файлов конфликта не возникло (ветка их не трогала, `main` их удалил), и git молча оставил удаление. Сообщение самого коммита слияния это подтверждает: в нём перечислены 4 конфликтных файла, а `--stat` показывает 5 восстановленных.
 
-Что осталось в `HEAD` (6 файлов): `benchmark/CLAUDE.md`, `benchmark/README.md`, `benchmark/client/security_service.py`, `benchmark/config.py`, `benchmark/reporting/report.py`, `benchmark/tests/test_reporting.py`.
+После слияния в `main` оставалось 6 файлов (`CLAUDE.md`, `README.md`, `client/security_service.py`, `config.py`, `reporting/report.py`, `tests/test_reporting.py`), и отсутствовали 106: `cli.py`, `attacks/taxonomy.md`, все 75 файлов `attacks/cases/**/*.yaml`, `schemas/case.py`, `schemas/result.py`, `dataset/loader.py`, `dataset/validator.py`, `evaluator/scorer.py`, `runner/executor.py`, `runner/recorder.py`, `storage/sqlite.py`, `tools/mock_agentgate.py`, `pyproject.toml`, `uv.lock`, `pricing.example.yaml`, `.gitignore`, все `__init__.py` и 8 файлов тестов из 9. Оставшиеся модули были неимпортируемы (`ModuleNotFoundError: No module named 'schemas'`), а `README.md` деградировал до заглушки на 982 байта.
 
-Чего нет (106 файлов): `cli.py`, `attacks/taxonomy.md`, все 75 файлов `attacks/cases/**/*.yaml`, `schemas/case.py`, `schemas/result.py`, `dataset/loader.py`, `dataset/validator.py`, `evaluator/scorer.py`, `runner/executor.py`, `runner/recorder.py`, `storage/sqlite.py`, `tools/mock_agentgate.py`, `pyproject.toml`, `uv.lock`, `pricing.example.yaml`, `.gitignore`, все `__init__.py`, и 8 файлов тестов из 9.
+**Восстановлено.** Обычный повторный merge это бы не починил: git считает реверт уже применённым. Сработало явное извлечение дерева ветки:
 
-Следствия, которые видны сразу:
+```
+git checkout feat/agentgate-benchmark -- benchmark/
+```
 
-- Оставшиеся 4 модуля Python неимпортируемы: они импортируют `schemas`, `config`, `storage`, которых нет. Это подтверждается независимо — `05_current_state.md` фиксирует `cd benchmark && python -c "import reporting.report"` → `ModuleNotFoundError: No module named 'schemas'`.
-- `benchmark/README.md` в `HEAD` — старая заглушка на 982 байта; полный README на 19 103 байта остался в `82764b4`.
-- `benchmark/CLAUDE.md` в `HEAD` описывает команды (`uv run pytest`, `cli.py validate`, `cli.py benchmark`), ни одну из которых в рабочем дереве выполнить нельзя.
+Результат: 106 файлов добавлено, `README.md` изменён с 8 строк до 278, итого 112 отслеживаемых файлов. Приёмка пройдена — `uv sync && uv run pytest` → 122 passed, `uv run python cli.py validate --path attacks/cases` → код возврата 0, `ruff check` / `ruff format --check` чисты. Файлов, которые были в `main`, но отсутствовали в ветке, не оказалось, лишнего не осталось.
 
-Восстановление — одна команда (`git checkout 82764b4 -- benchmark/`), но пока она не выполнена и результат не закоммичен, бенчмарка в проекте фактически нет.
+Что осталось нерешённым по репозиторию: ветки `feat/agentgate-benchmark`, `fix/missing-files` и `origin/feat/agentgate-benchmark` указывают на один и тот же коммит `82764b4` и после восстановления содержательно не отличаются от `main` в части `benchmark/` — слить их, удалить или оставить, не решено.
 
 ---
 
@@ -351,9 +349,9 @@ source_references: [...]
 
 ## Before final
 
-Конкретные шаги, необходимые для того, чтобы бенчмарк можно было считать готовым к финальной защите. Первые три — блокирующие.
+Конкретные шаги, необходимые для того, чтобы бенчмарк можно было считать готовым к финальной защите. Первые два из оставшихся — блокирующие.
 
-1. **Вернуть файлы в `main`.** `git checkout 82764b4 -- benchmark/` и коммит. Проверка приёмки: `cd benchmark && uv sync && uv run pytest` даёт 122 passed, `uv run python cli.py validate --path attacks/cases` — код возврата 0. Пока этого нет, ни один следующий пункт невыполним.
+1. ~~**Вернуть файлы в `main`.**~~ **Сделано:** `git checkout feat/agentgate-benchmark -- benchmark/`, 106 файлов восстановлено. Приёмка пройдена — `uv sync && uv run pytest` → 122 passed, `cli.py validate --path attacks/cases` → код возврата 0. Осталось закоммитить.
 2. **Выполнить первый прогон против реального AgentGate.** Поднять сервис (Postgres + ключ модели ступени 2), выполнить `uv run pytest -m live`, затем `cli.py benchmark --path attacks/cases --concurrency 1`. Это единственный шаг, превращающий «implemented» в «validated». Осознанная цена: 75 запросов, часть из которых доходит до ступени 2 и стоит денег.
 3. **Разобрать провалы первого прогона по трём корзинам** — ошибка ожидания в кейсе, известное ограничение v1 (тег `v1_limitation`), настоящий промах сервиса. Без этого разбора сводные проценты недоказательны: `tag_failures` и `failures-<run_id>.txt` дают для этого исходные данные.
 4. **Сохранить результаты в репозиторий.** Зафиксировать `summary-<run_id>.json` и текстовую сводку под версионным контролем (например, `docs/reports/` или `benchmark/results/baseline/`), указав дату, коммит сервиса, профиль, модель ступени 2 и `--concurrency`. Сейчас `results/` в `.gitignore`, поэтому по умолчанию не сохранится ничего.
@@ -374,14 +372,14 @@ source_references: [...]
 
 **Состояние репозитория**
 
-- Файлы бенчмарка в `HEAD`: `git ls-tree -r --name-only HEAD -- benchmark` → 6 файлов.
-- Файлы бенчмарка в `82764b4`: `git ls-tree -r --name-only 82764b4 -- benchmark` → 112 файлов.
-- Цепочка коммитов: `4ec0f71` (добавление) → `8e2cb5f` (`Revert "--added codebase of the benchmark"`) → `82764b4` (ветка `feat/agentgate-benchmark`) → `547220f` (слияние, восстановившее 5 файлов из 111).
-- Подтверждение неимпортируемости остатка: `docs/project-context/05_current_state.md` — `cd benchmark && python -c "import reporting.report"` → `ModuleNotFoundError: No module named 'schemas'`.
+- Файлы бенчмарка в рабочем дереве после восстановления: `git ls-files benchmark/` → 112 файлов.
+- Цепочка коммитов: `4ec0f71` (добавление 111 файлов) → `8e2cb5f` (`Revert "--added codebase of the benchmark"`) → `82764b4` (ветка `feat/agentgate-benchmark`) → `547220f` (слияние, вернувшее 5 файлов из 111) → восстановление `git checkout feat/agentgate-benchmark -- benchmark/` (106 добавлено, `README.md` изменён с 8 строк до 278).
+- До восстановления неимпортируемость остатка подтверждалась как `cd benchmark && python -c "import reporting.report"` → `ModuleNotFoundError: No module named 'schemas'`; после восстановления импорт и весь конвейер работают.
+- Отсутствие измерений: `find` по рабочему дереву и `git log --all --diff-filter=A --name-only` по `summary-*.json`, `results-*.jsonl`, `*.sqlite3` → ни одного результата прогона; найденные `.sqlite3` — временные файлы pytest в gitignore-нутом `.pytest-tmp/`.
 
-**Архитектура и код** (пути относительно `benchmark/`, состояние коммита `82764b4`)
+**Архитектура и код** (пути относительно `benchmark/`)
 
-- Границы модулей и инвариант «не выдумывать данные сервиса»: `CLAUDE.md` (присутствует и в `HEAD`).
+- Границы модулей и инвариант «не выдумывать данные сервиса»: `CLAUDE.md`.
 - Схема кейса: `schemas/case.py` — `BenchmarkCase`, `ToolCall`, `Difficulty`, `AttackLocation`.
 - Схема результата: `schemas/result.py` — `BenchmarkResult`, `ServiceResponse`, `RunConfig`, `ServiceResultType`.
 - Скоринг: `evaluator/scorer.py:score_case`.
