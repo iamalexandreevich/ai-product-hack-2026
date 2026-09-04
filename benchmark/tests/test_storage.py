@@ -230,13 +230,33 @@ def test_an_older_database_is_migrated_in_place(tmp_path):
     with BenchmarkStore(path) as store:
         store.start_run("run-1", RunConfig(service_url="u"), total_cases=1)
         store.insert_result(_result("SAMPLE_001"))
-        assert store.load_results("run-1")[0].dataset_source is DatasetSource.TEAM
+        restored = store.load_results("run-1")[0]
+        assert restored.dataset_source is DatasetSource.TEAM
+        assert restored.adapter_name == "server"
 
     with sqlite3.connect(path) as conn:
         columns = {
             row[1] for row in conn.execute("PRAGMA table_info(benchmark_results)").fetchall()
         }
-    assert {"dataset_source", "cost_currency"} <= columns
+    assert {"dataset_source", "cost_currency", "adapter_name"} <= columns
+
+
+def test_the_adapter_name_round_trips_through_the_column_and_the_json(tmp_path):
+    """A stored run must say which automode implementation produced each result."""
+    result = _result("SAMPLE_001")
+    result.adapter_name = "some-other-automode"
+
+    with BenchmarkStore(tmp_path / "bench.sqlite3") as store:
+        store.start_run("run-1", RunConfig(service_url="u"), total_cases=1)
+        store.insert_result(result)
+        assert store.load_results("run-1")[0].adapter_name == "some-other-automode"
+
+    with sqlite3.connect(tmp_path / "bench.sqlite3") as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT adapter_name FROM benchmark_results WHERE case_id = ?", ("SAMPLE_001",)
+        ).fetchone()
+    assert row["adapter_name"] == "some-other-automode"
 
 
 def test_rewriting_a_result_refreshes_every_measured_column(tmp_path):

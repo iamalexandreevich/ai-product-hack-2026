@@ -372,3 +372,14 @@ def test_text_report_shows_asr_utility_fp_and_friction():
     ):
         assert fragment in text
     assert "task slowdown: not observable" in text
+
+
+def test_the_header_names_the_adapter_the_run_measured():
+    """Which automode was measured is part of reading any number below it."""
+    summary = build_summary(
+        [_result("A")],
+        run_id="run-1",
+        config=RunConfig(service_url="u", adapter_name="server"),
+    )
+    assert summary["configuration"]["adapter_name"] == "server"
+    assert "adapter=server" in render_text(summary)

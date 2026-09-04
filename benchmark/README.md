@@ -1,9 +1,15 @@
 # benchmark — Benchmark V1 для AgentGate
 
-Направление 3. Система под тестом — **наш собственный сервис AgentGate**, а не кодинг-агент и не
-чужой харнесс. Бенчмарк подаёт в `POST /v1/decide` пары «запрос пользователя + предлагаемый вызов
-инструмента» и детерминированно проверяет, что сервис принял правильное решение
-(`allow | deny | ask`).
+Направление 3. Система под тестом — **реализация automode**: то, что стоит между кодинг-агентом и
+ОС и отвечает `allow | deny | ask`. Бенчмарк обращается к ней через `AutomodeAdapter`
+(`automode/base.py`), и единственная существующая сегодня реализация — наш собственный сервис
+AgentGate по HTTP (`ServerAutomodeAdapter`, `POST /v1/decide`); она же остаётся значением по
+умолчанию. Бенчмарк подаёт пары «запрос пользователя + предлагаемый вызов инструмента» и
+детерминированно проверяет, что решение оказалось правильным.
+
+Пакет с реализациями называется `automode/`, а не `adapters/`: `adapters/` в корне репозитория —
+это направление 1, плагины харнессов (opencode / claude-code / codex / kilo), которые вызывают наш
+сервис в проде. Сюда из направления 1 ничего не переезжает.
 
 Граница бенчмарка зафиксирована:
 
@@ -14,6 +20,23 @@ assistant_tool_call  ->  tool + raw + args (действие, которое п�
 
 Контракт запроса и ответа — `docs/superpowers/service/specs/2026-09-03-agentgate-v1-design.md` §4,
 схемы — `contracts/`. Бенчмарк не придумывает ни одного поля сверх контракта.
+
+Один кейс проходит так:
+
+```
+cli.py → dataset (загрузка + валидация) → runner.executor → automode.server (AutomodeAdapter)
+       → client.security_service → evaluator.scorer → runner.recorder → storage.sqlite
+       → evaluator.metrics → reporting.report
+```
+
+`automode/` — единственный шов. `runner/executor.py` типизирован протоколом `AutomodeAdapter` и не
+импортирует ни `client/`, ни `config.py` (это проверяет тест); `automode/server.py` — единственный
+продовый модуль, который знает одновременно и кейс бенчмарка, и `SecurityServiceClient`. Датасет,
+скорер, метрики, хранилище и отчёты общие для любой реализации: сравнимость прогонов держится
+именно на этом. Новая реализация — это класс с полем `name` и методом
+`async def execute(case, *, run_id) -> AutomodeExecutionResult`, собираемый в `cli.py`; в раннере и
+в метриках при этом не меняется ничего. Флага `--adapter` и реестра адаптеров нет намеренно: выбор
+из одной опции — ровно та ветка, ради отсутствия которой шов и вводился.
 
 ---
 
@@ -185,6 +208,10 @@ LLM-судья в V1 не используется нигде.
 | 5 | Бинарная оценка | `score`, `score_explanation`, `detected`, `detection_correct` | детерминированный скорер |
 | 6 | Модель под капотом | `model`, `provider`, `model_version`, `model_source` | поле `model` ответа + `GET /v1/profiles/{id}` |
 
+Рядом с ними — `adapter_name`: какая реализация automode дала этот результат (`AutomodeAdapter.name`,
+сегодня всегда `server`). Обычная строка, не enum, со значением по умолчанию — поэтому результаты,
+записанные до появления поля, читаются как прежде.
+
 ### Задокументированные допущения (контракт v1 этого не отдаёт)
 
 - **Стоимость.** В ответе `/v1/decide` (§4.3) нет ни usage, ни cost. Поэтому по умолчанию
@@ -310,8 +337,8 @@ SQLite (`--db`, по умолчанию `results/benchmark.sqlite3`), три т�
   `dataset_source`, `case_definition` (JSON), `updated_at`;
 - `benchmark_runs` — `run_id`, `started_at`, `finished_at`, `service_version` (из `/healthz`, если
   отдаётся), `configuration` (JSON), `total_cases`, `status`;
-- `benchmark_results` — все шесть измерений отдельными колонками плюс `result_json` целиком, чтобы
-  отчёт восстанавливался из базы без потерь (`cli.py report`). Отдельными колонками лежат и четыре
+- `benchmark_results` — все шесть измерений отдельными колонками плюс `adapter_name` и
+  `result_json` целиком, чтобы отчёт восстанавливался из базы без потерь (`cli.py report`). Отдельными колонками лежат и четыре
   измерения группировки — `attack_category`, `difficulty`, `dataset_source`, `stage`, — чтобы метрики
   считались в SQL без разбора JSON. База, созданная прежней версией, доращивается на месте
   (`MIGRATIONS` в `storage/sqlite.py`).
@@ -344,3 +371,13 @@ uv run pytest -m live    # опциональная интеграция с жи
 - Стоимость и активированные компоненты сервис не отдаёт; см. §5 выше.
 - Внешний бенчмарк (сравнение с Claude Code Auto Mode, Codex Auto-review и статическими правилами)
   и лестница бейзлайнов B0–B4 — следующий шаг, в V1 их нет.
+- Реализация automode ровно одна — `ServerAutomodeAdapter`. `ClaudeCodeAutomodeAdapter`
+  (Claude Code + native Auto Mode через Claude Code SDK) осознанно отложен: его пишут против
+  настоящего SDK, а не угадывают заранее. Вместе с ним отложены сравнение прогонов между
+  реализациями, разрез метрик по адаптеру и `execution_mode=harness_loop` как реально исполняемый
+  режим.
+- Шов не отменяет два допущения: `RunConfig` частично серверный (`service_url`, `profile_id`,
+  `model`, `harness`, `session_mode`), а `BenchmarkResult` по-прежнему предполагает одно решение на
+  кейс (`human_decision_count`, `attack_success`, `task_success`). Реализации, которая ведёт целую
+  сессию агента, эти места придётся править — конверт `AutomodeExecutionResult` лишь сужает правку,
+  но не убирает её.

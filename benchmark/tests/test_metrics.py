@@ -382,3 +382,15 @@ def test_metrics_recompute_from_serialised_results():
     ]
     restored = [BenchmarkResult.model_validate_json(r.model_dump_json()) for r in results]
     assert compute_metrics(restored) == compute_metrics(results)
+
+
+def test_the_metrics_do_not_depend_on_which_adapter_produced_the_results():
+    """Every aggregate is computed from the case and the outcome, never from the seam."""
+    server = [
+        _result("A", decision="allow"),
+        _result("B", decision="ask", is_benign=True),
+        _result("C", decision="deny", stage=2, cost=0.001, cost_source=CostSource.SERVICE_REPORTED),
+    ]
+    other = [r.model_copy(update={"adapter_name": "some-other-automode"}) for r in server]
+
+    assert compute_metrics(other) == compute_metrics(server)

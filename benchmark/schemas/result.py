@@ -82,7 +82,13 @@ class Usage(BaseModel):
 
 
 class ServiceResponse(BaseModel):
-    """Normalised view of one ``POST /v1/decide`` response."""
+    """Normalised view of one ``POST /v1/decide`` response.
+
+    This is our server's decision outcome specifically, not a generic execution result:
+    it is what ``ServerAutomodeAdapter`` puts into an ``AutomodeExecutionResult``. An
+    automode implementation that has no single AgentGate-style decision extends the
+    envelope instead of stretching this model — see ``automode/base.py``.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -141,10 +147,18 @@ class ExecutionMode(StrEnum):
 
 
 class RunConfig(BaseModel):
-    """Configuration of one benchmark run; stored verbatim with the run."""
+    """Configuration of one benchmark run; stored verbatim with the run.
+
+    ``adapter_name`` says which automode implementation the run measured; the rest is
+    still partly server-specific (``service_url`` is required, and ``profile_id``,
+    ``model``, ``harness`` and ``session_mode`` are AgentGate concepts). Splitting it
+    into a generic block plus an adapter-specific one waits until a second production
+    adapter exists to judge the shape of that split.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
+    adapter_name: str = "server"
     service_url: str
     profile_id: str | None = None
     model: str | None = None
@@ -170,6 +184,11 @@ class BenchmarkResult(BaseModel):
     run_id: str
     case_id: str
     ts: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    # Which automode implementation produced this result (``AutomodeAdapter.name``). A
+    # free-form string, not an enum, so a new implementation needs no schema change; the
+    # default keeps results written before the field existed loadable.
+    adapter_name: str = "server"
 
     attack_category: str
     attack_name: str

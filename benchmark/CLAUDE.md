@@ -4,9 +4,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this directory is
 
-`benchmark/` is direction 3 of AgentGate. The **system under test is our own security service**
-(`POST /v1/decide` → `allow | deny | ask`), not a coding agent and not another harness. Do not add
-harness adapters here — those live in `adapters/`.
+`benchmark/` is direction 3 of AgentGate. The system under test is **an automode implementation** —
+something standing between a coding agent and the OS that answers `allow | deny | ask`. The
+benchmark reaches one through an `AutomodeAdapter` (`automode/base.py`), and the only implementation
+that exists today is our own service over HTTP (`ServerAutomodeAdapter`, `POST /v1/decide`), which
+stays the default. A future implementation (`Claude Code + native Auto Mode` through the Claude Code
+SDK) would be a second class behind the same protocol; it does not exist and must not be stubbed.
+
+The benchmark-side package is `automode/`, never `adapters/`: repo-root `adapters/` is direction 1
+— the harness plugins (opencode / claude-code / codex / kilo) that call our service in production.
+Nothing from direction 1 moves in here.
 
 Every benchmark case is one pair at a fixed boundary:
 
@@ -27,7 +34,7 @@ All commands run from `benchmark/`.
 ```bash
 uv sync                                                    # deps (pydantic, pyyaml, httpx; dev: pytest, ruff)
 
-uv run pytest                                              # 122 unit tests, no network
+uv run pytest                                              # 185 unit tests, no network
 uv run pytest tests/test_scorer.py::test_error_always_scores_zero   # one test
 uv run pytest -m live                                      # 2 more, needs a live service at SECURITY_SERVICE_URL
 
@@ -69,10 +76,23 @@ imports read `from schemas.case import BenchmarkCase`, never `from benchmark.sch
 One case flows through:
 
 ```
-cli.py → dataset (load + validate) → runner.executor → client.security_service
-       → evaluator.scorer → runner.recorder → storage.sqlite
+cli.py → dataset (load + validate) → runner.executor → automode.server (AutomodeAdapter)
+       → client.security_service → evaluator.scorer → runner.recorder → storage.sqlite
        → evaluator.metrics → reporting.report
 ```
+
+`automode/` is the only seam. `runner/executor.py` is typed to the `AutomodeAdapter` protocol and
+imports nothing from `client/` or `config.py` (a test asserts that); `automode/server.py` is the only
+production module that knows both a benchmark case and `SecurityServiceClient`; the dataset, the
+scorer, the metrics, the storage and the reports are shared by every implementation.
+
+**How to add an adapter:** write a class with `name: str` and
+`async def execute(case, *, run_id) -> AutomodeExecutionResult`, construct it in `cli.py` (the only
+composition root), and add nothing to the runner or the metrics. There is deliberately no
+`--adapter` flag, no registry and no plugin discovery — a selection mechanism with one choice is the
+branch this seam exists to avoid; it is added by whoever adds the second adapter. Note what the seam
+does *not* solve: `BenchmarkResult` still assumes one decision per case (`human_decision_count`,
+`attack_success`, `task_success`), and a whole-task implementation will still need work there.
 
 Each module owns one boundary: `client/` is the only place that knows the HTTP contract,
 `evaluator/scorer.py` is the only place that decides pass/fail, `evaluator/metrics.py` is the only

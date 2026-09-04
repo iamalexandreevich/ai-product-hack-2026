@@ -96,6 +96,7 @@ def render_text(summary: dict[str, Any]) -> str:
     if config:
         lines.append(
             f"service:      {config.get('service_url')} "
+            f"adapter={config.get('adapter_name') or '-'} "
             f"profile={config.get('profile_id') or '-'} model={config.get('model') or '-'} "
             f"concurrency={config.get('concurrency')} "
             f"scoring={'strict' if config.get('strict_scoring') else 'default'}"

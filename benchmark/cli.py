@@ -24,6 +24,7 @@ from collections import Counter
 from pathlib import Path
 from urllib.parse import urlparse
 
+from automode.server import ServerAutomodeAdapter
 from client.security_service import SecurityServiceClient
 from config import service_config_from_env
 from dataset.loader import DatasetLoadError, load_dataset
@@ -146,6 +147,7 @@ def _cmd_benchmark(args: argparse.Namespace) -> int:
         return 2
 
     run_config = RunConfig(
+        adapter_name=ServerAutomodeAdapter.name,
         service_url=service_config.url,
         profile_id=service_config.profile_id,
         model=service_config.model,
@@ -242,7 +244,8 @@ async def _execute(
             jsonl_path=out_dir / f"stream-{run_id}.jsonl",
             progress=progress,
         ) as recorder:
-            runner = BenchmarkRunner(client, run_config, run_id=run_id, on_result=recorder.record)
+            adapter = ServerAutomodeAdapter(client, session_mode=run_config.session_mode)
+            runner = BenchmarkRunner(adapter, run_config, run_id=run_id, on_result=recorder.record)
             results = await runner.run(cases)
 
         if store is not None:
