@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from agentgate.api.app import create_app
 from agentgate.classify.llm import build_classifiers
 from agentgate.config import Settings
+from agentgate.domain.replay import RestorableReplayStore
 from agentgate.domain.session import RestorableSessionStateStore
 from agentgate.engine.gate import Gate
 from agentgate.log.jsonl import JsonlLogger
@@ -24,6 +25,7 @@ from agentgate.profiles.loader import load_profiles
 from agentgate.rules.chain import STAGE1
 from agentgate.session.memory import InMemorySessionStateStore
 from agentgate.session.persistent import PersistentSessionStateStore
+from agentgate.session.replay import InMemoryReplayStore, PersistentReplayStore
 from agentgate.store.db import make_engine, make_session_factory
 from agentgate.store.keys import ApiKeyRepo
 from agentgate.store.repo import DecisionRepo, SessionRepo
@@ -42,6 +44,7 @@ class Service:
     app: FastAPI
     gate: Gate
     state_store: RestorableSessionStateStore
+    replay_store: RestorableReplayStore
     engine: AsyncEngine
     settings: Settings
 
@@ -52,6 +55,7 @@ async def build_service(
     http: httpx.AsyncClient | None = None,
     state_store: RestorableSessionStateStore | None = None,
     writer: DecisionWriter | None = None,
+    replay_store: RestorableReplayStore | None = None,
 ) -> Service:
     """Assemble the service. Every collaborator can be substituted, so a
     test never has to reproduce this wiring to change one piece of it.
@@ -74,6 +78,11 @@ async def build_service(
     store = state_store or PersistentSessionStateStore(InMemorySessionStateStore(), sessions)
     await store.restore()
 
+    replay = replay_store or PersistentReplayStore(
+        InMemoryReplayStore(), decisions, settings.allow_cache_ttl_seconds
+    )
+    await replay.restore()
+
     http = http or httpx.AsyncClient()
     classifiers = {name: build_classifiers(profile, http) for name, profile in profiles.items()}
     gate = Gate(
@@ -87,9 +96,11 @@ async def build_service(
     ])
     app = create_app(
         settings, gate, writer, decisions, profiles,
-        db_probe=_make_db_probe(engine), key_repo=ApiKeyRepo(session_factory),
+        db_probe=_make_db_probe(engine), key_repo=ApiKeyRepo(session_factory), replay=replay,
     )
-    return Service(app=app, gate=gate, state_store=store, engine=engine, settings=settings)
+    return Service(
+        app=app, gate=gate, state_store=store, replay_store=replay, engine=engine, settings=settings,
+    )
 
 
 def build_key_repo(settings: Settings) -> tuple[ApiKeyRepo, AsyncEngine]:

@@ -18,9 +18,10 @@ from agentgate.api.schemas import DecisionKind
 from agentgate.bootstrap import build_service
 from agentgate.config import Settings
 from agentgate.domain.session import SessionState
+from agentgate.session.replay import InMemoryReplayStore
 from agentgate.store.repo import DecisionRepo, SessionRepo
 from tests.conftest import TEST_DB_URL, requires_db
-from tests.factories import decide_request, decision, session_state
+from tests.factories import decide_request, decision, session_state, shell_action
 
 pytestmark = requires_db
 
@@ -43,6 +44,14 @@ class RecordingStore:
         return None
 
     async def cache_put(self, session_id, key, decision_id, ttl_seconds) -> None: ...
+
+
+class _NoRestore(InMemoryReplayStore):
+    """An injected replay store, restored the same way the injected session
+    state store is: build_service calls `restore()` on whatever it is given,
+    not only on the one it builds itself."""
+
+    async def restore(self) -> None: ...
 
 
 def write_profile(profiles_dir, profile_id="default"):
@@ -138,3 +147,22 @@ async def test_build_service_raises_when_default_profile_missing(session_factory
 async def test_build_service_rejects_non_localhost_bind_without_token(tmp_path):
     with pytest.raises(ValueError, match="AGENTGATE_TOKEN"):
         await build_service(settings_for(tmp_path, bind="0.0.0.0:8400"))
+
+
+async def test_build_service_restores_replayable_decisions(session_factory, tmp_path):
+    await DecisionRepo(session_factory).insert(decision(
+        id=str(ULID()), request=decide_request("ls", session_id=None), action=shell_action("ls"),
+        idempotency_key="restored",
+    ))
+    service = await build_service(settings_for(tmp_path))
+    async with httpx.AsyncClient(transport=ASGITransport(app=service.app), base_url="http://test") as c:
+        r = await c.post("/v1/decide", json={
+            "harness": "t", "tool": "shell", "raw": "rm -rf /", "args": {"cwd": "/"}, "user_request": "x",
+        }, headers={"idempotency-key": "restored"})
+    assert r.json()["decision"] == "allow" and r.json()["rule_id"] == "allowlist.readonly"
+
+
+async def test_build_service_uses_the_replay_store_it_was_given(session_factory, tmp_path):
+    replay = _NoRestore()
+    service = await build_service(settings_for(tmp_path), replay_store=replay)
+    assert service.replay_store is replay
