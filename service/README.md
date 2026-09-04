@@ -87,9 +87,12 @@ store = state_store or PersistentSessionStateStore(RedisSessionStateStore(...), 
 Два метода. `PersistentReplayStore` оборачивает любую реализацию и добавляет восстановление из Postgres при старте.
 
 ```python
+from agentgate.domain.replay import Replay
+
+
 class RedisReplayStore:
-    async def get(self, key: str) -> DecisionRecord | None: ...
-    async def put(self, key: str, record: DecisionRecord, ttl_seconds: int) -> None: ...
+    async def get(self, key: str) -> Replay | None: ...
+    async def put(self, key: str, replay: Replay, ttl_seconds: int) -> None: ...
 ```
 
 ```python

@@ -185,13 +185,13 @@ DECIDE_OPENAPI: dict[str, Any] = {
             "name": "Idempotency-Key",
             "in": "header",
             "required": False,
-            "schema": {"type": "string", "maxLength": IDEMPOTENCY_KEY_MAX_CHARS},
+            "schema": {"type": "string"},
             "description": (
                 "Opaque key a harness attaches to one tool call and repeats on a retry. A "
-                "repeat with the same key and the same request (session, harness, tool, raw) "
-                "returns the stored decision unchanged, without touching session counters or "
-                "storing a second row. A key longer than 128 characters is ignored. A repeat "
-                "under the same key with a different request is decided afresh."
+                "repeat with the same key and the same request — a sha256 over everything but "
+                "`metadata` — returns the stored decision unchanged, without touching session "
+                "counters or storing a second row. A key longer than 128 characters is ignored. "
+                "A repeat under the same key with a different request is decided afresh."
             ),
         }
     ],
@@ -336,11 +336,12 @@ def create_app(
         same decision (same `decision_id`) without touching session counters or
         storing a second row. The key is opaque to the service, and three of its
         properties are load-bearing: a key longer than 128 characters is ignored
-        (the call is decided normally); a repeat under the same key whose request
-        differs in `session_id`, `harness`, `tool`, `raw`, `args.cwd` or the
-        resolved `profile_id` is *not* replayed but decided afresh; and the key is
-        global to the service, scoped neither by session nor by credential, so a
-        harness must make it unique per tool call.
+        (the call is decided normally); a repeat under the same key is replayed
+        only when the request is byte-for-byte the same request — the identity is
+        a sha256 over everything but `metadata`, so a difference anywhere else
+        (`args.paths`, `history`, `user_request`, `profile_id`, …) is decided
+        afresh; and the key is global to the service, scoped neither by session
+        nor by credential, so a harness must make it unique per tool call.
 
         The request and response examples below are paired by name: `allow_safe_test`,
         `deny_unknown_package`, `ask_uncertain_db_cleanup`. The fourth response example
@@ -357,7 +358,7 @@ def create_app(
         key = _replay_key(request)
         if key is not None:
             replayed = await _replayed(replay, key)
-            if replayed is not None and replayed.answers(parsed, settings.default_profile):
+            if replayed is not None and replayed.answers(parsed):
                 return replayed.response
         try:
             decision = await gate.decide(parsed)

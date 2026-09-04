@@ -61,17 +61,23 @@ class Dialogue:
         stays and the budget is simply exhausted.
         """
         kept = [_cap(turn, budget.cap_for(turn.role.value)) for turn in self.turns]
+        # Each turn is rendered once and its length kept alongside it: measuring
+        # the whole remainder per dropped turn is quadratic, and a maximum
+        # history drops most of its turns.
+        sizes = [_content_chars(turn) for turn in kept]
+        total = sum(sizes)
         omitted = 0
-        while len(kept) > 1 and _content_chars(kept) > budget.budget_chars:
+        while len(kept) > 1 and total > budget.budget_chars:
             kept.pop(0)
+            total -= sizes.pop(0)
             omitted += 1
         return Dialogue(tuple(kept), self.omitted + omitted)
 
 
-def _content_chars(turns: list[Turn]) -> int:
+def _content_chars(turn: Turn) -> int:
     # What the prompt emits, not the raw text: json.dumps expands control
     # characters six-fold, and tool output is where they cluster.
-    return sum(len(json.dumps(turn.content, ensure_ascii=False)) for turn in turns)
+    return len(json.dumps(turn.content, ensure_ascii=False))
 
 
 def _cap(turn: Turn, limit: int) -> Turn:

@@ -23,41 +23,28 @@ class Replay:
     """What a repeated call gets back, and who it was decided for.
 
     The answer is the wire response, built once by DecisionRecord.to_response;
-    the identity is what a retry must match before it is trusted with it. A
-    key is caller-supplied and shared across sessions, so the key alone is not
-    proof that two calls are the same call. Six fields make up that identity:
-    `session_id`, `harness`, `tool` and `raw` name the call; `cwd` and
-    `profile_id` name the context it was decided under. `cwd` matters because
-    a sessionless call has no other anchor for `${WORKSPACE}` -- two calls
-    with the same command but a different `cwd` may have been evaluated
-    against different workspaces. `profile_id` matters because the same
-    command can be allowed under one profile and denied under another; without
-    it a replay could hand back the wrong profile's verdict.
+    the identity is what a retry must match before it is trusted with it. A key
+    is caller-supplied and shared across sessions, so the key alone is not
+    proof that two calls are the same call.
+
+    The identity is the whole request minus `metadata`, as one sha256. Listing
+    the fields that make a decision differ proved incomplete twice -- once for
+    `args.paths` (the only input a `file_write` is judged on, while `raw` is
+    empty), once for `history` and `user_request` (what stage 2 reads) -- and
+    each omission handed a retry a verdict taken for a different action.
+    `metadata` is the one exclusion, and only because the contract already
+    says it never reaches the decision logic.
     """
 
-    session_id: str | None
-    harness: str
-    tool: str
-    raw: str
-    cwd: str | None
-    profile_id: str
+    request_digest: str
     response: DecideResponse
 
     @classmethod
     def of(cls, record: DecisionRecord) -> "Replay":
-        return cls(
-            session_id=record.session_id, harness=record.harness, tool=record.tool.value,
-            raw=record.raw, cwd=record.normalized.get("cwd"), profile_id=record.profile_id,
-            response=record.to_response(),
-        )
+        return cls(request_digest=record.request_digest, response=record.to_response())
 
-    def answers(self, request: DecideRequest, default_profile: str) -> bool:
-        return (
-            self.session_id == request.session_id and self.harness == request.harness
-            and self.tool == request.tool.value and self.raw == request.raw
-            and self.cwd == request.args.cwd
-            and self.profile_id == (request.profile_id or default_profile)
-        )
+    def answers(self, request: DecideRequest) -> bool:
+        return self.request_digest == request.identity_digest()
 
 
 class ReplayStore(Protocol):

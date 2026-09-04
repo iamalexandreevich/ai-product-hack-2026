@@ -100,6 +100,13 @@ class DecisionRecord(BaseModel):
         default=None,
         description="`Idempotency-Key` the request carried, if any; a repeat replays this record.",
     )
+    request_digest: str = Field(
+        default="",
+        description=(
+            "sha256 of the request minus `metadata`; a repeat under an "
+            "`Idempotency-Key` is honoured only when it matches."
+        ),
+    )
 
     @computed_field(description="Same ULID as `id`; mirrors the field name /v1/decide returns.")
     @property
@@ -169,4 +176,5 @@ class Decision:
             history_omitted=self.dialogue.omitted if self.dialogue is not None else 0,
             history_digest=self.history_digest,
             idempotency_key=self.idempotency_key,
+            request_digest=self.request.identity_digest(),
         )

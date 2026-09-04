@@ -259,3 +259,13 @@ def test_unsupported_protocol_is_rejected():
 def test_response_carries_protocol_by_default():
     r = DecideResponse(decision=DecisionKind.allow, stage=1, latency_ms=LatencyMs(total=1), decision_id="01J")
     assert r.protocol == PROTOCOL
+
+
+def test_identity_digest_ignores_metadata():
+    assert _req(metadata={"run": "a"}).identity_digest() == _req(metadata={"run": "b"}).identity_digest()
+
+
+def test_identity_digest_separates_requests_differing_only_in_paths():
+    one = _req(tool="file_write", raw="", args={"cwd": "/r", "paths": ["/r/ok.txt"]})
+    other = _req(tool="file_write", raw="", args={"cwd": "/r", "paths": ["/r/.env"]})
+    assert one.identity_digest() != other.identity_digest()

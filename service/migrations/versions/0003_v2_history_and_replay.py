@@ -20,6 +20,7 @@ def upgrade() -> None:
     op.add_column('decisions', sa.Column('history', postgresql.JSONB(astext_type=sa.Text()), nullable=False, server_default='[]'))
     op.add_column('decisions', sa.Column('history_omitted', sa.Integer(), nullable=False, server_default='0'))
     op.add_column('decisions', sa.Column('history_digest', sa.String(length=64), nullable=False, server_default=''))
+    op.add_column('decisions', sa.Column('request_digest', sa.String(length=64), nullable=False, server_default=''))
     op.create_index(
         'ux_decisions_idempotency_key', 'decisions', ['idempotency_key'], unique=True,
         postgresql_where=sa.text('idempotency_key IS NOT NULL'),
@@ -33,10 +34,12 @@ def upgrade() -> None:
     op.alter_column('decisions', 'history', server_default=None)
     op.alter_column('decisions', 'history_omitted', server_default=None)
     op.alter_column('decisions', 'history_digest', server_default=None)
+    op.alter_column('decisions', 'request_digest', server_default=None)
 
 
 def downgrade() -> None:
     op.drop_index('ux_decisions_idempotency_key', table_name='decisions')
+    op.drop_column('decisions', 'request_digest')
     op.drop_column('decisions', 'history_digest')
     op.drop_column('decisions', 'history_omitted')
     op.drop_column('decisions', 'history')

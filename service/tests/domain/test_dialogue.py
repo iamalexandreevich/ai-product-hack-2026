@@ -155,3 +155,16 @@ def test_fit_budgets_the_rendered_length_not_the_raw_length():
     fitted = d.fit(budget(budget_chars=600, toolresult=1000))
     rendered = sum(len(json.dumps(t.content, ensure_ascii=False)) for t in fitted.turns)
     assert rendered <= 600 and fitted.omitted >= 1
+
+
+def test_fit_of_a_full_size_history_stays_cheap():
+    # `fit` runs inside the stage-2 span on every escalated call; re-rendering
+    # the whole remainder per dropped turn made it quadratic.
+    big = dialogue(*[turn(role="toolresult", author="system", content="x" * 640) for _ in range(200)])
+    samples = []
+    for _ in range(20):
+        t0 = time.perf_counter()
+        big.fit(History())
+        samples.append((time.perf_counter() - t0) * 1000)
+    median = statistics.median(samples)
+    assert median <= 5.0, f"median={median:.3f}ms"

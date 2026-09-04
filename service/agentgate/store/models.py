@@ -9,6 +9,8 @@ from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Te
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+from agentgate.api.schemas import IDEMPOTENCY_KEY_MAX_CHARS, PROTOCOL
+
 
 class Base(DeclarativeBase):
     pass
@@ -55,11 +57,12 @@ class DecisionRow(Base):
     error: Mapped[str | None] = mapped_column(String(64), nullable=True)
     cached: Mapped[bool] = mapped_column(Boolean, default=False)
     metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
-    protocol: Mapped[int] = mapped_column(Integer, default=1)
-    idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    protocol: Mapped[int] = mapped_column(Integer, default=PROTOCOL)
+    idempotency_key: Mapped[str | None] = mapped_column(String(IDEMPOTENCY_KEY_MAX_CHARS), nullable=True)
     history: Mapped[list] = mapped_column(JSONB, default=list)
     history_omitted: Mapped[int] = mapped_column(Integer, default=0)
     history_digest: Mapped[str] = mapped_column(String(64), default="")
+    request_digest: Mapped[str] = mapped_column(String(64), default="")
 
     __table_args__ = (
         Index("ix_decisions_session_ts", "session_id", "ts"),

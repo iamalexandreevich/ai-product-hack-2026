@@ -8,6 +8,7 @@ scripts/export_openapi.py, so a field and its documentation are edited in
 one place and cannot drift apart.
 """
 
+import hashlib
 import json
 from enum import Enum
 from typing import Any
@@ -271,6 +272,12 @@ class DecideRequest(BaseModel):
         if self.tool is Tool.shell and not self.raw.strip():
             raise ValueError("raw is required for tool=shell")
         return self
+
+    def identity_digest(self) -> str:
+        """sha256 of everything a decision depends on: the whole request minus
+        `metadata`, which by contract never reaches the decision logic."""
+        payload = self.model_dump_json(exclude={"metadata"})
+        return hashlib.sha256(payload.encode("utf-8", "surrogatepass")).hexdigest()
 
 
 class LatencyMs(BaseModel):

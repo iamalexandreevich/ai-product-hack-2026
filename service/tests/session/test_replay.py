@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 
 from agentgate.domain.replay import Replay
 from agentgate.session.replay import SWEEP_EVERY, InMemoryReplayStore, PersistentReplayStore
-from tests.factories import FakeClock, FakeReplayRecords, decision
+from tests.factories import FakeClock, FakeReplayRecords, decide_request, decision
 
 
 def record(key: str = "k", age_seconds: int = 0):
@@ -72,11 +72,12 @@ async def test_restore_loads_keyed_rows_with_their_remaining_ttl():
 
 
 async def test_restore_keeps_the_identity_the_row_was_decided_for():
-    records = FakeReplayRecords([record("fresh", age_seconds=100)])
-    store = PersistentReplayStore(InMemoryReplayStore(), records, ttl_seconds=86400)
+    stored = record("fresh", age_seconds=100)
+    store = PersistentReplayStore(InMemoryReplayStore(), FakeReplayRecords([stored]), ttl_seconds=86400)
     await store.restore()
     restored = await store.get("fresh")
-    assert (restored.session_id, restored.harness, restored.tool, restored.raw) == ("s1", "t", "shell", "ls -la")
+    assert restored.request_digest == decide_request("ls -la").identity_digest()
+    assert restored.request_digest == stored.request_digest
 
 
 async def test_restore_failure_starts_empty_and_warns(caplog):
