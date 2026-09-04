@@ -74,7 +74,11 @@ class Turn(BaseModel):
         )
     )
     content: str = Field(
-        description="The message text, the tool call as text, or the tool output."
+        description=(
+            "The message text, the tool call as text, or the tool output. Visible turn "
+            "text only: the agent's hidden reasoning (thinking blocks, scratchpads) must "
+            "not be sent — the classifier is told it never sees it."
+        )
     )
     tool: str | None = Field(
         default=None,

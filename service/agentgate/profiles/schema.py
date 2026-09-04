@@ -79,7 +79,9 @@ class History(BaseModel):
     """How much of the dialogue reaches the stage-2 prompt.
 
     Characters, not tokens: the service has no tokenizer, and `user_request`
-    is already budgeted in characters.
+    is already budgeted in characters. `budget_chars` is measured on the
+    JSON-escaped content the prompt emits, so control-heavy tool output
+    counts at its rendered size; `per_turn_chars` caps raw characters.
     """
 
     budget_chars: int = Field(default=12000, ge=1)

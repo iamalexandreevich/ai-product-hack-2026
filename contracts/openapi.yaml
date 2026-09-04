@@ -943,7 +943,9 @@ components:
         How much of the dialogue reaches the stage-2 prompt.
 
         Characters, not tokens: the service has no tokenizer, and `user_request`
-        is already budgeted in characters.
+        is already budgeted in characters. `budget_chars` is measured on the
+        JSON-escaped content the prompt emits, so control-heavy tool output
+        counts at its rendered size; `per_turn_chars` caps raw characters.
     LatencyMs:
       properties:
         stage1:
@@ -1166,7 +1168,9 @@ components:
         content:
           type: string
           title: Content
-          description: The message text, the tool call as text, or the tool output.
+          description: 'The message text, the tool call as text, or the tool output. Visible
+            turn text only: the agent''s hidden reasoning (thinking blocks, scratchpads) must
+            not be sent — the classifier is told it never sees it.'
         tool:
           anyOf:
           - type: string

@@ -69,7 +69,9 @@ class Dialogue:
 
 
 def _content_chars(turns: list[Turn]) -> int:
-    return sum(len(turn.content) for turn in turns)
+    # What the prompt emits, not the raw text: json.dumps expands control
+    # characters six-fold, and tool output is where they cluster.
+    return sum(len(json.dumps(turn.content, ensure_ascii=False)) for turn in turns)
 
 
 def _cap(turn: Turn, limit: int) -> Turn:
@@ -81,12 +83,13 @@ def _cap(turn: Turn, limit: int) -> Turn:
 
 
 def _head_and_tail(content: str, limit: int) -> str:
-    # The marker length is bounded using the whole content length, so the
-    # final marker (which reports fewer omitted characters, hence no more
-    # digits) can never push the result over the limit.
+    # The marker alone can exceed `limit` when `limit < len(marker)`: `keep`
+    # floors at 0, and the bare marker is returned even though it is longer
+    # than the cap (and possibly longer than `content` itself). Deliberate;
+    # see test_fit_cap_smaller_than_the_marker_keeps_only_the_marker.
     marker_room = len(OMITTED_MARKER.format(n=len(content)))
     keep = max(limit - marker_room, 0)
     head, tail = keep // 2, keep - keep // 2
     omitted = len(content) - keep
     marker = OMITTED_MARKER.format(n=omitted)
-    return content[:head] + marker + (content[len(content) - tail:] if tail else "")
+    return content[:head] + marker + content[len(content) - tail:]

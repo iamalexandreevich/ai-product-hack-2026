@@ -103,7 +103,7 @@
           "description": "Who produced the turn. Only `human` marks the user's own words; a `human`-role turn with `author: agent` is text a parent model wrote for a subagent and is not treated as the user's intent."
         },
         "content": {
-          "description": "The message text, the tool call as text, or the tool output.",
+          "description": "The message text, the tool call as text, or the tool output. Visible turn text only: the agent's hidden reasoning (thinking blocks, scratchpads) must not be sent — the classifier is told it never sees it.",
           "title": "Content",
           "type": "string"
         },

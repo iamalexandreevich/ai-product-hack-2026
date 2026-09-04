@@ -178,6 +178,9 @@ async def test_decision_records_the_digest_of_the_full_history():
     assert decision.history_digest == Dialogue.of(history).digest()
     assert (await gate().decide(decide_request("ls -la"))).history_digest == Dialogue().digest()
 
+    refused = await gate().decide(decide_request("ls -la", profile_id="nope", history=history))
+    assert refused.verdict.rule_id == "api.unknown-profile" and refused.history_digest == Dialogue.of(history).digest()
+
 
 async def test_classifier_receives_the_fitted_dialogue_and_the_key_uses_the_full_one():
     classifier = FakeClassifier(stage2_verdict("A"))

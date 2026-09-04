@@ -145,3 +145,13 @@ def test_fit_keeps_role_author_tool_and_call_id():
 def test_fit_accumulates_previously_omitted_turns():
     already = Dialogue(turns=(turn(content="a" * 30), turn(content="b" * 30)), omitted=3)
     assert already.fit(budget(budget_chars=30, human=30)).omitted == 4
+
+
+def test_fit_budgets_the_rendered_length_not_the_raw_length():
+    import json
+
+    ansi = "\x1b[31mFAIL\x1b[0m " * 20  # 220 raw chars, far more once escaped
+    d = dialogue(*[turn(role="toolresult", author="system", content=ansi) for _ in range(5)])
+    fitted = d.fit(budget(budget_chars=600, toolresult=1000))
+    rendered = sum(len(json.dumps(t.content, ensure_ascii=False)) for t in fitted.turns)
+    assert rendered <= 600 and fitted.omitted >= 1
