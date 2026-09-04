@@ -83,6 +83,7 @@ class Decision:
     state: SessionState | None = None
     cache_key: str | None = None
     cached: bool = False
+    history_digest: str = ""
 
     def to_response(self) -> DecideResponse:
         return DecideResponse(

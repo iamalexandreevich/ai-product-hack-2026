@@ -23,6 +23,7 @@ from ulid import ULID
 
 from agentgate.api.schemas import DecideRequest, DecisionKind
 from agentgate.classify.base import Classifier
+from agentgate.domain.dialogue import Dialogue
 from agentgate.domain.policy import Policy
 from agentgate.domain.session import SessionState, SessionStateStore
 from agentgate.domain.verdict import Verdict
@@ -72,6 +73,8 @@ class Gate:
         timings = Timings()
         decision_id = str(ULID())
         profile_id = request.profile_id or self._default_profile
+        dialogue = Dialogue.of(request.history)
+        history_digest = dialogue.digest()
 
         resolved = await self._resolve(request, profile_id)
         if isinstance(resolved, Verdict):
@@ -80,16 +83,20 @@ class Gate:
             # has none to keep.
             profile = self._profiles.get(profile_id)
             profile_hash = profile.profile_hash() if profile is not None else ""
-            return self._finish(decision_id, request, resolved, timings, profile_id, profile_hash)
+            return self._finish(
+                decision_id, request, resolved, timings, profile_id, profile_hash,
+                history_digest=history_digest,
+            )
 
         action = normalize(request)
         cache_key = allow_cache_key(
-            resolved.policy.profile_hash, action.action_hash(), request.user_request
+            resolved.policy.profile_hash, action.action_hash(), request.user_request, history_digest
         )
         if await self._cache_hit(resolved, cache_key):
             return self._finish(
                 decision_id, request, Verdict.allow("cache", stage=0), timings, profile_id,
                 resolved.policy.profile_hash, action, resolved.state, cache_key, cached=True,
+                history_digest=history_digest,
             )
 
         verdict = await self._evaluate(request, action, resolved, timings)
@@ -97,7 +104,7 @@ class Gate:
         await self._settle_session(resolved.state, verdict, cache_key, decision_id)
         return self._finish(
             decision_id, request, verdict, timings, profile_id, resolved.policy.profile_hash,
-            action, resolved.state, cache_key,
+            action, resolved.state, cache_key, history_digest=history_digest,
         )
 
     async def _resolve(self, request: DecideRequest, profile_id: str) -> "_Context | Verdict":
@@ -164,9 +171,11 @@ class Gate:
         self, decision_id: str, request: DecideRequest, verdict: Verdict, timings: Timings,
         profile_id: str, profile_hash: str, action: NormalizedAction | None = None,
         state: SessionState | None = None, cache_key: str | None = None, cached: bool = False,
+        history_digest: str = "",
     ) -> Decision:
         return Decision(
             id=decision_id, ts=datetime.now(timezone.utc), request=request, verdict=verdict,
             latency=timings.finish(), profile_id=profile_id, profile_hash=profile_hash,
             action=action, state=state, cache_key=cache_key, cached=cached,
+            history_digest=history_digest,
         )
