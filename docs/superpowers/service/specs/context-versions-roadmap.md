@@ -9,7 +9,7 @@
 | Версия | Что видит сервис | Спека | Статус |
 |---|---|---|---|
 | **v1** | последний tool-call + последнее сообщение пользователя | `2026-09-03-agentgate-v1-design.md` | реализовано |
-| **v2** | v1 + предшествующий диалог: `assistant` + `toolcall` + `toolresult` + `human` | `2026-09-04-agentgate-v2-design.md` (постановка — `v2-dialogue-context.md`) | **реализовано** (ветка `feat/v2-dialogue-context`) |
+| **v2** | v1 + предшествующий диалог: `assistant` + `toolcall` + `toolresult` + `human` | `2026-09-04-agentgate-v2-design.md` (постановка — `v2-dialogue-context.md`) | **реализовано** |
 | **v3** | v2 + оценка самих `tool-result` | `v3-tool-result-evaluation.md` | спроектировать |
 | **v4** | v3 + Context Guard: маскирование промпт-инъекций внутри `tool-result` | `v4-context-guard.md` | спроектировать |
 | **v5** | *(другая ось)* модель как тройка `base_url` / `api_key` / `model_name`; ризонинг выключен, SO включён | `v5-model-binding.md` | спроектировать |

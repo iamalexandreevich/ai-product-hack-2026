@@ -131,79 +131,19 @@ paths:
         (see the `Turn` schema); it is optional, and an empty history behaves exactly
         like v1. `protocol` names the contract version; this service answers `1` and
         refuses any other value as `ask` with `rule_id: api.unsupported-protocol`. An
-        `Idempotency-Key` request header, at most 128 characters, makes a repeat of the
-        same call return the same decision (same `decision_id`) without touching
-        session counters or storing a second row; the key is opaque to the service.
+        `Idempotency-Key` request header makes a repeat of the same call return the
+        same decision (same `decision_id`) without touching session counters or
+        storing a second row. The key is opaque to the service, and three of its
+        properties are load-bearing: a key longer than 128 characters is ignored
+        (the call is decided normally); a repeat under the same key whose request
+        differs in `session_id`, `harness`, `tool` or `raw` is *not* replayed but
+        decided afresh; and the key is global to the service, scoped neither by
+        session nor by credential, so a harness must make it unique per tool call.
 
         The request and response examples below are paired by name: `allow_safe_test`,
         `deny_unknown_package`, `ask_uncertain_db_cleanup`. The fourth response example
         has no request counterpart because it shows what an invalid request produces.
       operationId: decide
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/DecideRequest'
-            examples:
-              allow_safe_test:
-                summary: 'Allowed: a test command on the profile''s safe list'
-                description: A command matching a `safe_prefixes` entry inside the workspace.
-                  Stage 1 settles it; the LLM is never called.
-                value:
-                  session_id: opencode-3f2a91c4
-                  harness: opencode
-                  tool: shell
-                  raw: npm test -- --runInBand
-                  args:
-                    cwd: /home/u/repo
-                    paths: []
-                    domains: []
-                  user_request: прогони тесты и покажи, что падает
-                  profile_id: default-dev
-                  model: qwen-4b
-                  metadata:
-                    run_id: bench-17
-                    plugin_version: 0.1.0
-              deny_unknown_package:
-                summary: 'Denied: typosquatted package plus an unrelated deletion'
-                description: The command installs a package one edit away from a real one
-                  and chains a deletion the user never asked for. Stage 2 denies it and supplies
-                  a safe alternative.
-                value:
-                  session_id: opencode-3f2a91c4
-                  harness: opencode
-                  tool: shell
-                  raw: npm install lodahs && rm -rf ./dist
-                  args:
-                    cwd: /home/u/repo
-                    paths: []
-                    domains: []
-                  user_request: почини сборку
-                  profile_id: default-dev
-                  model: qwen-4b
-                  metadata:
-                    run_id: bench-17
-                    plugin_version: 0.1.0
-              ask_uncertain_db_cleanup:
-                summary: 'Ask the user: destructive but plausibly intended'
-                description: Deleting rows is within what the user asked for, but the blast
-                  radius is not recoverable and the classifier is not confident. The gate
-                  hands the decision to the human.
-                value:
-                  session_id: claude-code-77b0e2
-                  harness: claude-code
-                  tool: shell
-                  raw: psql "$DATABASE_URL" -c "delete from events where ts < now() - interval
-                    '30 days'"
-                  args:
-                    cwd: /home/u/repo
-                    paths: []
-                    domains: []
-                  user_request: почисти старые события в базе, таблица разрослась до 40 гигабайт
-                  profile_id: default-dev
-                  model: sonnet
-                  metadata: {}
-        required: true
       responses:
         '200':
           description: The decision. Returned for `allow`, `deny` and `ask` alike, including
@@ -304,6 +244,83 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DecideRequest'
+            examples:
+              allow_safe_test:
+                summary: 'Allowed: a test command on the profile''s safe list'
+                description: A command matching a `safe_prefixes` entry inside the workspace.
+                  Stage 1 settles it; the LLM is never called.
+                value:
+                  session_id: opencode-3f2a91c4
+                  harness: opencode
+                  tool: shell
+                  raw: npm test -- --runInBand
+                  args:
+                    cwd: /home/u/repo
+                    paths: []
+                    domains: []
+                  user_request: прогони тесты и покажи, что падает
+                  profile_id: default-dev
+                  model: qwen-4b
+                  metadata:
+                    run_id: bench-17
+                    plugin_version: 0.1.0
+              deny_unknown_package:
+                summary: 'Denied: typosquatted package plus an unrelated deletion'
+                description: The command installs a package one edit away from a real one
+                  and chains a deletion the user never asked for. Stage 2 denies it and supplies
+                  a safe alternative.
+                value:
+                  session_id: opencode-3f2a91c4
+                  harness: opencode
+                  tool: shell
+                  raw: npm install lodahs && rm -rf ./dist
+                  args:
+                    cwd: /home/u/repo
+                    paths: []
+                    domains: []
+                  user_request: почини сборку
+                  profile_id: default-dev
+                  model: qwen-4b
+                  metadata:
+                    run_id: bench-17
+                    plugin_version: 0.1.0
+              ask_uncertain_db_cleanup:
+                summary: 'Ask the user: destructive but plausibly intended'
+                description: Deleting rows is within what the user asked for, but the blast
+                  radius is not recoverable and the classifier is not confident. The gate
+                  hands the decision to the human.
+                value:
+                  session_id: claude-code-77b0e2
+                  harness: claude-code
+                  tool: shell
+                  raw: psql "$DATABASE_URL" -c "delete from events where ts < now() - interval
+                    '30 days'"
+                  args:
+                    cwd: /home/u/repo
+                    paths: []
+                    domains: []
+                  user_request: почисти старые события в базе, таблица разрослась до 40 гигабайт
+                  profile_id: default-dev
+                  model: sonnet
+                  metadata: {}
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        required: false
+        schema:
+          type: string
+          maxLength: 128
+        description: Opaque key a harness attaches to one tool call and repeats on a retry.
+          A repeat with the same key and the same request (session, harness, tool, raw) returns
+          the stored decision unchanged, without touching session counters or storing a second
+          row. A key longer than 128 characters is ignored. A repeat under the same key with
+          a different request is decided afresh.
   /v1/decisions:
     get:
       tags:

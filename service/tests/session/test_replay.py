@@ -1,7 +1,8 @@
 import logging
 from datetime import datetime, timedelta, timezone
 
-from agentgate.session.replay import InMemoryReplayStore, PersistentReplayStore
+from agentgate.domain.replay import Replay
+from agentgate.session.replay import SWEEP_EVERY, InMemoryReplayStore, PersistentReplayStore
 from tests.factories import FakeClock, FakeReplayRecords, decision
 
 
@@ -12,9 +13,13 @@ def record(key: str = "k", age_seconds: int = 0):
     ).to_record()
 
 
-async def test_put_then_get_returns_the_same_record():
+def replay(key: str = "k", age_seconds: int = 0) -> Replay:
+    return Replay.of(record(key, age_seconds))
+
+
+async def test_put_then_get_returns_the_same_entry():
     store = InMemoryReplayStore()
-    stored = record()
+    stored = replay()
     await store.put("k", stored, 60)
     assert await store.get("k") == stored
 
@@ -26,11 +31,31 @@ async def test_get_of_an_unknown_key_is_none():
 async def test_entries_expire_on_the_monotonic_clock():
     clock = FakeClock()
     store = InMemoryReplayStore(now=clock)
-    await store.put("k", record(), 10)
+    await store.put("k", replay(), 10)
     clock.advance(9)
     assert await store.get("k") is not None
     clock.advance(2)
     assert await store.get("k") is None
+
+
+async def test_an_expired_entry_is_swept_without_ever_being_read():
+    # Keys are read at most once, so `get` is not a reliable evictor: the sweep
+    # on `put` is what keeps a day of unread keys from staying resident.
+    clock = FakeClock()
+    store = InMemoryReplayStore(now=clock)
+    await store.put("stale", replay(), 10)
+    clock.advance(11)
+    for i in range(SWEEP_EVERY):
+        await store.put(f"k{i}", replay(), 60)
+    assert "stale" not in store._items
+
+
+async def test_the_oldest_entry_is_evicted_when_the_cap_is_reached():
+    store = InMemoryReplayStore(max_entries=2)
+    for key in ("a", "b", "c"):
+        await store.put(key, replay(key), 60)
+    assert await store.get("a") is None
+    assert await store.get("b") is not None and await store.get("c") is not None
 
 
 async def test_restore_loads_keyed_rows_with_their_remaining_ttl():
@@ -46,6 +71,14 @@ async def test_restore_loads_keyed_rows_with_their_remaining_ttl():
     assert await store.get("fresh") is None
 
 
+async def test_restore_keeps_the_identity_the_row_was_decided_for():
+    records = FakeReplayRecords([record("fresh", age_seconds=100)])
+    store = PersistentReplayStore(InMemoryReplayStore(), records, ttl_seconds=86400)
+    await store.restore()
+    restored = await store.get("fresh")
+    assert (restored.session_id, restored.harness, restored.tool, restored.raw) == ("s1", "t", "shell", "ls -la")
+
+
 async def test_restore_failure_starts_empty_and_warns(caplog):
     store = PersistentReplayStore(InMemoryReplayStore(), FakeReplayRecords(error=RuntimeError("db down")), 86400)
     with caplog.at_level(logging.WARNING):
@@ -56,6 +89,6 @@ async def test_restore_failure_starts_empty_and_warns(caplog):
 
 async def test_persistent_store_delegates_put_and_get():
     store = PersistentReplayStore(InMemoryReplayStore(), FakeReplayRecords(), 86400)
-    stored = record()
+    stored = replay()
     await store.put("k", stored, 60)
     assert await store.get("k") == stored

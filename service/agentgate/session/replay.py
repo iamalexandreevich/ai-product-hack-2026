@@ -5,37 +5,59 @@ keyed decisions younger than the TTL and puts each back with whatever of
 its TTL remains; a restore that fails leaves the store empty and says so
 in the log -- a duplicate after a failed restore costs one extra decision,
 never a wrong one.
+
+An idempotency key is read at most once, so nothing but a `put` ever
+notices that an entry has expired. Two bounds keep the store from growing
+for a whole TTL of traffic: every `SWEEP_EVERY` puts drop everything past
+its expiry, and `max_entries` caps what is left, evicting in insertion
+order.
 """
 
 import logging
 import time
+from collections import OrderedDict
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import Protocol
 
-from agentgate.domain.replay import ReplayStore
+from agentgate.domain.replay import Replay, ReplayStore
 from agentgate.engine.decision import DecisionRecord
 
 log = logging.getLogger(__name__)
 
+SWEEP_EVERY = 256
+
 
 class InMemoryReplayStore:
-    def __init__(self, now: Callable[[], float] = time.monotonic) -> None:
+    def __init__(self, now: Callable[[], float] = time.monotonic, max_entries: int = 100_000) -> None:
         self._now = now
-        self._items: dict[str, tuple[DecisionRecord, float]] = {}
+        self._max_entries = max_entries
+        self._puts = 0
+        self._items: OrderedDict[str, tuple[Replay, float]] = OrderedDict()
 
-    async def get(self, key: str) -> DecisionRecord | None:
+    async def get(self, key: str) -> Replay | None:
         item = self._items.get(key)
         if item is None:
             return None
-        record, expires = item
+        replay, expires = item
         if self._now() >= expires:
             del self._items[key]
             return None
-        return record
+        return replay
 
-    async def put(self, key: str, record: DecisionRecord, ttl_seconds: int) -> None:
-        self._items[key] = (record, self._now() + ttl_seconds)
+    async def put(self, key: str, replay: Replay, ttl_seconds: int) -> None:
+        self._puts += 1
+        if self._puts % SWEEP_EVERY == 0:
+            self._sweep()
+        self._items.pop(key, None)
+        self._items[key] = (replay, self._now() + ttl_seconds)
+        while len(self._items) > self._max_entries:
+            self._items.popitem(last=False)
+
+    def _sweep(self) -> None:
+        now = self._now()
+        for key in [k for k, (_, expires) in self._items.items() if now >= expires]:
+            del self._items[key]
 
 
 class ReplayRecords(Protocol):
@@ -60,10 +82,10 @@ class PersistentReplayStore:
         for record in records:
             remaining = self._ttl_seconds - int((now - record.ts).total_seconds())
             if remaining > 0 and record.idempotency_key is not None:
-                await self._inner.put(record.idempotency_key, record, remaining)
+                await self._inner.put(record.idempotency_key, Replay.of(record), remaining)
 
-    async def get(self, key: str) -> DecisionRecord | None:
+    async def get(self, key: str) -> Replay | None:
         return await self._inner.get(key)
 
-    async def put(self, key: str, record: DecisionRecord, ttl_seconds: int) -> None:
-        await self._inner.put(key, record, ttl_seconds)
+    async def put(self, key: str, replay: Replay, ttl_seconds: int) -> None:
+        await self._inner.put(key, replay, ttl_seconds)

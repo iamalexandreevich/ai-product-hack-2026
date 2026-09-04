@@ -22,6 +22,15 @@ HISTORY_MAX_TURNS = 200
 HISTORY_MAX_BYTES = 131072
 TURN_TOOL_MAX_CHARS = 64
 TURN_CALL_ID_MAX_CHARS = 128
+IDEMPOTENCY_KEY_MAX_CHARS = 128
+
+
+class HistoryTooLarge(ValueError):
+    """The wire limit on `history` was exceeded; refused as `api.history-too-large`."""
+
+
+class UnsupportedProtocol(ValueError):
+    """`protocol` is not one this service speaks; refused as `api.unsupported-protocol`."""
 
 
 class Tool(str, Enum):
@@ -239,14 +248,14 @@ class DecideRequest(BaseModel):
     @classmethod
     def _supported_protocol(cls, v: int) -> int:
         if v != PROTOCOL:
-            raise ValueError(f"unsupported protocol {v}; this service speaks protocol {PROTOCOL}")
+            raise UnsupportedProtocol(f"unsupported protocol {v}; this service speaks protocol {PROTOCOL}")
         return v
 
     @field_validator("history")
     @classmethod
     def _history_size(cls, v: list[Turn]) -> list[Turn]:
         if len(v) > HISTORY_MAX_TURNS:
-            raise ValueError(f"history exceeds {HISTORY_MAX_TURNS} turns")
+            raise HistoryTooLarge(f"history exceeds {HISTORY_MAX_TURNS} turns")
         size = sum(
             len(turn.content.encode("utf-8", "surrogatepass"))
             + len((turn.tool or "").encode("utf-8", "surrogatepass"))
@@ -254,7 +263,7 @@ class DecideRequest(BaseModel):
             for turn in v
         )
         if size > HISTORY_MAX_BYTES:
-            raise ValueError(f"history exceeds {HISTORY_MAX_BYTES} bytes")
+            raise HistoryTooLarge(f"history exceeds {HISTORY_MAX_BYTES} bytes")
         return v
 
     @model_validator(mode="after")

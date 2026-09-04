@@ -21,7 +21,7 @@ from agentgate.domain.session import SessionState
 from agentgate.session.replay import InMemoryReplayStore
 from agentgate.store.repo import DecisionRepo, SessionRepo
 from tests.conftest import TEST_DB_URL, requires_db
-from tests.factories import decide_request, decision, session_state, shell_action
+from tests.factories import WORKSPACE, decide_request, decision, session_state, shell_action
 
 pytestmark = requires_db
 
@@ -150,16 +150,37 @@ async def test_build_service_rejects_non_localhost_bind_without_token(tmp_path):
 
 
 async def test_build_service_restores_replayable_decisions(session_factory, tmp_path):
+    stored_id = str(ULID())
     await DecisionRepo(session_factory).insert(decision(
-        id=str(ULID()), request=decide_request("ls", session_id=None), action=shell_action("ls"),
+        id=stored_id, request=decide_request("ls", session_id=None), action=shell_action("ls"),
         idempotency_key="restored",
     ))
     service = await build_service(settings_for(tmp_path))
     async with httpx.AsyncClient(transport=ASGITransport(app=service.app), base_url="http://test") as c:
         r = await c.post("/v1/decide", json={
-            "harness": "t", "tool": "shell", "raw": "rm -rf /", "args": {"cwd": "/"}, "user_request": "x",
+            "harness": "t", "tool": "shell", "raw": "ls", "args": {"cwd": WORKSPACE}, "user_request": "task",
         }, headers={"idempotency-key": "restored"})
-    assert r.json()["decision"] == "allow" and r.json()["rule_id"] == "allowlist.readonly"
+    # The stored id coming back is the proof: the same command decided afresh
+    # would allow too, but under an id of its own.
+    assert r.json()["decision_id"] == stored_id
+
+
+async def test_a_restored_key_does_not_answer_a_different_request(session_factory, tmp_path):
+    """The restored answer belongs to the call it was taken for, not to the key.
+
+    A key is caller-supplied and global to the service, so a different action
+    arriving under it must be judged, not handed a stranger's `allow`.
+    """
+    await DecisionRepo(session_factory).insert(decision(
+        id=str(ULID()), request=decide_request("ls", session_id=None), action=shell_action("ls"),
+        idempotency_key="restored-too",
+    ))
+    service = await build_service(settings_for(tmp_path))
+    async with httpx.AsyncClient(transport=ASGITransport(app=service.app), base_url="http://test") as c:
+        r = await c.post("/v1/decide", json={
+            "harness": "t", "tool": "shell", "raw": "rm -rf /", "args": {"cwd": "/"}, "user_request": "x",
+        }, headers={"idempotency-key": "restored-too"})
+    assert r.json()["decision"] == "deny" and r.json()["rule_id"] == "hard-deny.destructive"
 
 
 async def test_build_service_uses_the_replay_store_it_was_given(session_factory, tmp_path):

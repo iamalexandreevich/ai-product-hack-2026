@@ -48,16 +48,19 @@ from agentgate.api.examples import REQUEST_EXAMPLES, RESPONSE_EXAMPLES
 from agentgate.api.openapi import install_openapi
 from agentgate.api.responses import DecisionListResponse, Error, Health
 from agentgate.api.schemas import (
+    IDEMPOTENCY_KEY_MAX_CHARS,
     METADATA_MAX_BYTES,
     PROTOCOL,
     RAW_MAX_BYTES,
     USER_REQUEST_MAX_CHARS,
     DecideRequest,
     DecideResponse,
+    HistoryTooLarge,
     LatencyMs,
+    UnsupportedProtocol,
 )
 from agentgate.config import Settings
-from agentgate.domain.replay import ReplayStore
+from agentgate.domain.replay import Replay, ReplayStore
 from agentgate.domain.verdict import Verdict
 from agentgate.engine.gate import Gate
 from agentgate.profiles.schema import Profile
@@ -177,10 +180,23 @@ DECIDE_OPENAPI: dict[str, Any] = {
             }
         },
     },
+    "parameters": [
+        {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": False,
+            "schema": {"type": "string", "maxLength": IDEMPOTENCY_KEY_MAX_CHARS},
+            "description": (
+                "Opaque key a harness attaches to one tool call and repeats on a retry. A "
+                "repeat with the same key and the same request (session, harness, tool, raw) "
+                "returns the stored decision unchanged, without touching session counters or "
+                "storing a second row. A key longer than 128 characters is ignored. A repeat "
+                "under the same key with a different request is decided afresh."
+            ),
+        }
+    ],
     "responses": {"422": None},
 }
-
-IDEMPOTENCY_KEY_MAX_CHARS = 128
 
 
 def _refuse(rule_id: str, reason: str) -> DecideResponse:
@@ -192,17 +208,46 @@ def _refuse(rule_id: str, reason: str) -> DecideResponse:
     )
 
 
-def _refusal_for(error: dict[str, Any]) -> DecideResponse:
-    """The fail-closed answer to one validation error. Two limits get their
-    own rule ids so an integrator can tell them from a malformed body."""
+def _reason_for(error: Mapping[str, Any]) -> str:
     location = ".".join(str(part) for part in error.get("loc", ()))
-    message = str(error.get("msg"))
-    reason = f"invalid request: {location}: {message}"
-    if location == "protocol":
-        return _refuse("api.unsupported-protocol", reason)
-    if location == "history" and "exceeds" in message:
-        return _refuse("api.history-too-large", reason)
-    return _refuse("api.invalid-request", reason)
+    return f"invalid request: {location}: {error.get('msg')}"
+
+
+def _refusal_for(errors: list[Any]) -> DecideResponse:
+    """The fail-closed answer to a failed body validation.
+
+    Two limits get their own rule ids so an integrator can tell them from a
+    malformed body. They are recognised by the exception type the validator
+    raised -- pydantic hands it back under ``ctx.error`` -- rather than by the
+    wording of a message, which is free to change. A body can fail several
+    fields at once, so every error is scanned, not just the first.
+    """
+    for error in errors:
+        raised = error.get("ctx", {}).get("error")
+        if isinstance(raised, UnsupportedProtocol):
+            return _refuse("api.unsupported-protocol", _reason_for(error))
+        if isinstance(raised, HistoryTooLarge):
+            return _refuse("api.history-too-large", _reason_for(error))
+    return _refuse("api.invalid-request", _reason_for(errors[0]))
+
+
+async def _replayed(replay: ReplayStore, key: str) -> Replay | None:
+    """A replay store that is down means "no replay", never a 500: the client
+    would read a 5xx as fail-open and run the action unjudged."""
+    try:
+        return await replay.get(key)
+    except Exception:  # noqa: BLE001 - fail-closed: decide normally instead of failing the call
+        log.exception("replay store lookup failed")
+        return None
+
+
+async def _remember(replay: ReplayStore, key: str, entry: Replay, ttl_seconds: int) -> None:
+    """A store that cannot keep the answer costs a retry one extra decision,
+    which is the price of the answer this call already has."""
+    try:
+        await replay.put(key, entry, ttl_seconds)
+    except Exception:  # noqa: BLE001 - fail-closed: an unstorable decision is still a decision
+        log.exception("replay store write failed")
 
 
 def _replay_key(request: Request) -> str | None:
@@ -287,9 +332,14 @@ def create_app(
         (see the `Turn` schema); it is optional, and an empty history behaves exactly
         like v1. `protocol` names the contract version; this service answers `1` and
         refuses any other value as `ask` with `rule_id: api.unsupported-protocol`. An
-        `Idempotency-Key` request header, at most 128 characters, makes a repeat of the
-        same call return the same decision (same `decision_id`) without touching
-        session counters or storing a second row; the key is opaque to the service.
+        `Idempotency-Key` request header makes a repeat of the same call return the
+        same decision (same `decision_id`) without touching session counters or
+        storing a second row. The key is opaque to the service, and three of its
+        properties are load-bearing: a key longer than 128 characters is ignored
+        (the call is decided normally); a repeat under the same key whose request
+        differs in `session_id`, `harness`, `tool` or `raw` is *not* replayed but
+        decided afresh; and the key is global to the service, scoped neither by
+        session nor by credential, so a harness must make it unique per tool call.
 
         The request and response examples below are paired by name: `allow_safe_test`,
         `deny_unknown_package`, `ask_uncertain_db_cleanup`. The fourth response example
@@ -302,20 +352,20 @@ def create_app(
         try:
             parsed = DecideRequest.model_validate(payload)
         except ValidationError as exc:
-            return _refusal_for(exc.errors()[0])
+            return _refusal_for(exc.errors())
         key = _replay_key(request)
         if key is not None:
-            replayed = await replay.get(key)
-            if replayed is not None:
-                return replayed.to_response()
+            replayed = await _replayed(replay, key)
+            if replayed is not None and replayed.answers(parsed):
+                return replayed.response
         try:
             decision = await gate.decide(parsed)
         except Exception as exc:  # noqa: BLE001 - fail-closed: no exception may escape as a 500
             log.exception("Gate.decide failed")
             return _refuse("api.internal-error", f"internal error: {type(exc).__name__}")
-        decision = replace(decision, idempotency_key=key)
         if key is not None:
-            await replay.put(key, decision.to_record(), settings.allow_cache_ttl_seconds)
+            decision = replace(decision, idempotency_key=key)
+            await _remember(replay, key, Replay.of(decision.to_record()), settings.allow_cache_ttl_seconds)
         background.add_task(writer.write, decision)
         return decision.to_response()
 
