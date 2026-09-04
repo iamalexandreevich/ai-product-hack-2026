@@ -2,7 +2,7 @@
 
 Читается первым. Актуальная спека v1: `docs/superpowers/service/specs/2026-09-03-agentgate-v1-design.md`. План: `docs/superpowers/service/plans/2026-09-03-agentgate-v1.md`. Исходные материалы (частично устарели, при расхождении права спека v1): `docs/base.md`, `docs/artifacts/`. Позиционирование: `docs/why-agentgate.md`.
 
-Дорожная карта по объёму контекста (v1→v4), принятая владельцем продукта: `docs/superpowers/service/specs/context-versions-roadmap.md`. Спека API-ключей: `docs/superpowers/service/specs/api-keys.md`. Спека деплоя: `docs/superpowers/service/specs/deploy.md`. Сверка с контрактом адаптера (Gate↔Guard) и расхождение по fail-open/fail-closed: `docs/superpowers/service/specs/adapter-contract-gap-analysis.md`.
+Дорожная карта версий (v1→v5: контекст на v1–v4, независимость от провайдера модели на v5), принятая владельцем продукта: `docs/superpowers/service/specs/context-versions-roadmap.md`. Спека API-ключей: `docs/superpowers/service/specs/api-keys.md`. Спека деплоя: `docs/superpowers/service/specs/deploy.md`. Сверка с контрактом адаптера (Gate↔Guard) и расхождение по fail-open/fail-closed: `docs/superpowers/service/specs/adapter-contract-gap-analysis.md`.
 
 ## Что построено (v1, завершён)
 
