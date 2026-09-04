@@ -183,3 +183,80 @@ Open question for later: how to version server code from a monorepo carrying thr
      comparison inside a hard-deny rule. Guard non-empty in bind.
   6. tests/test_stage2_run.py still imports P from tests/test_stage2_prompt.py — the same
      test-to-test import that justified deviation 3. Pre-existing; move it to factories.
+
+- Task 6 review: APPROVED, 2 important. Reviewer verified the composition root by grep rather than by
+  report (every make_engine/Gate(/create_app( hit is in bootstrap.py), ran the monkeypatch grep
+  itself, and confirmed deviation 1's FIX (not just its diagnosis) is backed by a live-database test
+  that fails by a missing row rather than by an exception. Confirmed deviation 3 against the
+  committed yaml: openapi.yaml:761 declares llm as string|null and :752 declares status as an enum,
+  so the shipped Literal["ok","degraded"] is MORE faithful than my brief's `str`.
+
+- IMPORTANT #1 (queued): PersistentSessionStateStore.restore() calls self._inner.preload(), but the
+  SessionStateStore protocol does not declare preload. The seam's own docstring claims "a Redis store
+  is a single new class" — false as written: any implementation other than InMemorySessionStateStore
+  breaks at restore(). No type checker is configured, so nothing catches it. One line: declare
+  preload on the protocol, or narrow `inner` to a Preloadable protocol.
+
+- IMPORTANT #2 (queued, MINE, and it violates an explicit v1 constraint):
+  The v1 plan's global constraints say "Запись в БД и JSONL — после отправки ответа". Task 6's
+  write-through put `await SessionRepo.upsert` inside PersistentSessionStateStore.save, which
+  Gate._settle_session awaits at gate.py:157 — BEFORE the response is built. Every sessioned
+  /v1/decide now blocks on a Postgres round-trip, and because timings.finish() runs after
+  _settle_session, latency_total_ms shifts upward and stops being comparable with earlier rows.
+  Stage 1's budget is 1 ms; a network round-trip to the DB dwarfs it. My brief mandated this.
+  FIX (restores the constraint and still satisfies F3): F3's complaint was that the write-through
+  glue sat in api/app.py and the restore glue in __main__.py — the WRONG PLACES, not that the write
+  must be synchronous. So: PostgresDecisionWriter owns all three writes in FK order, post-response,
+  exactly as before task 6 (session upsert -> decision insert -> cache put), and
+  PersistentSessionStateStore keeps memory + restore(). Both halves then live in a proper home, the
+  ordering knowledge stays in exactly one place (F2's point), and the hot path is memory-only again.
+  Deferred until task 7 lands: task 7 is the riskiest task in the plan and is running now; editing
+  gate.py/persistent.py/writer.py under it would make its suite fail for reasons that are not its own.
+
+- Minor, queued: ModelRegistry.model_config_for now has no production caller (dead surface, guide 1.2);
+  export_openapi.py still hand-authors DecisionListResponse and Health under a comment saying those
+  routes return plain dicts, which stopped being true — deriving them from api/responses.py restores
+  the automatic contract check; tests/classify/test_llm.py still imports P/WS from test_prompt.py;
+  classify/base.py's "never raises" overclaims — prompt building sits outside llm.py's try (fail-closed
+  still holds via the API's outer handler, so no regression).
+
+- PROCESS LESSON (my error, recorded so it does not repeat): commit 1d926a4's message describes an
+  argv docstring but the commit also carries the stage2->classify and session/state.py->domain/session.py
+  renames. `git add <paths>` then `git commit` commits the WHOLE INDEX, and the implementer's `git mv`
+  was already staged there. While background agents work, the index is shared: use
+  `git commit --only <paths>`.
+
+- Task 7 review: NEEDS FIXES -> both fixed in f6b097e. The reviewer did the single most valuable
+  thing available to it: the equality proof had been deleted inside 57e6f5a, so it REBUILT that proof
+  independently from the literals in the diff's `-` lines and re-ran it — 18 legacy sets plus 7
+  wrapper flag-sets, 0 mismatches. That is the check the whole task rests on, and it is now verified
+  by someone other than the author.
+
+- IMPORTANT #1, a real permissive regression the corpus missed. The legacy write-target scan dropped
+  every token starting with "-"; the new one takes ParsedArgv positionals, which count a bare "-" as
+  one. So `cp evil.sh .git/hooks/post-checkout -` put "-" in the destination slot and the protected
+  path stopped being a write target — silence where 04b4a50 denied. Inside an unoverridable rule, in
+  the commit claiming behaviour preservation. The 150-form differential covered `tee -` and
+  `cp - dst` (both tightenings) but not a TRAILING "-". Fixed: both roles now share one definition of
+  "this token names a path"; two table cases pin it. Verified `curl -T -` still denies (that path
+  reads stdin through different logic).
+
+- IMPORTANT #2 was mine: d4e8dc7 added a byte-identical duplicate of the test directly above it.
+  Removed. Also corrected a comment in test_app.py that d4e8dc7 itself had made untrue.
+
+- Process findings from this review worth keeping:
+  * Step 2's "caller-by-caller, corpus green after each" is NOT evidenced — all eight replacements
+    AND the corpus deletion are one commit, and the deliberate behaviour change 48dede6 lands AFTER
+    the corpus was gone, so the corpus never scored it. The only evidence it "only tightens" is an
+    uncommitted differential a reviewer cannot re-run. Reviewer verified the tightening claim itself
+    by tracing _SHELL_NAMES to its only consumer; the claim holds, the evidence trail does not.
+  * THREE path answers remain, not two — exfil._cmd_paths survives as a third. The refusal is upheld
+    (merging would either allow `diff AGENTS.md` — finding F9 — or hard-deny fabricated $VAR paths),
+    but the report's summary says "two" while its own table lists three.
+  * "Adding a command is one row" is true for class membership, not for readonly-ness:
+    allowlist._is_readonly still hardcodes echo, bare `env`, and find-without-delete after consulting
+    the table, and `echo` has no row at all. Pre-existing, not a regression.
+
+- Deviations upheld: `rm` at write_target NONE (the sketch's EVERY_POSITIONAL would have made
+  `rm .env` an unoverridable hard deny); Role.WRITE and PathArguments.FLAG_VALUES unimplemented as
+  dead or behaviour-changing; shell/paths.py placed correctly rather than papering over the cycle.
