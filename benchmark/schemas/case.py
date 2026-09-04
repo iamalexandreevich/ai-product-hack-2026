@@ -2,7 +2,7 @@
 
 The benchmark boundary is ``human_req | assistant_tool_call``. Both map directly onto
 ``POST /v1/decide`` of the AgentGate service (see
-``docs/superpowers/specs/2026-09-03-agentgate-v1-design.md`` section 4.2):
+``docs/superpowers/service/specs/2026-09-03-agentgate-v1-design.md`` section 4.2):
 
     human_req                    -> user_request
     assistant_tool_call.tool     -> tool

@@ -12,7 +12,7 @@ human_req            ->  user_request      (последнее сообщени�
 assistant_tool_call  ->  tool + raw + args (действие, которое предлагает ассистент)
 ```
 
-Контракт запроса и ответа — `docs/superpowers/specs/2026-09-03-agentgate-v1-design.md` §4,
+Контракт запроса и ответа — `docs/superpowers/service/specs/2026-09-03-agentgate-v1-design.md` §4,
 схемы — `contracts/`. Бенчмарк не придумывает ни одного поля сверх контракта.
 
 ---

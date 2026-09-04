@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `benchmark/` is direction 3 of AgentGate. The **system under test is our own security service**
 (`POST /v1/decide` → `allow | deny | ask`), not a coding agent and not another harness. Do not add
-harness adapters here.
+harness adapters here — those live in `adapters/`.
 
 Every benchmark case is one pair at a fixed boundary:
 
@@ -15,41 +15,56 @@ human_req            -> user_request        (last user message)
 assistant_tool_call  -> tool + raw + args   (the action the assistant proposes)
 ```
 
-The request/response contract lives in `docs/superpowers/specs/2026-09-03-agentgate-v1-design.md`
-§4. That spec **supersedes** `docs/base.md` and `docs/artifacts/agent-gate-design.md` wherever they
-disagree. Generated JSON schemas live in `contracts/`, which may only change via a PR that names all
-three directions (service, adapters, benchmark).
+The request/response contract lives in `docs/superpowers/service/specs/2026-09-03-agentgate-v1-design.md`
+§4. That spec **supersedes** `docs/base.md` and `docs/artifacts/` wherever they disagree. Generated
+JSON schemas live in `contracts/`, which may only change via a PR that names all three directions
+(service, adapters, benchmark).
 
 ## Commands
 
+All commands run from `benchmark/`.
+
 ```bash
-uv sync                                                    # deps (pydantic, pyyaml, httpx, pytest)
+uv sync                                                    # deps (pydantic, pyyaml, httpx; dev: pytest, ruff)
 
-uv run pytest                                              # 121 unit tests, no network
+uv run pytest                                              # 122 unit tests, no network
 uv run pytest tests/test_scorer.py::test_error_always_scores_zero   # one test
-uv run pytest -m live                                      # optional, needs a live service
+uv run pytest -m live                                      # 2 more, needs a live service at SECURITY_SERVICE_URL
 
-uvx ruff check . && uvx ruff format --check .              # ruff is configured but not a dependency
+uv run ruff check . && uv run ruff format --check .
 
 uv run python cli.py validate --path attacks/cases         # dataset invariants, no network
+uv run python cli.py benchmark --path attacks/cases --dry-run       # show what would be sent
 uv run python cli.py benchmark --path attacks/cases        # full run
 uv run python cli.py benchmark --path attacks/cases --category data_exfiltration --difficulty hard
 uv run python cli.py run --case attacks/cases/data_exfiltration/EXFIL_003.yaml
 uv run python cli.py runs                                  # stored runs
-uv run python cli.py report --failures                     # rebuild a report from SQLite
-
-uv run python tools/mock_agentgate.py --port 8400          # contract-shaped stub; service/ is not built yet
+uv run python cli.py report --run-id <uuid> --failures     # rebuild a report from SQLite
 ```
 
-`SECURITY_SERVICE_URL` (or `AGENTGATE_URL`) selects the endpoint. A non-local host is refused with
-exit code 2 unless `--allow-remote` is passed — the dataset is 70 live attack payloads.
+Without `uv`: `.venv/Scripts/python.exe cli.py …` behaves identically.
 
-Without `uv`: `.venv/Scripts/python.exe cli.py ...` behaves identically.
+Pointing the benchmark at a service:
+
+```bash
+# real service (service/ is implemented; needs AGENTGATE_TOKEN and Postgres)
+cd ../service && docker compose up -d --build     # gate on :8400, db on :5433
+
+# contract-shaped stub, no service required
+uv run python tools/mock_agentgate.py --port 8400
+```
+
+`SECURITY_SERVICE_URL` (or `AGENTGATE_URL`) selects the endpoint, `SECURITY_SERVICE_TOKEN` (or
+`AGENTGATE_TOKEN`) the bearer. A non-local host is refused with exit code 2 unless `--allow-remote`
+is passed — the dataset is 70 live attack payloads.
+
+`tools/mock_agentgate.py` decides by a dozen crude substring rules. It is neither a model of the
+service nor a baseline: **never quote its numbers as results.**
 
 ## Architecture
 
 Top-level packages are flat and imported by bare name (`pythonpath = ["."]` in `pyproject.toml`), so
-imports read `from schemas.case import BenchmarkCase`, never `from benchmark.schemas...`.
+imports read `from schemas.case import BenchmarkCase`, never `from benchmark.schemas…`.
 
 One case flows through:
 
@@ -98,7 +113,7 @@ recorded separately in `contract_violation` rather than silently passing.
 
 - `session_mode` defaults to `per_case`: a fresh `session_id` per case keeps the service's allow
   cache and its escalation counters (three consecutive denies force an `ask`) from leaking across
-  cases. `shared` exists to exercise that escalation logic deliberately.
+  cases. `shared` exists to exercise that escalation logic deliberately; `none` omits `session_id`.
 - `execution_time_ms` is client-side wall clock and grows with `--concurrency`; the service's own
   `latency_ms` is stored alongside as `service_latency_*`, and the report prints the concurrency next
   to every latency figure. Latency claims need `--concurrency 1`.
@@ -110,7 +125,7 @@ recorded separately in `contract_violation` rather than silently passing.
 `attacks/taxonomy.md` defines 15 categories and, in §5, what is deliberately *not* representable at
 this boundary (multi-turn manipulation, provenance chains, session budgets). `attacks/cases/` holds
 exactly 5 cases per category, one per difficulty (`easy`, `medium`, `hard`, `adversarial`,
-`realistic_production`).
+`realistic_production`) — 75 files.
 
 `benign_utility` is a control group, not an attack category. Without it a service that always denies
 would score 100% everywhere else. Keep it, and keep its cases plausible-but-dangerous-looking.
@@ -134,9 +149,9 @@ Other conventions:
 ## Repo conventions
 
 - Each top-level directory (`service/`, `adapters/`, `contracts/`, `benchmark/`) has its own README,
-  dependencies and tests. Write only inside `benchmark/` unless the task says otherwise.
+  dependencies and tests. Write only inside `benchmark/` unless the task says otherwise, and commit
+  with explicit paths — never `git add -A` or `git commit -a`.
 - Code and comments in English; documentation and READMEs in Russian; API identifiers are never
   translated.
-- `service/` is not implemented yet, so end-to-end runs currently go through
-  `tools/mock_agentgate.py`. Its verdicts come from a dozen crude substring rules and say nothing
-  about AgentGate's quality — never quote its numbers as results.
+- The root `CLAUDE.md` carries the cross-cutting v1 rules (fail-closed, reasoning-blind stage 2,
+  allow-only cache) and the report/commit conventions; `service/CLAUDE.md` governs `service/`.

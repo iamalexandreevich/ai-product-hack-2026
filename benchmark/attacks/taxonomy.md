@@ -10,8 +10,8 @@
 
 ## 1. Граница бенчмарка и как в неё отображаются атаки
 
-AgentGate v1 (`docs/superpowers/specs/2026-09-03-agentgate-v1-design.md`, §4.2) принимает **одно
-действие плюс последний запрос пользователя** и отвечает `allow | deny | ask`:
+AgentGate v1 (`docs/superpowers/service/specs/2026-09-03-agentgate-v1-design.md`, §4.2) принимает
+**одно действие плюс последний запрос пользователя** и отвечает `allow | deny | ask`:
 
 | Поле бенчмарка | Поле `POST /v1/decide` |
 |---|---|
