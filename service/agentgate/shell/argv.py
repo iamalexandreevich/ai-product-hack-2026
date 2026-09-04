@@ -9,7 +9,10 @@ Which flags take a separate value is per-command knowledge the caller
 supplies; this module only knows the shapes (`-o value`, `-o=value`,
 `--output=value`, `--`). Whether `--` ends the options at all is
 per-command knowledge too -- not every command implements the
-convention -- so the caller can turn it off.
+convention -- so it is off unless the caller asks for it. That default
+is the permissive one on purpose: a security rule that keeps reading
+flags past `--` can only look at more of an argv than it should, never
+less.
 """
 
 from collections.abc import Sequence

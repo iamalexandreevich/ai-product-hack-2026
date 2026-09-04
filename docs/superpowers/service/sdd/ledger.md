@@ -147,3 +147,39 @@ Open question for later: how to version server code from a monorepo carrying thr
      caller — exfil must pre-scan argv twice to build the set, then reassemble tokens the parser
      split at "=". Five private helpers now feed and un-feed one parser. Worth knowing before task 7
      puts more rules through the same door.
+
+- Task 5 review: APPROVED, 0 critical / 0 important. Reviewer re-derived the RED evidence from base
+  logic rather than trusting the report, ran the pydantic model directly to confirm the cached hash
+  neither leaks into model_dump nor changes value from before the refactor (so decisions recorded
+  earlier stay comparable), and upheld all three brief deviations on facts it checked itself —
+  including that the brief's prompt mapping rested on a false premise (prompt.py never called
+  resolved_protected_paths) and would have put the host's real home directory into an outbound LLM
+  request.
+  UNCLAIMED WIN the reviewer found: the allow-cache key never included the workspace, so under the
+  old code an allow cached at cwd=/home/u/repo could be replayed after `cd /`. Binding the workspace
+  to the session removed that replay as a side effect.
+  Residual sessionless hole: left, not worsened, and could not have been closed inside the brief —
+  closing it means rejecting sessionless requests, which is a contract change and the owner's call.
+  New cost note the reviewer added, worth recording because global-constraints.md only states the
+  other direction: an honest harness whose FIRST call reports a broad cwd now pins allowed_paths
+  broad for the session's whole life, where the old code recovered on the next request. Not a
+  threat-model regression (an agent controlling session_id can mint a fresh session either way).
+
+- DONE now: argv.py module docstring said the caller "can turn it off" about a default I had already
+  flipped — my own commit's defect, one sentence, corrected.
+
+- QUEUED after task 6 (all Minor, none blocking):
+  1. Policy.id has no caller anywhere — brief-mandated dead surface, remove (guide 1.2).
+  2. stage2/prompt.py:52 reaches through as policy.profile.protected_paths because
+     Policy.protected_paths means the RESOLVED list. Correct value, but it makes the new CLAUDE.md
+     sentence "правила и промпт видят только Policy" untrue at exactly one line. Add a
+     declared_protected_paths delegate.
+  3. tests/profiles/test_schema.py:48 does not test what its name and the report claim:
+     p.profile_hash() == p.profile_hash() passes with no caching at all. Assert "_hash" in p.__dict__.
+  4. Profile is still a mutable pydantic model while its hash is computed once; the no-mutation
+     invariant is documented but unenforced. ConfigDict(frozen=True) would enforce it — cached_property
+     writes straight to __dict__ and is unaffected.
+  5. Policy.bind(profile, "") would make workspace == "." and quietly change the equals_workspace
+     comparison inside a hard-deny rule. Guard non-empty in bind.
+  6. tests/test_stage2_run.py still imports P from tests/test_stage2_prompt.py — the same
+     test-to-test import that justified deviation 3. Pre-existing; move it to factories.
