@@ -2,13 +2,14 @@
 
 Status: Intermediate / Work in Progress
 
-> Дата анализа: 2026-09-04, ветка `main`, HEAD `547220f`, рабочее дерево чистое (не отслеживаются только `.idea/`, `benchmark/.idea/`, `docs/project-context/`).
+> Дата анализа: 2026-09-04, ветка `main`. Первичный анализ выполнен на HEAD `547220f`; после него в дерево восстановлены файлы бенчмарка из ветки `feat/agentgate-benchmark` (коммит `82764b4`) — 106 файлов добавлено, `benchmark/README.md` возвращён к полной версии. Разделы про бенчмарк ниже отражают состояние **после** восстановления.
 >
-> Целевая архитектура: `docs/project-context/04_architecture/architecture_description.md` (§3, §4) и `target_architecture.jpg`. Здесь описано **фактическое** состояние кода, сверенное с целевой архитектурой. Наличие файла, класса или конфигурационного поля само по себе не считалось доказательством готовности: каждый вывод проверялся чтением кода, а часть — исполнением (прогон тестов, попытка импорта модулей бенчмарка).
+> Целевая архитектура: `docs/project-context/04_architecture/architecture_description.md` (§3, §4) и `target_architecture.jpg`. Здесь описано **фактическое** состояние кода, сверенное с целевой архитектурой. Наличие файла, класса или конфигурационного поля само по себе не считалось доказательством готовности: каждый вывод проверялся чтением кода, а часть — исполнением.
 >
 > Проверка исполнением, на которую опираются выводы ниже:
 > - `cd service && uv run pytest -q` → **509 тестов собрано, 425 passed, 41 failed, 43 skipped** на Windows-хосте. Все 41 падения — расхождение разделителя пути (`os.path.normpath('/home/u/repo')` → `\home\u\repo`); подробности в разделе Known limitations.
-> - `cd benchmark && python -c "import reporting.report"` → `ModuleNotFoundError: No module named 'schemas'`.
+> - `cd benchmark && uv sync && uv run pytest` → **122 passed, 2 deselected** (deselected — два `live`-теста, требующие поднятого сервиса).
+> - `cd benchmark && uv run python cli.py validate --path attacks/cases` → **75 кейсов, 15 категорий, errors: 0, warnings: 0**, код возврата 0.
 
 ---
 
@@ -58,14 +59,20 @@ Status: Intermediate / Work in Progress
 
 ### Benchmark
 
-Реализовано на стороне **сервиса**, а не в `benchmark/`, — но реализовано и работает:
+**Каталог `benchmark/` — полный конвейер, проверен исполнением.** 112 отслеживаемых файлов, 30 Python-модулей, 75 YAML-кейсов. Поток одного кейса: `cli.py` → `dataset/` (загрузка + валидация) → `runner/executor.py` → `client/security_service.py` → `evaluator/scorer.py` → `runner/recorder.py` → `storage/sqlite.py` + `reporting/report.py`. Границы разведены: `client/` — единственное место, знающее HTTP-контракт; `evaluator/` — единственное, решающее pass/fail; `reporting/` ничего не до-выводит сверх схемы результата. Импорты по голому имени работают за счёт `pythonpath = ["."]` в `benchmark/pyproject.toml`.
 
-- поле `model` в `DecideRequest` выбирает конфигурацию модели ступени 2 на запрос (`profiles/schema.py: ModelsConfig.model_config_for`), что и есть механика внутреннего бенчмарка «сравнить модели на одном наборе кейсов»;
-- `metadata` запроса сохраняется как есть в JSONB с GIN-индексом (`store/models.py`), поэтому `run_id` прогона переживает запись и доступен для выборки;
-- `GET /v1/decisions` фильтрует по `session_id` и `model`, пагинируется курсором `before`;
-- ответ несёт `latency_ms.stage1 / stage2 / total`, `stage`, `rule_id`, `cached` — метрики, по которым бенчмарк считает latency и распределение по ступеням.
+- **Датасет.** `benchmark/attacks/cases/` — 15 категорий по 5 кейсов, по одному на каждую из difficulty `easy | medium | hard | adversarial | realistic_production`; `benign_utility` — контрольная группа, без неё сервис, всегда отвечающий `deny`, показал бы 100 % везде. Таксономия — `benchmark/attacks/taxonomy.md`. Проверено: `cli.py validate` → 75 кейсов, errors 0, warnings 0.
+- **Валидация датасета.** `dataset/validator.py` — ровно пять кейсов на категорию, все пять difficulty присутствуют и уникальны, глобально уникальные id, имя файла = id, имя каталога = `attack_category`, нет двух кейсов с одинаковой парой `human_req` + `raw`. Запускается автоматически перед каждым прогоном и обрывает его при ошибке.
+- **Скоринг.** `evaluator/scorer.py` — детерминированный, без LLM-судьи: `score = 1`, если вернувшееся решение входит в `acceptable_service_results`; `--strict` сужает до `expected_service_result`. Транспортная ошибка, таймаут или отсутствие решения всегда дают 0 и отдельно записываются в `contract_violation`, потому что спека требует HTTP 200 с решением даже при внутреннем сбое.
+- **Клиент.** `client/security_service.py` — единственное место, знающее контракт `/v1/decide`. Инвариант «никогда не выдумывать данные сервиса»: стоимость считается только по явной таблице цен (`pricing.example.yaml`) и при неразрешимых путях токенов остаётся `None` с указанием причины; `components_activated` выводится из `stage`/`rule_id`/`cached` и помечается `components_source: derived`; `provider`/`model_version` резолвятся через `GET /v1/profiles/{id}` и помечаются `profile_lookup`.
+- **Исполнение и хранение.** `runner/executor.py` (конкурентность, `session_mode: per_case` по умолчанию — свежий `session_id` на кейс, чтобы allow-кэш и счётчики эскалации сервиса не протекали между кейсами; `shared` существует, чтобы эскалацию проверять намеренно), `runner/recorder.py`, `storage/sqlite.py` — результаты стримятся в SQLite и JSONL по мере готовности, одиночный сбой не обрывает прогон.
+- **Отчёты.** `reporting/report.py` — JSON-сводка, JSONL результатов, текстовый отчёт и дамп упавших кейсов. Считает attack pass-through rate, FP/friction по контрольной группе, разбивку по категориям и difficulty, латентность клиентскую и сервисную отдельно (с указанием конкурентности рядом с каждой цифрой), распределение по стадиям и `rule_id`.
+- **Заглушка сервиса.** `benchmark/tools/mock_agentgate.py` — контрактно-совместимый стенд для прогона конвейера без живого сервиса.
+- **Тесты.** 122 проходят офлайн; два `live`-теста (`tests/test_live_service.py`) по умолчанию deselected и требуют поднятого сервиса.
 
-Внутри самого каталога `benchmark/` работоспособного кода нет — см. Partially implemented и In progress.
+**Поддержка со стороны сервиса** — тоже на месте: поле `model` в `DecideRequest` выбирает конфигурацию модели ступени 2 на запрос (`profiles/schema.py: ModelsConfig.model_config_for`), что и есть механика внутреннего бенчмарка; `metadata` запроса сохраняется как есть в JSONB с GIN-индексом (`store/models.py`), поэтому `run_id` прогона переживает запись; `GET /v1/decisions` фильтрует по `session_id` и `model` с курсорной пагинацией; ответ несёт `latency_ms.stage1 / stage2 / total`, `stage`, `rule_id`, `cached`.
+
+Чего у бенчмарка нет — не кода, а **результатов**: сохранённых прогонов против живого сервиса в репозитории не найдено, см. Known limitations.
 
 ### Infrastructure / deployment
 
@@ -85,7 +92,7 @@ Status: Intermediate / Work in Progress
 
 **Поведение при недоступности сервиса.** `adapters/README.md` описывает настройку `on_unavailable: ask | deny`. В `hook_client.py` такой настройки нет: недоступность всегда даёт `ask`/3. Опция описана, но не реализована.
 
-**Benchmark.** В рабочем дереве отслеживаются шесть файлов: `README.md`, `CLAUDE.md`, `config.py`, `client/security_service.py`, `reporting/report.py`, `tests/test_reporting.py`. Три Python-модуля из четырёх импортируют пакеты, которых в дереве нет (`schemas.case`, `schemas.result`), поэтому **пакет не импортируется и запустить его нельзя**. Отсутствуют: `cli.py`, `schemas/`, `dataset/`, `evaluator/`, `runner/`, `storage/`, `tools/mock_agentgate.py`, `attacks/taxonomy.md`, все 75 YAML-кейсов `attacks/cases/`, `pyproject.toml`, `uv.lock`, `tests/conftest.py` и восемь из девяти тестовых модулей. Evidence: `git ls-files benchmark/`; `python -c "import reporting.report"` → `ModuleNotFoundError: No module named 'schemas'`.
+**Benchmark: код есть, измерений нет.** Конвейер полный и проходит собственные тесты, но **ни одного сохранённого прогона против живого сервиса в репозитории нет** — ни `summary-*.json`, ни `results-*.jsonl`, ни SQLite с результатами, ни в рабочем дереве, ни во всей истории git (проверено `find` по дереву и `git log --all --diff-filter=A --name-only`; единственные найденные `.sqlite3` — временные файлы pytest в gitignore-нутом `.pytest-tmp/`). Поэтому цифр ASR / Utility / FP / Friction / Latency у проекта на данный момент не существует: есть инструмент, которым их можно получить, и нет самих измерений. Внешний бенчмарк (AgentGate против Claude Code Auto Mode, Codex Auto-review, статических правил), заявленный в `benchmark/README.md`, кодом не покрыт вовсе — реализован только режим «сервис под тестом».
 
 **Состояние сессии в проде — только в памяти процесса.** `__main__.build_app` собирает `InMemorySessionStateStore` и один раз при старте подгружает в него сессии и валидные записи allow-кэша из Postgres. Дальше горячий путь читает и пишет только память; в Postgres состояние уходит фоновой задачей после ответа. Персистентность есть, но общего между процессами состояния нет — при нескольких воркерах uvicorn или нескольких инстансах счётчики эскалации и allow-кэш расходятся.
 
@@ -103,11 +110,11 @@ Status: Intermediate / Work in Progress
 
 ## In progress
 
-**Реинтеграция бенчмарка после отката.** Полный код бенчмарка (111 файлов, 8771 строка) был добавлен коммитом `4ec0f71`, затем целиком откачен коммитом `8e2cb5f` («Revert "--added codebase of the benchmark"»), после чего слияние `547220f` вернуло в дерево только шесть файлов. Работа явно не завершена: оставшиеся модули ссылаются на удалённые, `__init__.py` в пакетах `client/`, `reporting/`, `tests/` отсутствуют, `pyproject.toml` бенчмарка (в котором задавался `pythonpath = ["."]`, необходимый для импортов по голому имени) удалён вместе с остальным.
+**Первый прогон бенчмарка против живого сервиса.** Обе половины готовы и ни разу не сведены: сервис поднимается одной командой, конвейер бенчмарка исполняется и проходит 122 собственных теста, но измерений нет (см. Partially implemented). Это ближайший незакрытый шаг, а не отсутствующая функциональность.
 
-**Документация бенчмарка разошлась с кодом.** `benchmark/CLAUDE.md` описывает команды `uv run pytest` («121 unit tests»), `uv run python cli.py validate|benchmark|run|runs|report` и `uv run python tools/mock_agentgate.py` — ни одного из этих файлов в дереве нет. Там же написано «`service/` is not implemented yet, so end-to-end runs currently go through [мок]», что противоречит фактическому состоянию сервиса. Документ описывает состояние до отката.
+**Документация бенчмарка отстала от кода.** `benchmark/CLAUDE.md` утверждает «`service/` is not implemented yet, so end-to-end runs currently go through `tools/mock_agentgate.py`» — сервис давно реализован, и прогон против него возможен напрямую. Там же заявлено «121 unit tests», фактически проходит 122. Команды и структура каталогов в этом документе после восстановления файлов снова соответствуют дереву.
 
-**Набор документов `docs/project-context/`.** Каталог не отслеживается git (`git status` → `?? docs/project-context/`), содержит кейс хакатона, два исследования конкурентов, сводку, продуктовые заметки и целевую архитектуру. Это активно наполняемый слой контекста проекта, а не зафиксированное состояние.
+**История бенчмарка в git осталась запутанной.** Код был добавлен коммитом `4ec0f71` (111 файлов), целиком откачен `8e2cb5f` («Revert "--added codebase of the benchmark"»), после чего слияние `547220f` протянуло в `main` только шесть файлов — git считал реверт уже применённым и не вернул остальные. Восстановлено явным `git checkout feat/agentgate-benchmark -- benchmark/`. Ветки `feat/agentgate-benchmark`, `fix/missing-files` и `origin/feat/agentgate-benchmark` указывают на один и тот же коммит `82764b4` и после восстановления содержательно не отличаются от `main` в части `benchmark/` — их дальнейшая судьба (слить, удалить, оставить) не решена.
 
 ---
 
@@ -172,7 +179,7 @@ Status: Intermediate / Work in Progress
 12. **Поле профиля `rules` игнорируется.** Молчаливо: ни ошибки загрузки, ни предупреждения.
 13. **`/healthz` не проверяет LLM** — поле `llm` всегда `null`.
 14. **CI в репозитории нет.** Ни `.github/`, ни иных конфигураций пайплайна; тесты и деплой запускаются человеком вручную.
-15. **Бенчмарк не запускается.** См. Partially implemented: измеренных цифр ASR / Utility / FP / Friction / Latency в репозитории нет, воспроизвести их сейчас нечем.
+15. **Измерений бенчмарка нет.** Конвейер работает, но ни одного сохранённого прогона против живого сервиса в репозитории и в истории git не найдено — цифр ASR / Utility / FP / Friction / Latency у проекта на данный момент не существует. Внешний режим сравнения (против Claude Code Auto Mode, Codex Auto-review, статических правил) заявлен в `benchmark/README.md`, но кодом не покрыт: `cli.py` умеет `validate | run | benchmark | report | runs`, все — против нашего сервиса.
 16. **Целевой сервер и факт развёртывания по репозиторию не проверяемы.** `Makefile` резолвит хост через alias `~/.ssh/config` оператора, никаких адресов в репозитории нет — `Status unclear from repository`.
 
 ---
@@ -203,7 +210,9 @@ Status: Intermediate / Work in Progress
 
 **Интеграция с харнессом — только в виде эталонного клиента.** Показывать следует именно так: JSON хука Claude Code на stdin `contracts/hook_client.py`, решение и код выхода на stdout. Демонстрация «AgentGate внутри работающего Claude Code / OpenCode» **не готова**: адаптера, который регистрирует хук в харнессе, в репозитории нет.
 
-**Что показывать нельзя.** Цифры бенчмарка (пакет не импортируется), Context Guard и защиту от prompt injection в контексте (не реализованы), ветку SAFE RECOVERY и диалог подтверждения на стороне харнесса (кода нет), работу в многоворкерном/многоинстансном режиме (состояние сессии не общее).
+**Бенчмарк как инструмент.** `cd benchmark && uv run python cli.py validate --path attacks/cases` печатает 75 кейсов по 15 категориям с нулём ошибок — наглядно показывает объём и структуру датасета. `uv run pytest` → 122 passed. Прогон против поднятого сервиса (`uv run python cli.py benchmark --path attacks/cases`) технически возможен, но его результат на демонстрации будет получен впервые — заранее проверенных цифр нет, и выдавать живой прогон за измеренный результат не следует.
+
+**Что показывать нельзя.** Цифры бенчмарка как готовый результат (измерений в репозитории нет), внешнее сравнение с Claude Code Auto Mode / Codex (режим не реализован), Context Guard и защиту от prompt injection в контексте (не реализованы), ветку SAFE RECOVERY и диалог подтверждения на стороне харнесса (кода нет), работу в многоворкерном/многоинстансном режиме (состояние сессии не общее).
 
 ---
 
@@ -232,10 +241,13 @@ Status: Intermediate / Work in Progress
 - `service/scripts/export_contracts.py`, `service/scripts/export_openapi.py`, `service/tests/test_contracts.py`.
 
 **Benchmark**
-- `git ls-files benchmark/` — шесть файлов.
-- `benchmark/reporting/report.py:11` — `from schemas.result import …` (пакета нет); `benchmark/client/security_service.py:22-24` — `from config import …`, `from schemas.case import …`.
-- История: `git show --stat 4ec0f71` (111 файлов добавлено), `git log --oneline` → `8e2cb5f Revert "--added codebase of the benchmark"`, слияние `547220f`.
-- `benchmark/CLAUDE.md` — раздел «Commands» перечисляет `cli.py`, `tools/mock_agentgate.py`, «121 unit tests»; там же утверждение «`service/` is not implemented yet».
+- `git ls-files benchmark/` — 112 файлов после восстановления.
+- Конвейер: `benchmark/cli.py` (`validate`, `run`, `benchmark`, `report`, `runs`), `dataset/loader.py`, `dataset/validator.py`, `runner/executor.py`, `runner/recorder.py`, `client/security_service.py` (`extract_usage_and_cost`, `derive_components`), `evaluator/scorer.py`, `storage/sqlite.py`, `reporting/report.py` (`build_summary`, `render_text`, `render_failures`, `write_reports`), `schemas/case.py`, `schemas/result.py`, `tools/mock_agentgate.py`.
+- Датасет: `benchmark/attacks/taxonomy.md`, `benchmark/attacks/cases/` — 15 каталогов по 5 YAML; `benchmark/pyproject.toml` (`pythonpath = ["."]`, маркер `live`).
+- Отсутствие измерений: `find` по дереву и `git log --all --diff-filter=A --name-only` по `summary-*.json`, `results-*.jsonl`, `*.sqlite3` — ни одного результата прогона; найденные `.sqlite3` лежат в gitignore-нутом `.pytest-tmp/`.
+- Отсутствие внешнего режима: поиск `baseline|auto.?mode|codex|competitor|external` по `benchmark/**/*.py` даёт только текст кейсов в `tests/conftest.py`.
+- История и восстановление: `git show --stat 4ec0f71` (111 файлов добавлено), `8e2cb5f Revert "--added codebase of the benchmark"`, слияние `547220f` (протянуло 5 файлов), восстановление `git checkout feat/agentgate-benchmark -- benchmark/` (106 добавлено, `README.md` изменён с 8 строк до 278).
+- `benchmark/CLAUDE.md` — устаревшее утверждение «`service/` is not implemented yet» и «121 unit tests» при фактических 122.
 - Поддержка бенчмарка на стороне сервиса: поле `model` в `DecideRequest`; `ModelsConfig.model_config_for`; индекс `ix_decisions_metadata` (GIN) в `store/models.py`; фильтры `session_id` / `model` в `DecisionRepo.list`.
 
 **Инфраструктура**
@@ -250,4 +262,5 @@ Status: Intermediate / Work in Progress
 **Прогоны, выполненные при подготовке документа**
 - `cd service && uv run pytest -q` → `41 failed, 425 passed, 43 skipped` (Windows; 43 skip — из-за незаданного `AGENTGATE_TEST_DB_URL`).
 - `cd service && uv run pytest tests/test_normalize_paths.py::test_resolve_relative_and_home -q` → `assert '\\home\\u\\repo\\dist' == '/home/u/repo/dist'` — подтверждение природы падений.
-- `cd benchmark && python -c "import reporting.report"` → `ModuleNotFoundError: No module named 'schemas'`.
+- До восстановления: `cd benchmark && python -c "import reporting.report"` → `ModuleNotFoundError: No module named 'schemas'`.
+- После восстановления: `cd benchmark && uv sync && uv run pytest` → `122 passed, 2 deselected`; `uv run python cli.py validate --path attacks/cases` → 75 кейсов, 15 категорий, `errors: 0   warnings: 0`; `uv run python cli.py --help` → подкоманды `validate, run, benchmark, report, runs`.
