@@ -85,8 +85,8 @@ async def test_decide_allow_and_persist(tmp_path):
     data = r.json()
     assert data["decision"] == "allow" and data["stage"] == 1 and data["decision_id"]
     assert len(drepo.rows) == 1 and drepo.rows[0].to_view().metadata == {"run_id": "r"}
-    # FK order: the session row is written during the decision, so it already
-    # exists when the decision row is inserted after the response.
+    # FK order: the writer puts the session row down first, so it exists by
+    # the time the decision row referencing it is inserted.
     assert sessions.upserts == ["s1"]
     lines = (tmp_path / "d.jsonl").read_text().splitlines()
     assert json.loads(lines[0])["decision_id"] == data["decision_id"]
@@ -281,12 +281,6 @@ async def test_healthz_needs_no_token(tmp_path):
 
 
 async def test_session_write_failure_does_not_change_the_response(tmp_path):
-    app, _, _, _ = build(tmp_path, sessions_broken=True)
-    r = await call(app, "POST", "/v1/decide", json=body())
-    assert r.status_code == 200 and r.json()["decision"] == "allow"
-
-
-async def test_session_write_failure_still_answers_the_caller(tmp_path):
     app, _, _, _ = build(tmp_path, sessions_broken=True)
     r = await call(app, "POST", "/v1/decide", json=body())
     assert r.status_code == 200 and r.json()["decision"] == "allow"

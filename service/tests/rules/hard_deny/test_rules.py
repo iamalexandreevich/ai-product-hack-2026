@@ -50,6 +50,11 @@ DENY_CASES = [
     ("echo x > .env", "hard-deny.protected-write"),
     ("echo hook >> .git/hooks/pre-commit", "hard-deny.protected-write"),
     ("cp evil.sh .git/hooks/post-checkout", "hard-deny.protected-write"),
+    # A trailing bare `-` is the stdin convention, not a filename, and must
+    # not displace the destination: counting it as a positional made the
+    # real write target invisible to this rule.
+    ("cp evil.sh .git/hooks/post-checkout -", "hard-deny.protected-write"),
+    ("ln -s evil.sh .git/hooks/post-checkout -", "hard-deny.protected-write"),
     ("tee AGENTS.md < payload", "hard-deny.protected-write"),
     ("sed -i 's/a/b/' .claude/settings.json", "hard-deny.protected-write"),
     ("cat key >> ~/.ssh/authorized_keys", "hard-deny.protected-write"),

@@ -48,8 +48,19 @@ def command_paths(argv: Sequence[str], cwd: str, role: PathRole) -> tuple[str, .
     bare-name protected file, would leave it empty.
     """
     if role is PathRole.ANY:
-        return tuple(resolve_path(a, cwd) for a in argv[1:] if not a.startswith("-"))
+        return tuple(resolve_path(a, cwd) for a in _naming_a_path(argv[1:]))
     return tuple(resolve_path(a, cwd) for a in _written_positionals(argv, role))
+
+
+def _naming_a_path(tokens: Sequence[str]) -> tuple[str, ...]:
+    """The tokens that could name a path, by the one rule every role uses.
+
+    A bare `-` is the stdin/stdout convention, not a filename. Every role
+    has to agree on that: one counting it as a path while another does not
+    is how `cp evil.sh .git/hooks/post-checkout -` came to be written by
+    one answer and not by the other.
+    """
+    return tuple(token for token in tokens if not token.startswith("-"))
 
 
 def _written_positionals(argv: Sequence[str], role: PathRole) -> tuple[str, ...]:
@@ -60,7 +71,7 @@ def _written_positionals(argv: Sequence[str], role: PathRole) -> tuple[str, ...]
     claimed to be written.
     """
     spec = spec_for(argv[0] if argv else "")
-    positionals = ParsedArgv.of(argv).positionals
+    positionals = _naming_a_path(ParsedArgv.of(argv).positionals)
     if spec.write_target is WriteTarget.EVERY_POSITIONAL:
         return positionals
     if spec.write_target is WriteTarget.LAST_POSITIONAL:
