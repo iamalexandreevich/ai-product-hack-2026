@@ -29,11 +29,15 @@
 
 ## Карта модулей (v1.5)
 
-Зависимости идут сверху вниз: `domain/` и `shell/` не знают ни о ком, `engine/` знает только протоколы, `bootstrap.py` знает всех.
+Таблица ниже — где что лежит, а не утверждение о зависимостях. Три известных исключения из «сверху вниз», которые стоит знать до того, как о них споткнёшься:
+
+- `domain/` **не** дно стека: `DecisionKind` живёт в `api/schemas.py`, поэтому `domain/`, `rules/`, `engine/`, `session/` и `store/` транзитивно тянут pydantic-модуль HTTP-схем.
+- `shell/` и `normalize/` ссылаются друг на друга: `shell/secrets.py` и `shell/paths.py` импортируют `normalize/paths.py`, а тот импортирует `shell/secrets` **внутри функции**, чтобы цикл не замкнулся на импорте. Обходной путь описан в docstring обоих модулей. Два `paths.py` в двух пакетах с трафиком в обе стороны — незакрытый долг, а не замысел.
+- `engine/` знает только протоколы, `bootstrap.py` знает всех — вот это верно.
 
 | Пакет | Что там лежит |
 |---|---|
-| `domain/` | Чистые типы без I/O. `verdict.py` — `Verdict`, единственный тип исхода. `policy.py` — `Profile` (конфигурация оператора) и `Policy` (профиль, привязанный к одному workspace, пути разрешены один раз). `session.py` — `SessionState`, протоколы `SessionStateStore` и `RestorableSessionStateStore`. |
+| `domain/` | Чистые типы без I/O. `verdict.py` — `Verdict`, единственный тип исхода. `policy.py` — `Policy` (профиль, привязанный к одному workspace, пути разрешены один раз); сам `Profile` живёт в `profiles/schema.py`. `session.py` — `SessionState`, протоколы `SessionStateStore` и `RestorableSessionStateStore`. |
 | `shell/` | Синтаксис и семантика shell без политики. `commands.py` — `CommandSpec` и таблица `COMMANDS` (единственный источник знания «что это за команда»), `argv.py` — `ParsedArgv`, `wrappers.py` — `sudo`/`env`/`xargs` и разрешение эффективного argv, `paths.py` — `command_paths(argv, cwd, role)`, `secrets.py` — один список шаблонов секретных файлов. |
 | `normalize/` | `DecideRequest` → `NormalizedAction` (`model.py`, `shell.py`, `paths.py`, `domains.py`). Решение по сырой строке запрещено везде — только по `NormalizedAction`. |
 | `rules/` | Ступень 1. `base.py` — `Rule` (Protocol) и `RuleChain`. `chain.py` — `STAGE1`, порядок правил и есть вся приоритетная политика ступени. По модулю на правило: `unparseable.py`, `hard_deny/` (шесть правил + `wrapper_unresolved.py` + общий `shared.py`), `profile_paths.py`, `profile_domains.py`, `allowlist.py`, `packages.py` (слот slopsquatting, в v1 всегда молчит). |
@@ -51,7 +55,7 @@
 
 Рабочие примеры с кодом — раздел «Как добавить» в `service/README.md`. Коротко:
 
-- **Правило ступени 1** — новый класс (`id`, `hard`, `evaluate(action, policy) -> Verdict | None`) в `agentgate/rules/`, строка в `STAGE1` (`agentgate/rules/chain.py`). `Gate` не меняется. Hard-deny — в `agentgate/rules/hard_deny/` и в `HARD_DENY_RULES`.
+- **Правило ступени 1** — новый класс (`id`, `hard`, `evaluate(action, policy) -> Verdict | None`) в `agentgate/rules/`, строка в `STAGE1` (`agentgate/rules/chain.py`). `Gate` не меняется. Hard-deny — в `agentgate/rules/hard_deny/` и в `HARD_DENY_RULES`; дописывать в конец списка безопасно, там все правила жёсткие (`WrapperUnresolvedRule`, отвечающее `ask`, вынесено в цепочку именно поэтому).
 - **Модель ступени 2** — если провайдер OpenAI-совместимый, это запись в `models.configs` профиля и ни строки кода. Иначе класс с протоколом `Classifier` и строка в `bootstrap.build_service`.
 - **Хранилище сессий** — класс с протоколом `SessionStateStore` (плюс `preload`, если его надо восстанавливать при старте) и строка в `bootstrap.build_service`.
 - **Приёмник решений** — класс с протоколом `DecisionWriter` и элемент списка в `CompositeDecisionWriter`.

@@ -22,6 +22,7 @@ from agentgate.domain.verdict import Verdict
 from agentgate.normalize.model import NormalizedAction
 from agentgate.normalize.paths import is_within, resolve_path
 from agentgate.rules.hard_deny.shared import effective_argv
+from agentgate.shell.paths import PathRole, command_paths
 
 # find predicates that narrow -delete to a specific set of PATHS, as
 # opposed to "every entry under the search root". -type/-size/-mtime/-newer
@@ -86,9 +87,9 @@ def _deletion(argv: list[str], cwd: str) -> _Deletion | None:
         return None
     exe = argv[0]
     if exe == "rm" and any(a.startswith("-") and ("r" in a or "R" in a) for a in argv[1:]):
-        return _Deletion(_positional_paths(argv, cwd), True)
+        return _Deletion(command_paths(argv, cwd, PathRole.ANY), True)
     if exe == "shred":
-        return _Deletion(_positional_paths(argv, cwd), True)
+        return _Deletion(command_paths(argv, cwd, PathRole.ANY), True)
     if exe == "find" and "-delete" in argv:
         rest = argv[1:]
         # find's search root, if given, is the first positional (paths
@@ -98,10 +99,6 @@ def _deletion(argv: list[str], cwd: str) -> _Deletion | None:
         root = resolve_path(root_token, cwd) if root_token is not None else os.path.normpath(cwd)
         return _Deletion((root,), not _has_narrowing_predicate(rest))
     return None
-
-
-def _positional_paths(argv: list[str], cwd: str) -> tuple[str, ...]:
-    return tuple(resolve_path(a, cwd) for a in argv[1:] if not a.startswith("-"))
 
 
 def _has_narrowing_predicate(rest: list[str]) -> bool:

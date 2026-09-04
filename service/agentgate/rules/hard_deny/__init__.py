@@ -1,5 +1,10 @@
 """The rules that can never be overridden.
 
+Every member produces a final deny, so appending one is always safe. The
+ask-producing WrapperUnresolvedRule deliberately lives outside this list,
+in the chain: inside it, anything appended after it would be pre-empted by
+an ask on any action carrying an unresolvable wrapper chain.
+
 A hard deny is final: escalation does not replace it and no later stage
 turns it into anything else. Because of that asymmetry each rule stays
 deliberately narrow -- it must fire on the input its name promises and
@@ -28,7 +33,6 @@ HARD_DENY_RULES = [
     ProtectedWriteRule(),
     PrivilegeRule(),
     GitForceRule(),
-    WrapperUnresolvedRule(),
 ]
 
 __all__ = [

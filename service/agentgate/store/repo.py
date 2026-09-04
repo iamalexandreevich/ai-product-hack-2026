@@ -23,9 +23,11 @@ class DecisionRepo:
 
     Ordering requirement: a decision's session id, when not ``None``, is a
     foreign key to ``sessions.id``. The referenced session must already
-    exist — the session state store writes it during the decision, before
-    the decision itself reaches this repository, or `insert` raises
-    ``sqlalchemy.exc.IntegrityError``.
+    exist, and the caller that guarantees it is
+    ``agentgate.store.writer.PostgresDecisionWriter``: it upserts the
+    session row, then inserts the decision, then writes the allow-cache
+    row, all after the response has been sent. Called out of that order,
+    `insert` raises ``sqlalchemy.exc.IntegrityError``.
     """
 
     def __init__(self, session_factory: async_sessionmaker) -> None:

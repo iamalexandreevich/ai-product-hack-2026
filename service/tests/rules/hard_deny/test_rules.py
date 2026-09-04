@@ -6,13 +6,17 @@ from agentgate.api.schemas import DecisionKind, DecideRequest
 from agentgate.normalize import normalize
 from agentgate.rules.base import RuleChain
 from agentgate.rules.hard_deny import HARD_DENY_RULES, ExfilRule
+from agentgate.rules.hard_deny.wrapper_unresolved import WrapperUnresolvedRule
 from tests.factories import WORKSPACE, hard_deny_policy, shell_action
 
 WS = WORKSPACE
 HOME = os.path.expanduser("~")  # patterns like ~/.aws/** expand to the real home of the test runner
 POLICY = hard_deny_policy()
 
-HARD_DENY = RuleChain(HARD_DENY_RULES)
+# The same shape STAGE1 builds: the hard rules, then the ask-producing
+# wrapper rule that only speaks when none of them could evaluate the
+# command at all.
+HARD_DENY = RuleChain([*HARD_DENY_RULES, WrapperUnresolvedRule()])
 
 
 def check_hard_deny(action, policy):
@@ -316,7 +320,9 @@ def test_has_unresolved_expansion_on_benign_text_returns_none():
 
 
 def test_every_hard_deny_rule_declares_itself_hard():
-    assert all(rule.hard for rule in HARD_DENY_RULES if rule.id.startswith("hard-deny."))
+    # Every member is hard, with no predicate narrowing what is checked:
+    # that is what makes appending a rule to this list always safe.
+    assert all(rule.hard for rule in HARD_DENY_RULES)
 
 
 def test_every_rule_has_an_id():

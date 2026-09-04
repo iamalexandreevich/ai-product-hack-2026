@@ -97,7 +97,7 @@ JSONL, строки Postgres и элемента `GET /v1/decisions`. Два п�
 | F7 — `Gate` строит `LLMClient` | Протокол `Classifier` и реестр моделей |
 | F8 — четыре копии ручного разбора argv | `ParsedArgv` |
 | F9 — два списка секретов | `shell/secrets.py` (истинное объединение, выписано построчно в отчёте задачи 4) |
-| F9 — три ответа про пути команды | Сведены к двум: `shell/paths.py::command_paths` и `normalize/shell._collect_paths` (см. §5) |
+| F9 — три ответа про пути команды | **Не закрыто до конца, и счёт в первой редакции этого отчёта был занижен.** Осталось три: `shell/paths.py::command_paths`, `normalize/shell._collect_paths`, `rules/hard_deny/exfil.py::_cmd_paths`. Четвёртый (`destructive.py::_positional_paths`) был копией `command_paths` и удалён по находке финального ревью ветки. Слияние `_cmd_paths` с остальными обосновано отклонено: оно либо разрешило бы `diff AGENTS.md` (это и есть F9), либо начало бы hard-denyить выдуманные `$VAR`-пути — решающие оси у этих ответов разные (см. §5) |
 | F10 — 11 множеств команд | Таблица `COMMANDS` |
 | F11 — импорт приватных имён через границу пакета | `shell/wrappers.py`; `grep -rn "import _" agentgate/` пуст |
 | F12 — нетипизированные границы API | Типизированный `create_app`, `DecisionsPage`, `Health` |

@@ -35,7 +35,7 @@ class KubectlDeleteRule:
         return None
 ```
 
-Импорты: `Verdict` из `agentgate.domain.verdict`, `Policy` из `agentgate.domain.policy`, `NormalizedAction` из `agentgate.normalize.model`. Подключение — строка в `STAGE1` (`agentgate/rules/chain.py`); порядок списка и есть приоритет: `None` означает «моё правило тут ни при чём», и решает следующее. Hard-deny вместо этого добавляется в `HARD_DENY_RULES` (`agentgate/rules/hard_deny/__init__.py`) — до правил профиля и allowlist.
+Импорты: `Verdict` из `agentgate.domain.verdict`, `Policy` из `agentgate.domain.policy`, `NormalizedAction` из `agentgate.normalize.model`. Подключение — строка в `STAGE1` (`agentgate/rules/chain.py`); порядок списка и есть приоритет: `None` означает «моё правило тут ни при чём», и решает следующее. Hard-deny вместо этого добавляется в `HARD_DENY_RULES` (`agentgate/rules/hard_deny/__init__.py`) — до правил профиля и allowlist. Дописывать в конец списка безопасно: все его правила жёсткие, и ни одно не может перехватить ваше. Единственное правило, отвечающее `ask`, вынесено из списка в цепочку именно для этого.
 
 ### …модель ступени 2
 
