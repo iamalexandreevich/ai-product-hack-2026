@@ -79,3 +79,8 @@ def test_validate_token_for_bind_non_localhost_with_token(monkeypatch):
     monkeypatch.setenv("AGENTGATE_TOKEN", "secret")
     s = Settings()
     s.validate_token_for_bind()
+
+
+def test_allow_cache_ttl_defaults_to_a_day(monkeypatch):
+    monkeypatch.setenv("AGENTGATE_DB_URL", "postgresql+asyncpg://u:p@localhost/agentgate")
+    assert Settings().allow_cache_ttl_seconds == 86400

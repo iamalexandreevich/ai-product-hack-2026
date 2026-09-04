@@ -21,13 +21,14 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from agentgate.api.app import create_app
 from agentgate.config import Settings, get_settings
+from agentgate.engine.gate import Gate
 from agentgate.log.jsonl import JsonlLogger
-from agentgate.pipeline import Gate
 from agentgate.profiles.loader import load_profiles
 from agentgate.session.memory import InMemorySessionStateStore
 from agentgate.store.db import make_engine, make_session_factory
 from agentgate.store.keys import ApiKeyRepo
 from agentgate.store.repo import DecisionRepo, SessionRepo
+from agentgate.store.writer import CompositeDecisionWriter, JsonlDecisionWriter, PostgresDecisionWriter
 
 log = logging.getLogger(__name__)
 
@@ -38,7 +39,8 @@ def make_db_probe(engine: AsyncEngine):
             async with engine.connect() as conn:
                 await conn.execute(text("SELECT 1"))
             return True
-        except Exception:  # noqa: BLE001 - a broken probe just reports "not ok"
+        except Exception:  # noqa: BLE001 - a broken probe reports "not ok", never a 500
+            log.warning("database probe failed", exc_info=True)
             return False
 
     return db_probe
@@ -69,11 +71,14 @@ async def build_app(settings: Settings | None = None):
     for session_id, action_hash, decision_id, expires_at in await session_repo.cache_load_valid():
         await store.cache_put(session_id, action_hash, decision_id, int((expires_at - now).total_seconds()))
 
-    gate = Gate(profiles, settings.default_profile, store, httpx.AsyncClient())
-    app = create_app(
-        settings, gate, decision_repo, session_repo, profiles, JsonlLogger(settings.log_path),
-        db_probe=make_db_probe(engine), key_repo=key_repo,
-    )
+    writer = CompositeDecisionWriter([
+        JsonlDecisionWriter(JsonlLogger(settings.log_path)),
+        PostgresDecisionWriter(decision_repo, session_repo, settings.allow_cache_ttl_seconds),
+    ])
+    gate = Gate(profiles, settings.default_profile, store, httpx.AsyncClient(),
+                allow_cache_ttl_seconds=settings.allow_cache_ttl_seconds)
+    app = create_app(settings, gate, writer, decision_repo, profiles,
+                     db_probe=make_db_probe(engine), key_repo=key_repo)
     return app, settings
 
 

@@ -11,13 +11,29 @@ import pytest
 from httpx import ASGITransport
 
 from agentgate.api.app import create_app
+from agentgate.api.schemas import DecisionKind
 from agentgate.config import Settings
+from agentgate.engine.gate import Gate
 from agentgate.log.jsonl import JsonlLogger
-from agentgate.pipeline import Gate
 from agentgate.session.memory import InMemorySessionStateStore
-from tests.test_pipeline import FakeLLM, profile
+from agentgate.store.writer import CompositeDecisionWriter, JsonlDecisionWriter, PostgresDecisionWriter
+from tests.factories import WORKSPACE, FakeLLM, profile
 
-WS = "/home/u/repo"
+
+class _ListedDecision:
+    """Adapts a DecisionView to the `.id` / `.to_dict()` shape the real
+    (Postgres-backed) DecisionRepo.list() still returns.
+    """
+
+    def __init__(self, view) -> None:
+        self._view = view
+
+    @property
+    def id(self) -> str:
+        return self._view.id
+
+    def to_dict(self) -> dict:
+        return self._view.model_dump(mode="json", exclude={"decision_id"})
 
 
 def build(tmp_path, token=None, bind="127.0.0.1:8400", llm=None, db_ok=True, gate=None, key_repo=None):
@@ -30,15 +46,23 @@ def build(tmp_path, token=None, bind="127.0.0.1:8400", llm=None, db_ok=True, gat
         def __init__(self):
             self.rows = []
 
-        async def insert(self, rec):
-            self.rows.append(rec)
+        async def insert(self, decision):
+            self.rows.append(decision)
 
         async def list(self, session_id, model, limit, before):
-            rows = [r for r in self.rows if (session_id is None or r.session_id == session_id) and (model is None or r.model == model)]
+            rows = [
+                r for r in self.rows
+                if (session_id is None or r.request.session_id == session_id)
+                and (model is None or r.verdict.model == model)
+            ]
             rows = sorted(rows, key=lambda r: r.id, reverse=True)
             if before:
                 rows = [r for r in rows if r.id < before]
-            return rows[:limit]
+            # The /v1/decisions route (unchanged by this task) reads
+            # `.id`/`.to_dict()` off whatever list() returns -- the shape
+            # DecisionRecord still has. Wrap the view so this fake matches
+            # that without resurrecting DecisionRecord here.
+            return [_ListedDecision(r.to_view()) for r in rows[:limit]]
 
     class FakeSessionRepo:
         def __init__(self):
@@ -60,13 +84,16 @@ def build(tmp_path, token=None, bind="127.0.0.1:8400", llm=None, db_ok=True, gat
 
     drepo = FakeDecisionRepo()
     srepo = FakeSessionRepo() if db_ok else FakeSessionRepoBroken()
-    app = create_app(settings, gate, drepo, srepo, profiles, JsonlLogger(settings.log_path), db_probe=probe,
-                     key_repo=key_repo)
+    writer = CompositeDecisionWriter([
+        JsonlDecisionWriter(JsonlLogger(settings.log_path)),
+        PostgresDecisionWriter(drepo, srepo, settings.allow_cache_ttl_seconds),
+    ])
+    app = create_app(settings, gate, writer, drepo, profiles, db_probe=probe, key_repo=key_repo)
     return app, drepo, srepo, llm
 
 
 def body(raw="ls -la", **over):
-    b = dict(session_id="s1", harness="t", tool="shell", raw=raw, args={"cwd": WS}, user_request="task", metadata={"run_id": "r"})
+    b = dict(session_id="s1", harness="t", tool="shell", raw=raw, args={"cwd": WORKSPACE}, user_request="task", metadata={"run_id": "r"})
     b.update(over)
     return b
 
@@ -85,7 +112,7 @@ async def test_decide_allow_and_persist(tmp_path):
     assert r.status_code == 200
     data = r.json()
     assert data["decision"] == "allow" and data["stage"] == 1 and data["decision_id"]
-    assert len(drepo.rows) == 1 and drepo.rows[0].metadata == {"run_id": "r"}
+    assert len(drepo.rows) == 1 and drepo.rows[0].to_view().metadata == {"run_id": "r"}
     # FK order: the session row must be written before the decision row.
     assert srepo.upserts == ["s1"]
     lines = (tmp_path / "d.jsonl").read_text().splitlines()
@@ -98,7 +125,7 @@ async def test_decide_deny_is_200(tmp_path):
     assert r.status_code == 200
     data = r.json()
     assert data["decision"] == "deny" and data["rule_id"] == "hard-deny.pipe-exec"
-    assert drepo.rows[0].decision == "deny"
+    assert drepo.rows[0].to_view().decision is DecisionKind.deny
 
 
 async def test_decide_ask_is_200(tmp_path):

@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from agentgate.engine.decision import Decision, DecisionView
 from agentgate.session.state import RECENT_MAXLEN, SessionState
 from agentgate.store.models import AllowCacheRow, DecisionRow, SessionRow
 
@@ -43,11 +44,6 @@ class DecisionRecord:
     cached: bool
     metadata: dict
 
-    def to_row(self) -> DecisionRow:
-        data = self.__dict__.copy()
-        data["metadata_"] = data.pop("metadata")
-        return DecisionRow(**data)
-
     @classmethod
     def from_row(cls, row: DecisionRow) -> "DecisionRecord":
         return cls(
@@ -64,13 +60,26 @@ class DecisionRecord:
         d["ts"] = self.ts.isoformat()
         return d
 
+    def to_view(self) -> DecisionView:
+        # Transitional: DecisionRecord's fields are exactly DecisionView's,
+        # minus the computed decision_id -- this lets repo-level tests keep
+        # building rows directly, without going through Gate/Decision, while
+        # DecisionRepo.insert takes anything view-shaped.
+        return DecisionView(**self.__dict__)
+
+
+def _row_from_view(view: DecisionView) -> DecisionRow:
+    data = view.model_dump(exclude={"decision_id"})
+    data["metadata_"] = data.pop("metadata")
+    return DecisionRow(**data)
+
 
 class DecisionRepo:
     """Repository for decision rows.
 
-    Ordering requirement: `rec.session_id`, when not ``None``, is a foreign
-    key to ``sessions.id``. The referenced session must already exist —
-    callers doing the post-response write (Task 10) must call
+    Ordering requirement: a decision's session id, when not ``None``, is a
+    foreign key to ``sessions.id``. The referenced session must already
+    exist — callers doing the post-response write must call
     ``SessionRepo.upsert`` for the session before ``DecisionRepo.insert`` for
     its decisions, or `insert` raises ``sqlalchemy.exc.IntegrityError``.
     """
@@ -78,16 +87,16 @@ class DecisionRepo:
     def __init__(self, session_factory: async_sessionmaker) -> None:
         self._sf = session_factory
 
-    async def insert(self, rec: DecisionRecord) -> None:
+    async def insert(self, decision: Decision) -> None:
         """Insert one decision.
 
-        Raises ``sqlalchemy.exc.IntegrityError`` if ``rec.session_id`` is not
-        ``None`` and does not reference an existing session (see class
-        docstring for the required call ordering), or if ``rec.id`` collides
+        Raises ``sqlalchemy.exc.IntegrityError`` if the decision's session id
+        is not ``None`` and does not reference an existing session (see class
+        docstring for the required call ordering), or if its id collides
         with an existing decision.
         """
         async with self._sf() as s:
-            s.add(rec.to_row())
+            s.add(_row_from_view(decision.to_view()))
             await s.commit()
 
     async def list(self, session_id: str | None, model: str | None, limit: int, before: str | None) -> list[DecisionRecord]:
