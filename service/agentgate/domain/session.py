@@ -1,4 +1,10 @@
-"""Per-session in-memory state: decision counters and recent-decision window."""
+"""Session state, and the store protocol the engine keeps it behind.
+
+`SessionState` is one session's counters and its recent-decision window.
+`SessionStateStore` is all the engine knows about where they live, so an
+in-memory store, a write-through one and a Redis one are interchangeable
+to it.
+"""
 
 from collections import deque
 from dataclasses import dataclass, field
@@ -50,3 +56,13 @@ class SessionStateStore(Protocol):
     async def cache_put(
         self, session_id: str, key: str, decision_id: str, ttl_seconds: int
     ) -> None: ...
+
+
+class RestorableSessionStateStore(SessionStateStore, Protocol):
+    """A store the composition root brings up to date before serving traffic.
+
+    Separate from `SessionStateStore` because the engine has no business
+    restoring anything -- only whoever assembles the service does.
+    """
+
+    async def restore(self) -> None: ...

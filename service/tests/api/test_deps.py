@@ -16,7 +16,7 @@ for the background last-used touch).
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 
 from agentgate.api.deps import make_require_token
 from agentgate.config import Settings
@@ -54,6 +54,17 @@ class FakeKeyRepo:
         self.touched.append(key_id)
 
 
+async def _authenticate(require_token, authorization: str | None) -> BackgroundTasks:
+    """Call the dependency the way FastAPI does: with a real BackgroundTasks.
+
+    The returned tasks are what the route would run after the response, so a
+    test can assert on the deferred `last_used_at` write.
+    """
+    background = BackgroundTasks()
+    await require_token(background=background, authorization=authorization)
+    return background
+
+
 async def _expect_401(coro):
     with pytest.raises(HTTPException) as exc_info:
         await coro
@@ -67,26 +78,26 @@ async def test_accepts_valid_api_key_when_static_token_also_set():
     plaintext = "agk_" + "a" * 20
     repo = FakeKeyRepo(by_hash={hash_key(plaintext): _valid_record()})
     require_token = make_require_token(_settings(token="secret"), key_repo=repo)
-    await require_token(authorization=f"Bearer {plaintext}")  # must not raise
+    await _authenticate(require_token, f"Bearer {plaintext}")  # must not raise
 
 
 async def test_still_accepts_static_token_when_key_repo_present():
     repo = FakeKeyRepo()
     require_token = make_require_token(_settings(token="secret"), key_repo=repo)
-    await require_token(authorization="Bearer secret")  # must not raise
+    await _authenticate(require_token, "Bearer secret")  # must not raise
     assert repo.calls == 0  # static token matched first -- no need to touch the key store
 
 
 async def test_401_on_bad_bearer_with_key_repo_present():
     repo = FakeKeyRepo()
     require_token = make_require_token(_settings(token="secret"), key_repo=repo)
-    await _expect_401(require_token(authorization="Bearer nope"))
+    await _expect_401(_authenticate(require_token, "Bearer nope"))
 
 
 async def test_401_on_missing_bearer_with_key_repo_present():
     repo = FakeKeyRepo()
     require_token = make_require_token(_settings(token="secret"), key_repo=repo)
-    await _expect_401(require_token(authorization=None))
+    await _expect_401(_authenticate(require_token, None))
 
 
 async def test_revoked_key_is_rejected():
@@ -95,7 +106,7 @@ async def test_revoked_key_is_rejected():
     revoked.revoked_at = datetime.now(timezone.utc)
     repo = FakeKeyRepo(by_hash={hash_key(plaintext): revoked})
     require_token = make_require_token(_settings(token="secret"), key_repo=repo)
-    await _expect_401(require_token(authorization=f"Bearer {plaintext}"))
+    await _expect_401(_authenticate(require_token, f"Bearer {plaintext}"))
 
 
 async def test_expired_key_is_rejected():
@@ -104,13 +115,13 @@ async def test_expired_key_is_rejected():
     expired.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
     repo = FakeKeyRepo(by_hash={hash_key(plaintext): expired})
     require_token = make_require_token(_settings(token="secret"), key_repo=repo)
-    await _expect_401(require_token(authorization=f"Bearer {plaintext}"))
+    await _expect_401(_authenticate(require_token, f"Bearer {plaintext}"))
 
 
 async def test_unknown_key_is_rejected():
     repo = FakeKeyRepo(by_hash={})
     require_token = make_require_token(_settings(token="secret"), key_repo=repo)
-    await _expect_401(require_token(authorization="Bearer agk_totally-unknown"))
+    await _expect_401(_authenticate(require_token, "Bearer agk_totally-unknown"))
 
 
 # --- dev-mode fallback (no static token) is unchanged ------------------------
@@ -119,7 +130,7 @@ async def test_unknown_key_is_rejected():
 async def test_dev_mode_no_token_allows_all_even_with_key_repo_present():
     repo = FakeKeyRepo()
     require_token = make_require_token(_settings(token=None), key_repo=repo)
-    await require_token(authorization=None)  # must not raise -- unchanged localhost dev mode
+    await _authenticate(require_token, None)  # must not raise -- unchanged localhost dev mode
     assert repo.calls == 0
 
 
@@ -128,8 +139,8 @@ async def test_dev_mode_no_token_allows_all_even_with_key_repo_present():
 
 async def test_no_key_repo_falls_back_to_static_token_only():
     require_token = make_require_token(_settings(token="secret"))
-    await require_token(authorization="Bearer secret")
-    await _expect_401(require_token(authorization="Bearer wrong"))
+    await _authenticate(require_token, "Bearer secret")
+    await _expect_401(_authenticate(require_token, "Bearer wrong"))
 
 
 # --- TTL cache: a repeat within the window costs no second DB hit -----------
@@ -142,10 +153,10 @@ async def test_cache_serves_repeat_without_second_db_hit():
     require_token = make_require_token(_settings(token="secret"), key_repo=repo,
                                        cache_ttl_seconds=30, now_fn=lambda: clock[0])
 
-    await require_token(authorization=f"Bearer {plaintext}")
+    await _authenticate(require_token, f"Bearer {plaintext}")
     assert repo.calls == 1
     clock[0] += 5  # well within the 30s TTL
-    await require_token(authorization=f"Bearer {plaintext}")
+    await _authenticate(require_token, f"Bearer {plaintext}")
     assert repo.calls == 1  # served from cache, no second DB hit
 
 
@@ -158,17 +169,17 @@ async def test_revocation_takes_effect_only_after_the_cache_ttl():
     require_token = make_require_token(_settings(token="secret"), key_repo=repo,
                                        cache_ttl_seconds=30, now_fn=lambda: clock[0])
 
-    await require_token(authorization=f"Bearer {plaintext}")  # populates the cache as valid
+    await _authenticate(require_token, f"Bearer {plaintext}")  # populates the cache as valid
     assert repo.calls == 1
 
     record.revoked_at = datetime.now(timezone.utc)  # simulate revocation landing in the store
 
     clock[0] += 10  # still inside the TTL window
-    await require_token(authorization=f"Bearer {plaintext}")  # must not raise -- served from cache
+    await _authenticate(require_token, f"Bearer {plaintext}")  # must not raise -- served from cache
     assert repo.calls == 1  # no re-query yet
 
     clock[0] += 25  # now past the 30s TTL (35s since the first call)
-    await _expect_401(require_token(authorization=f"Bearer {plaintext}"))
+    await _expect_401(_authenticate(require_token, f"Bearer {plaintext}"))
     assert repo.calls == 2  # the cache expired and re-queried the store, which now says revoked
 
 
@@ -178,14 +189,14 @@ async def test_revocation_takes_effect_only_after_the_cache_ttl():
 async def test_db_error_during_key_verification_is_401_not_a_pass():
     repo = FakeKeyRepo(raise_on_call=True)
     require_token = make_require_token(_settings(token="secret"), key_repo=repo)
-    await _expect_401(require_token(authorization="Bearer agk_whatever"))
+    await _expect_401(_authenticate(require_token, "Bearer agk_whatever"))
 
 
 async def test_db_error_does_not_poison_the_cache_as_a_permanent_pass():
     plaintext = "agk_" + "f" * 20
     repo = FakeKeyRepo(raise_on_call=True)
     require_token = make_require_token(_settings(token="secret"), key_repo=repo)
-    await _expect_401(require_token(authorization=f"Bearer {plaintext}"))
+    await _expect_401(_authenticate(require_token, f"Bearer {plaintext}"))
     repo.raise_on_call = False
     repo.by_hash[hash_key(plaintext)] = _valid_record()
-    await require_token(authorization=f"Bearer {plaintext}")  # recovers once the store is healthy again
+    await _authenticate(require_token, f"Bearer {plaintext}")  # recovers once the store is healthy again

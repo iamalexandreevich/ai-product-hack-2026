@@ -19,10 +19,10 @@ from typing import Any
 from pydantic import BaseModel, computed_field
 
 from agentgate.api.schemas import DecideRequest, DecideResponse, DecisionKind
+from agentgate.domain.session import SessionState
 from agentgate.domain.verdict import Verdict
 from agentgate.engine.timings import Latency
 from agentgate.normalize.model import NormalizedAction
-from agentgate.session.state import SessionState
 
 
 class DecisionView(BaseModel):

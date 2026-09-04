@@ -23,9 +23,9 @@ the action being judged, so it is not escaped.
 
 import json
 
+from agentgate.classify.schema import RESPONSE_JSON_SCHEMA
 from agentgate.domain.policy import Policy
 from agentgate.normalize.model import NormalizedAction
-from agentgate.stage2.schema import RESPONSE_JSON_SCHEMA
 
 _ROLE = (
     "You are the action reviewer for an autonomous coding agent. "

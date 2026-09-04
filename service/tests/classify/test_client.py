@@ -4,7 +4,7 @@ import httpx
 import pytest
 
 from agentgate.profiles.schema import ModelConfig
-from agentgate.stage2.client import LLMClient, Stage2Error
+from agentgate.classify.client import LLMClient, Stage2Error
 
 
 def make_client(handler, structured=True, timeout_ms=1000):

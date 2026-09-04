@@ -6,35 +6,35 @@ state. Every step either produces a Verdict or hands the call to the next
 one, and `decide` returns one immutable Decision.
 
 Fail-closed is the spine: an unknown profile or model resolves to `ask`
-before anything else runs, and stage 2 turns every classifier failure into
-`ask` itself (see agentgate.stage2.run), so nothing here produces `allow`
+before anything else runs, and a Classifier turns every failure of its own
+into `ask` (see agentgate.classify.base), so nothing here produces `allow`
 on an error path.
 
-Persistence is not this module's concern -- see agentgate.store.writer.
+Neither persistence nor how a classifier talks to a model is this module's
+concern -- see agentgate.store.writer and agentgate.classify.llm.
 """
 
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-import httpx
 from ulid import ULID
 
 from agentgate.api.schemas import DecideRequest, DecisionKind
+from agentgate.classify.base import Classifier
 from agentgate.domain.policy import Policy
+from agentgate.domain.session import SessionState, SessionStateStore
 from agentgate.domain.verdict import Verdict
 from agentgate.engine.decision import Decision
 from agentgate.engine.timings import Timings
 from agentgate.normalize import normalize
 from agentgate.normalize.model import NormalizedAction
 from agentgate.profiles.loader import detect_workspace
-from agentgate.profiles.schema import ModelConfig, Profile
+from agentgate.profiles.schema import Profile
 from agentgate.rules.base import RuleChain
 from agentgate.session.cache_key import allow_cache_key
 from agentgate.session.escalation import should_escalate
-from agentgate.session.state import SessionState, SessionStateStore
-from agentgate.stage2.client import LLMClient
-from agentgate.stage2.run import run_stage2
 
 log = logging.getLogger(__name__)
 
@@ -47,26 +47,25 @@ class _Context:
 
     policy: Policy
     profile_id: str
-    model_name: str
-    model_config: ModelConfig
+    classifier: Classifier
     state: SessionState | None
 
 
 class Gate:
     def __init__(
         self,
-        profiles: dict[str, Profile],
+        profiles: Mapping[str, Profile],
         default_profile: str,
+        classifiers: Mapping[str, Mapping[str, Classifier]],
         rules: RuleChain,
         state_store: SessionStateStore,
-        http: httpx.AsyncClient,
         allow_cache_ttl_seconds: int = 86400,
     ) -> None:
         self._profiles = profiles
         self._default_profile = default_profile
+        self._classifiers = classifiers
         self._rules = rules
         self._states = state_store
-        self._http = http
         self._allow_cache_ttl_seconds = allow_cache_ttl_seconds
 
     async def decide(self, request: DecideRequest) -> Decision:
@@ -105,9 +104,8 @@ class Gate:
         profile = self._profiles.get(profile_id)
         if profile is None:
             return Verdict.ask("api.unknown-profile", f"unknown profile '{profile_id}'", stage=0)
-        try:
-            model_name, model_config = profile.models.model_config_for(request.model)
-        except KeyError:
+        classifier = self._classifiers[profile_id].get(request.model or profile.models.default)
+        if classifier is None:
             return Verdict.ask("api.unknown-model", f"unknown model '{request.model}'", stage=0)
 
         state = None
@@ -121,7 +119,7 @@ class Gate:
         workspace = state.workspace if state is not None else detect_workspace(request.args.cwd)
         return _Context(
             policy=Policy.bind(profile, workspace), profile_id=profile_id,
-            model_name=model_name, model_config=model_config, state=state,
+            classifier=classifier, state=state,
         )
 
     async def _cache_hit(self, context: _Context, cache_key: str) -> bool:
@@ -137,10 +135,8 @@ class Gate:
         if verdict is not None:
             return verdict
         with timings.stage(2):
-            client = LLMClient(context.model_name, context.model_config, self._http)
-            return await run_stage2(
-                action, request.user_request, context.policy,
-                context.model_name, client, STAGE1_PASSED,
+            return await context.classifier.classify(
+                action, request.user_request, context.policy, STAGE1_PASSED
             )
 
     def _escalate(self, state: SessionState | None, policy: Policy, verdict: Verdict) -> Verdict:

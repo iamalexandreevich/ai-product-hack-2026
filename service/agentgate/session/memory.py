@@ -1,16 +1,20 @@
 """In-memory implementation of SessionStateStore, for tests and local dev.
 
-TTL for the allow-decision cache uses time.monotonic() rather than wall-clock
-time, so it is immune to clock adjustments (NTP, DST, manual changes).
+TTL for the allow-decision cache is measured on a monotonic clock rather than
+wall-clock time, so it is immune to clock adjustments (NTP, DST, manual
+changes). The clock is a constructor argument so a test can move it by hand
+instead of patching the module.
 """
 
 import time
+from collections.abc import Callable
 
-from agentgate.session.state import SessionState
+from agentgate.domain.session import SessionState
 
 
 class InMemorySessionStateStore:
-    def __init__(self) -> None:
+    def __init__(self, now: Callable[[], float] = time.monotonic) -> None:
+        self._now = now
         self._states: dict[str, SessionState] = {}
         self._cache: dict[tuple[str, str], tuple[str, float]] = {}
 
@@ -33,14 +37,14 @@ class InMemorySessionStateStore:
         if item is None:
             return None
         decision_id, expires = item
-        if time.monotonic() >= expires:
+        if self._now() >= expires:
             del self._cache[(session_id, key)]
             return None
         return decision_id
 
     async def cache_put(self, session_id: str, key: str, decision_id: str, ttl_seconds: int) -> None:
-        self._cache[(session_id, key)] = (decision_id, time.monotonic() + ttl_seconds)
+        self._cache[(session_id, key)] = (decision_id, self._now() + ttl_seconds)
 
     def preload(self, states: list[SessionState]) -> None:
-        for s in states:
-            self._states[s.session_id] = s
+        for state in states:
+            self._states[state.session_id] = state

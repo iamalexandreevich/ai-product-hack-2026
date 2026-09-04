@@ -23,9 +23,8 @@ import asyncio
 import sys
 from datetime import datetime, timedelta, timezone
 
+from agentgate.bootstrap import build_key_repo
 from agentgate.config import Settings, get_settings
-from agentgate.store.db import make_engine, make_session_factory
-from agentgate.store.keys import ApiKeyRepo
 
 _DURATION_UNITS = {"d": "days", "h": "hours", "m": "minutes", "s": "seconds"}
 
@@ -50,12 +49,6 @@ def _parse_duration(value: str) -> timedelta:
     return timedelta(**{_DURATION_UNITS[unit]: amount})
 
 
-def _build_repo(settings: Settings):
-    engine = make_engine(settings.db_url)
-    sf = make_session_factory(engine)
-    return ApiKeyRepo(sf), engine
-
-
 async def _create(settings: Settings, label: str, expires: str | None) -> int:
     expires_at = None
     if expires:
@@ -65,7 +58,7 @@ async def _create(settings: Settings, label: str, expires: str | None) -> int:
             print(f"error: {exc}", file=sys.stderr)
             return 1
 
-    repo, engine = _build_repo(settings)
+    repo, engine = build_key_repo(settings)
     try:
         plaintext, _record = await repo.create(label=label, expires_at=expires_at)
     finally:
@@ -86,7 +79,7 @@ def _fmt(value) -> str:
 
 
 async def _list(settings: Settings) -> int:
-    repo, engine = _build_repo(settings)
+    repo, engine = build_key_repo(settings)
     try:
         records = await repo.list()
     finally:
@@ -101,7 +94,7 @@ async def _list(settings: Settings) -> int:
 
 
 async def _revoke(settings: Settings, key_id: str) -> int:
-    repo, engine = _build_repo(settings)
+    repo, engine = build_key_repo(settings)
     try:
         found = await repo.revoke(key_id)
     finally:

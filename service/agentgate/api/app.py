@@ -19,7 +19,7 @@ two extra failure paths beyond the pipeline's own three outcomes:
   synchronous store error, anything) into `ask`/200. `allow` on error is not
   reachable through this path.
 
-Persistence (the Postgres decision/session rows and the JSONL line) happens
+Persistence of the decision (the Postgres row and the JSONL line) happens
 *after* the response is sent, via `BackgroundTasks.add_task`, delegated to
 the injected `DecisionWriter` -- see agentgate.store.writer. A write failure
 there is logged and swallowed by the writer itself; it must never surface to
@@ -27,19 +27,21 @@ a client that already has its answer.
 """
 
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request
-from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 from ulid import ULID
 
 from agentgate.api.deps import make_require_token
+from agentgate.api.responses import DecisionsPage, Health
 from agentgate.api.schemas import DecideRequest, DecideResponse, LatencyMs
 from agentgate.config import Settings
 from agentgate.domain.verdict import Verdict
 from agentgate.engine.gate import Gate
 from agentgate.profiles.schema import Profile
+from agentgate.store.keys import ApiKeyRepo
+from agentgate.store.repo import DecisionRepo
 from agentgate.store.writer import DecisionWriter
 
 log = logging.getLogger(__name__)
@@ -58,10 +60,10 @@ def create_app(
     settings: Settings,
     gate: Gate,
     writer: DecisionWriter,
-    decision_repo,
-    profiles: dict[str, Profile],
+    decision_repo: DecisionRepo,
+    profiles: Mapping[str, Profile],
     db_probe: Callable[[], Awaitable[bool]] | None = None,
-    key_repo=None,
+    key_repo: ApiKeyRepo | None = None,
 ) -> FastAPI:
     app = FastAPI(title="AgentGate", version="0.1.0")
     auth = Depends(make_require_token(settings, key_repo=key_repo, cache_ttl_seconds=settings.api_key_cache_ttl_seconds))
@@ -86,19 +88,16 @@ def create_app(
         background.add_task(writer.write, decision)
         return decision.to_response()
 
-    @app.get("/v1/decisions", dependencies=[auth])
+    @app.get("/v1/decisions", response_model=DecisionsPage, dependencies=[auth])
     async def decisions(
         session_id: str | None = None,
         model: str | None = None,
         limit: int = Query(default=100, ge=1, le=500),
         before: str | None = None,
-    ) -> dict:
-        if decision_repo is None:
-            return {"items": [], "next_before": None}
+    ) -> DecisionsPage:
         rows = await decision_repo.list(session_id=session_id, model=model, limit=limit, before=before)
-        items = [dict(r.to_dict(), decision_id=r.id) for r in rows]
         next_before = rows[-1].id if len(rows) == limit else None
-        return {"items": items, "next_before": next_before}
+        return DecisionsPage(items=rows, next_before=next_before)
 
     @app.get("/v1/profiles/{profile_id}", response_model=Profile, dependencies=[auth])
     async def get_profile(profile_id: str) -> Profile:
@@ -107,8 +106,8 @@ def create_app(
             raise HTTPException(status_code=404, detail="profile not found")
         return profile
 
-    @app.get("/healthz")
-    async def healthz() -> JSONResponse:
+    @app.get("/healthz", response_model=Health)
+    async def healthz() -> Health:
         db_ok = True
         if db_probe is not None:
             try:
@@ -116,7 +115,6 @@ def create_app(
             except Exception:  # noqa: BLE001 - a broken probe means "not ok", not a 500 from /healthz
                 log.warning("database probe failed", exc_info=True)
                 db_ok = False
-        status = "ok" if db_ok else "degraded"
-        return JSONResponse({"status": status, "db": db_ok, "llm": None}, status_code=200)
+        return Health(status="ok" if db_ok else "degraded", db=db_ok, llm=None)
 
     return app

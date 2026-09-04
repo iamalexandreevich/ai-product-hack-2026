@@ -6,72 +6,16 @@ to the client without an implicit transaction spanning the response.
 """
 
 from collections import deque
-from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from agentgate.domain.session import RECENT_MAXLEN, SessionState
 from agentgate.engine.decision import Decision, DecisionView
-from agentgate.session.state import RECENT_MAXLEN, SessionState
+from agentgate.store.mapper import row_from_view, view_from_row
 from agentgate.store.models import AllowCacheRow, DecisionRow, SessionRow
-
-
-@dataclass
-class DecisionRecord:
-    id: str
-    session_id: str | None
-    ts: datetime
-    harness: str
-    tool: str
-    raw: str
-    normalized: dict
-    user_request: str
-    profile_id: str
-    profile_hash: str
-    decision: str
-    reason: str
-    suggest: str
-    stage: int
-    rule_id: str | None
-    model: str | None
-    model_raw_response: dict | None
-    latency_stage1_ms: int | None
-    latency_stage2_ms: int | None
-    latency_total_ms: int
-    error: str | None
-    cached: bool
-    metadata: dict
-
-    @classmethod
-    def from_row(cls, row: DecisionRow) -> "DecisionRecord":
-        return cls(
-            id=row.id, session_id=row.session_id, ts=row.ts, harness=row.harness, tool=row.tool, raw=row.raw,
-            normalized=row.normalized, user_request=row.user_request, profile_id=row.profile_id,
-            profile_hash=row.profile_hash, decision=row.decision, reason=row.reason, suggest=row.suggest,
-            stage=row.stage, rule_id=row.rule_id, model=row.model, model_raw_response=row.model_raw_response,
-            latency_stage1_ms=row.latency_stage1_ms, latency_stage2_ms=row.latency_stage2_ms,
-            latency_total_ms=row.latency_total_ms, error=row.error, cached=row.cached, metadata=row.metadata_,
-        )
-
-    def to_dict(self) -> dict:
-        d = self.__dict__.copy()
-        d["ts"] = self.ts.isoformat()
-        return d
-
-    def to_view(self) -> DecisionView:
-        # Transitional: DecisionRecord's fields are exactly DecisionView's,
-        # minus the computed decision_id -- this lets repo-level tests keep
-        # building rows directly, without going through Gate/Decision, while
-        # DecisionRepo.insert takes anything view-shaped.
-        return DecisionView(**self.__dict__)
-
-
-def _row_from_view(view: DecisionView) -> DecisionRow:
-    data = view.model_dump(exclude={"decision_id"})
-    data["metadata_"] = data.pop("metadata")
-    return DecisionRow(**data)
 
 
 class DecisionRepo:
@@ -79,9 +23,9 @@ class DecisionRepo:
 
     Ordering requirement: a decision's session id, when not ``None``, is a
     foreign key to ``sessions.id``. The referenced session must already
-    exist — callers doing the post-response write must call
-    ``SessionRepo.upsert`` for the session before ``DecisionRepo.insert`` for
-    its decisions, or `insert` raises ``sqlalchemy.exc.IntegrityError``.
+    exist — the session state store writes it during the decision, before
+    the decision itself reaches this repository, or `insert` raises
+    ``sqlalchemy.exc.IntegrityError``.
     """
 
     def __init__(self, session_factory: async_sessionmaker) -> None:
@@ -96,10 +40,12 @@ class DecisionRepo:
         with an existing decision.
         """
         async with self._sf() as s:
-            s.add(_row_from_view(decision.to_view()))
+            s.add(row_from_view(decision.to_view()))
             await s.commit()
 
-    async def list(self, session_id: str | None, model: str | None, limit: int, before: str | None) -> list[DecisionRecord]:
+    async def list(
+        self, session_id: str | None, model: str | None, limit: int, before: str | None
+    ) -> list[DecisionView]:
         """List decisions ordered by ``id`` descending (newest first).
 
         ``before`` pages backwards: only rows with ``id < before`` are
@@ -118,7 +64,7 @@ class DecisionRepo:
             stmt = stmt.where(DecisionRow.id < before)
         async with self._sf() as s:
             rows = (await s.execute(stmt)).scalars().all()
-        return [DecisionRecord.from_row(r) for r in rows]
+        return [view_from_row(r) for r in rows]
 
 
 class SessionRepo:

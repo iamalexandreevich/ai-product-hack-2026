@@ -3,8 +3,8 @@
 Fail-closed by construction: `classify()` makes exactly one HTTP call
 with the caller-configured timeout, never retries, and turns every
 failure mode into a `Stage2Error` with a `kind` the caller can key
-`ask` off of — see agentgate.stage2.run.run_stage2. `allow` on error is
-not representable here: the happy path is the only way to get a
+`ask` off of — see agentgate.classify.llm.LLMClassifier. `allow` on
+error is not representable here: the happy path is the only way to get a
 `ClassifierOutput` back.
 """
 
@@ -14,8 +14,8 @@ import os
 import httpx
 from pydantic import ValidationError
 
+from agentgate.classify.schema import RESPONSE_JSON_SCHEMA, ClassifierOutput
 from agentgate.profiles.schema import ModelConfig
-from agentgate.stage2.schema import RESPONSE_JSON_SCHEMA, ClassifierOutput
 
 
 class Stage2Error(Exception):

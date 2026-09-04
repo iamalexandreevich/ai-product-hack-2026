@@ -4,7 +4,7 @@ from agentgate.api.schemas import DecideRequest
 from agentgate.domain.policy import Policy
 from agentgate.normalize import normalize
 from agentgate.profiles.schema import Profile
-from agentgate.stage2.prompt import build_system_prompt, build_user_message
+from agentgate.classify.prompt import build_system_prompt, build_user_message
 
 WS = "/home/u/repo"
 PROFILE_DATA = {

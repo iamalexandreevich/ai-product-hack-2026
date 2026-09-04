@@ -5,9 +5,9 @@ Drives the app over httpx.ASGITransport -- no real network, no uvicorn.
 """
 
 import json
+import logging
 
 import httpx
-import pytest
 from httpx import ASGITransport
 
 from agentgate.api.app import create_app
@@ -17,80 +17,51 @@ from agentgate.engine.gate import Gate
 from agentgate.log.jsonl import JsonlLogger
 from agentgate.rules.chain import STAGE1
 from agentgate.session.memory import InMemorySessionStateStore
+from agentgate.session.persistent import PersistentSessionStateStore
+from agentgate.store.repo import DecisionRepo, SessionRepo
 from agentgate.store.writer import CompositeDecisionWriter, JsonlDecisionWriter, PostgresDecisionWriter
-from tests.factories import WORKSPACE, FakeLLM, profile
+from tests.conftest import requires_db
+from tests.factories import WORKSPACE, FakeClassifier, FakeSessionRecords, classifiers, profile
 
 
-class _ListedDecision:
-    """Adapts a DecisionView to the `.id` / `.to_dict()` shape the real
-    (Postgres-backed) DecisionRepo.list() still returns.
-    """
+class FakeDecisionRepo:
+    def __init__(self):
+        self.rows = []
 
-    def __init__(self, view) -> None:
-        self._view = view
+    async def insert(self, decision):
+        self.rows.append(decision)
 
-    @property
-    def id(self) -> str:
-        return self._view.id
+    async def list(self, session_id, model, limit, before):
+        rows = [
+            r for r in self.rows
+            if (session_id is None or r.request.session_id == session_id)
+            and (model is None or r.verdict.model == model)
+        ]
+        rows = sorted(rows, key=lambda r: r.id, reverse=True)
+        if before:
+            rows = [r for r in rows if r.id < before]
+        return [r.to_view() for r in rows[:limit]]
 
-    def to_dict(self) -> dict:
-        return self._view.model_dump(mode="json", exclude={"decision_id"})
 
-
-def build(tmp_path, token=None, bind="127.0.0.1:8400", llm=None, db_ok=True, gate=None, key_repo=None):
+def build(tmp_path, token=None, bind="127.0.0.1:8400", classifier=None, db_ok=True,
+          gate=None, key_repo=None, sessions_broken=False):
     settings = Settings(db_url="postgresql+asyncpg://x", token=token, bind=bind, log_path=tmp_path / "d.jsonl")
     profiles = {"default": profile()}
-    llm = llm or FakeLLM()
-    gate = gate or Gate(profiles, "default", STAGE1, InMemorySessionStateStore(), httpx.AsyncClient(transport=httpx.MockTransport(llm)))
-
-    class FakeDecisionRepo:
-        def __init__(self):
-            self.rows = []
-
-        async def insert(self, decision):
-            self.rows.append(decision)
-
-        async def list(self, session_id, model, limit, before):
-            rows = [
-                r for r in self.rows
-                if (session_id is None or r.request.session_id == session_id)
-                and (model is None or r.verdict.model == model)
-            ]
-            rows = sorted(rows, key=lambda r: r.id, reverse=True)
-            if before:
-                rows = [r for r in rows if r.id < before]
-            # The /v1/decisions route (unchanged by this task) reads
-            # `.id`/`.to_dict()` off whatever list() returns -- the shape
-            # DecisionRecord still has. Wrap the view so this fake matches
-            # that without resurrecting DecisionRecord here.
-            return [_ListedDecision(r.to_view()) for r in rows[:limit]]
-
-    class FakeSessionRepo:
-        def __init__(self):
-            self.upserts = []
-            self.cache_puts = []
-
-        async def upsert(self, state):
-            self.upserts.append(state.session_id)
-
-        async def cache_put(self, *a, **k):
-            self.cache_puts.append((a, k))
-
-    class FakeSessionRepoBroken(FakeSessionRepo):
-        async def upsert(self, state):
-            raise RuntimeError("db down")
+    classifier = classifier or FakeClassifier()
+    sessions = FakeSessionRecords(upsert_error=RuntimeError("db down") if sessions_broken else None)
+    store = PersistentSessionStateStore(InMemorySessionStateStore(), sessions)
+    gate = gate or Gate(profiles, "default", classifiers(classifier), STAGE1, store)
 
     async def probe():
         return db_ok
 
     drepo = FakeDecisionRepo()
-    srepo = FakeSessionRepo() if db_ok else FakeSessionRepoBroken()
     writer = CompositeDecisionWriter([
         JsonlDecisionWriter(JsonlLogger(settings.log_path)),
-        PostgresDecisionWriter(drepo, srepo, settings.allow_cache_ttl_seconds),
+        PostgresDecisionWriter(drepo, sessions, settings.allow_cache_ttl_seconds),
     ])
     app = create_app(settings, gate, writer, drepo, profiles, db_probe=probe, key_repo=key_repo)
-    return app, drepo, srepo, llm
+    return app, drepo, sessions, classifier
 
 
 def body(raw="ls -la", **over):
@@ -108,14 +79,15 @@ async def call(app, method, url, **kw):
 
 
 async def test_decide_allow_and_persist(tmp_path):
-    app, drepo, srepo, _ = build(tmp_path)
+    app, drepo, sessions, _ = build(tmp_path)
     r = await call(app, "POST", "/v1/decide", json=body())
     assert r.status_code == 200
     data = r.json()
     assert data["decision"] == "allow" and data["stage"] == 1 and data["decision_id"]
     assert len(drepo.rows) == 1 and drepo.rows[0].to_view().metadata == {"run_id": "r"}
-    # FK order: the session row must be written before the decision row.
-    assert srepo.upserts == ["s1"]
+    # FK order: the session row is written during the decision, so it already
+    # exists when the decision row is inserted after the response.
+    assert sessions.upserts == ["s1"]
     lines = (tmp_path / "d.jsonl").read_text().splitlines()
     assert json.loads(lines[0])["decision_id"] == data["decision_id"]
 
@@ -130,11 +102,11 @@ async def test_decide_deny_is_200(tmp_path):
 
 
 async def test_decide_ask_is_200(tmp_path):
-    app, _, _, llm = build(tmp_path)
+    app, _, _, classifier = build(tmp_path)
     r = await call(app, "POST", "/v1/decide", json=body(raw='echo "unterminated'))
     assert r.status_code == 200
     assert r.json()["decision"] == "ask"
-    assert llm.calls == 0  # unparseable short-circuits before the LLM
+    assert classifier.calls == 0  # unparseable short-circuits before the classifier
 
 
 async def test_invalid_body_is_ask_200(tmp_path):
@@ -158,7 +130,7 @@ async def test_decide_raises_is_ask_200_internal_error(tmp_path):
     assert r.status_code == 200
     data = r.json()
     assert data["decision"] == "ask" and data["rule_id"] == "api.internal-error"
-    # Nothing to persist: the pipeline never produced a DecisionRecord.
+    # Nothing to persist: the pipeline never produced a Decision.
     assert drepo.rows == []
 
 
@@ -258,6 +230,13 @@ async def test_decisions_listing_and_pagination(tmp_path):
     assert r2.json()["items"][0]["raw"] == "ls"
 
 
+async def test_decisions_items_carry_both_spellings_of_the_id(tmp_path):
+    app, _, _, _ = build(tmp_path)
+    await call(app, "POST", "/v1/decide", json=body())
+    item = (await call(app, "GET", "/v1/decisions")).json()["items"][0]
+    assert item["id"] == item["decision_id"]
+
+
 async def test_decisions_limit_clamped_at_500(tmp_path):
     app, _, _, _ = build(tmp_path)
     r = await call(app, "GET", "/v1/decisions", params={"limit": 10000})
@@ -298,13 +277,50 @@ async def test_healthz_needs_no_token(tmp_path):
     assert r.status_code == 200
 
 
-# --- Persist happens after the response and never changes it ---------------
+# --- Persistence never changes the answer ---------------------------------
 
 
-async def test_persist_failure_does_not_change_response(tmp_path):
-    app, drepo, srepo, _ = build(tmp_path, db_ok=False)
+async def test_session_write_failure_does_not_change_the_response(tmp_path):
+    app, _, _, _ = build(tmp_path, sessions_broken=True)
     r = await call(app, "POST", "/v1/decide", json=body())
     assert r.status_code == 200 and r.json()["decision"] == "allow"
-    # The decision row was never written because the session upsert (which
-    # must happen first, per the sessions -> decisions FK) raised.
-    assert drepo.rows == []
+
+
+async def test_session_write_failure_is_logged(tmp_path, caplog):
+    app, _, _, _ = build(tmp_path, sessions_broken=True)
+    with caplog.at_level(logging.ERROR):
+        await call(app, "POST", "/v1/decide", json=body())
+    assert "s1" in caplog.text
+
+
+# --- The foreign keys hold against the real database ------------------------
+
+
+@requires_db
+async def test_a_sessioned_decision_and_its_cache_row_reach_postgres(session_factory, tmp_path):
+    """Both foreign keys, end to end.
+
+    `decisions.session_id` references `sessions.id`, so the session row must
+    exist before the decision row -- the state store writes it during the
+    decision. `allow_cache.decision_id` references `decisions.id`, so the
+    cache row must follow the decision row -- the writer orders those two.
+    Either ordering wrong and the write is swallowed by
+    CompositeDecisionWriter, leaving nothing behind.
+    """
+    settings = Settings(db_url="postgresql+asyncpg://x", log_path=tmp_path / "d.jsonl")
+    profiles = {"default": profile()}
+    decisions, sessions = DecisionRepo(session_factory), SessionRepo(session_factory)
+    store = PersistentSessionStateStore(InMemorySessionStateStore(), sessions)
+    gate = Gate(profiles, "default", classifiers(FakeClassifier()), STAGE1, store)
+    writer = CompositeDecisionWriter([
+        PostgresDecisionWriter(decisions, sessions, settings.allow_cache_ttl_seconds)
+    ])
+    app = create_app(settings, gate, writer, decisions, profiles)
+
+    response = await call(app, "POST", "/v1/decide", json=body(session_id="fresh-session"))
+    assert response.json()["decision"] == "allow"
+
+    stored = await decisions.list(session_id="fresh-session", model=None, limit=10, before=None)
+    assert [row.id for row in stored] == [response.json()["decision_id"]]
+    cached = await sessions.cache_load_valid()
+    assert [(row[0], row[2]) for row in cached] == [("fresh-session", response.json()["decision_id"])]

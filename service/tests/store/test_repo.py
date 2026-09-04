@@ -6,40 +6,42 @@ from sqlalchemy.exc import IntegrityError
 from ulid import ULID
 
 from agentgate.api.schemas import DecisionKind
-from agentgate.session.state import RECENT_MAXLEN, SessionState
+from agentgate.domain.session import RECENT_MAXLEN, SessionState
+from agentgate.domain.verdict import Verdict
+from agentgate.engine.decision import Decision
+from agentgate.engine.timings import Latency
 from agentgate.store.models import SessionRow
-from agentgate.store.repo import DecisionRecord, DecisionRepo, SessionRepo
+from agentgate.store.repo import DecisionRepo, SessionRepo
 from tests.conftest import requires_db
+from tests.factories import WORKSPACE, decide_request, decision, session_state, shell_action
 
 pytestmark = requires_db
 
 
-def rec(**over) -> DecisionRecord:
-    base = dict(
-        id=str(ULID()), session_id="s1", ts=datetime.now(timezone.utc), harness="t", tool="shell", raw="ls",
-        normalized={"tool": "shell"}, user_request="x", profile_id="default", profile_hash="h" * 64,
-        decision="allow", reason="", suggest="", stage=1, rule_id="allowlist.readonly", model=None,
-        model_raw_response=None, latency_stage1_ms=1, latency_stage2_ms=None, latency_total_ms=1,
-        error=None, cached=False, metadata={"run_id": "r1"},
+def rec(session_id: str | None = "s1", model: str | None = None, metadata: dict | None = None,
+        model_raw_response: dict | None = None, raw: str = "ls", cwd: str = WORKSPACE,
+        id: str | None = None) -> Decision:
+    """One decision, built the way the engine builds it, ready to be stored."""
+    return decision(
+        id=id or str(ULID()),
+        request=decide_request(raw, session_id=session_id, args={"cwd": cwd},
+                               metadata={"run_id": "r1"} if metadata is None else metadata),
+        verdict=Verdict(decision=DecisionKind.allow, stage=1, rule_id="allowlist.readonly",
+                        model=model, raw_response=model_raw_response),
+        action=shell_action(raw, cwd),
+        latency=Latency(total_ms=1, stage1_ms=1),
     )
-    base.update(over)
-    return DecisionRecord(**base)
 
 
 async def _seed_session(session_factory, session_id: str = "s1", **over) -> SessionState:
-    st = SessionState(session_id=session_id, harness="t", profile_id="default", workspace="/w")
-    for k, v in over.items():
-        setattr(st, k, v)
+    st = session_state(session_id, **over)
     await SessionRepo(session_factory).upsert(st)
     return st
 
 
-# --- brief's tests, verbatim -------------------------------------------------
-
-
 async def test_session_upsert_and_load(session_factory):
     repo = SessionRepo(session_factory)
-    s = SessionState(session_id="s1", harness="t", profile_id="default", workspace="/w")
+    s = session_state("s1")
     s.record(DecisionKind.deny)
     await repo.upsert(s)
     s.record(DecisionKind.allow)
@@ -51,7 +53,7 @@ async def test_session_upsert_and_load(session_factory):
 
 
 async def test_decision_insert_and_list(session_factory):
-    await SessionRepo(session_factory).upsert(SessionState(session_id="s1", harness="t", profile_id="default", workspace="/w"))
+    await _seed_session(session_factory)
     repo = DecisionRepo(session_factory)
     r1, r2, r3 = rec(), rec(model="m"), rec(session_id=None)
     for r in (r1, r2, r3):
@@ -69,7 +71,7 @@ async def test_decision_insert_and_list(session_factory):
 
 async def test_allow_cache_roundtrip(session_factory):
     srepo = SessionRepo(session_factory)
-    await srepo.upsert(SessionState(session_id="s1", harness="t", profile_id="default", workspace="/w"))
+    await _seed_session(session_factory)
     d = rec()
     await DecisionRepo(session_factory).insert(d)
     future = datetime.now(timezone.utc) + timedelta(hours=1)
@@ -177,14 +179,13 @@ async def test_decision_metadata_and_normalized_survive_non_ascii_and_nesting(se
         "nested": {"level": 2, "tags": ["ешь", "🔥", {"deep": True}]},
         "emoji": "🚀🧑‍💻",
     }
-    payload_normalized = {"tool": "shell", "commands": [{"argv": ["echo", "привет мир"], "cwd": "/домой"}]}
-    r = rec(metadata=payload_metadata, normalized=payload_normalized)
+    r = rec(metadata=payload_metadata, raw='echo "привет мир"', cwd="/домой")
     await repo.insert(r)
 
     loaded = await repo.list(session_id=None, model=None, limit=10, before=None)
     got = next(x for x in loaded if x.id == r.id)
     assert got.metadata == payload_metadata
-    assert got.normalized == payload_normalized
+    assert got.normalized == r.action.to_dict()
 
 
 async def test_decision_empty_and_null_jsonb_distinguished_from_populated(session_factory):
@@ -207,7 +208,7 @@ async def test_decision_empty_and_null_jsonb_distinguished_from_populated(sessio
 
 async def test_recent_decisions_round_trips_at_and_above_capacity(session_factory):
     repo = SessionRepo(session_factory)
-    s = SessionState(session_id="s1", harness="t", profile_id="default", workspace="/w")
+    s = session_state("s1")
     decisions = [DecisionKind.deny, DecisionKind.allow, DecisionKind.ask] * 20  # 60 > RECENT_MAXLEN (50)
     for d in decisions:
         s.record(d)
@@ -224,7 +225,7 @@ async def test_recent_decisions_round_trips_at_and_above_capacity(session_factor
 
 async def test_recent_decisions_round_trips_when_empty(session_factory):
     repo = SessionRepo(session_factory)
-    s = SessionState(session_id="s1", harness="t", profile_id="default", workspace="/w")
+    s = session_state("s1")
     await repo.upsert(s)
 
     loaded = await repo.load_all()
@@ -265,7 +266,7 @@ async def test_cache_put_orphan_decision_raises_integrity_error(session_factory)
 
 async def test_created_at_preserved_across_upsert(session_factory):
     repo = SessionRepo(session_factory)
-    s = SessionState(session_id="s1", harness="t", profile_id="default", workspace="/w")
+    s = session_state("s1")
     await repo.upsert(s)
     async with session_factory() as sess:
         first_created = (
@@ -307,9 +308,9 @@ async def test_cache_load_valid_full_payload(session_factory):
 
 async def test_load_all_returns_multiple_sessions(session_factory):
     repo = SessionRepo(session_factory)
-    s1 = SessionState(session_id="s1", harness="h1", profile_id="p1", workspace="/w1")
+    s1 = session_state("s1", harness="h1", profile_id="p1", workspace="/w1")
     s1.record(DecisionKind.deny)
-    s2 = SessionState(session_id="s2", harness="h2", profile_id="p2", workspace="/w2")
+    s2 = session_state("s2", harness="h2", profile_id="p2", workspace="/w2")
     s2.record(DecisionKind.allow)
     s2.record(DecisionKind.allow)
     await repo.upsert(s1)
@@ -319,19 +320,6 @@ async def test_load_all_returns_multiple_sessions(session_factory):
     assert set(loaded) == {"s1", "s2"}
     assert loaded["s1"].harness == "h1" and loaded["s1"].deny_total == 1
     assert loaded["s2"].harness == "h2" and loaded["s2"].decisions_total == 2
-
-
-# --- DecisionRecord.to_dict(): the shape Task 10's JSONL writer reaches for --
-
-
-def test_decision_record_to_dict():
-    r = rec()
-    d = r.to_dict()
-    assert d["ts"] == r.ts.isoformat()
-    assert isinstance(d["ts"], str)
-    assert d["id"] == r.id
-    assert d["decision"] == "allow"
-    assert d["metadata"] == r.metadata
 
 
 # --- expires_at must be timezone-aware ---------------------------------------

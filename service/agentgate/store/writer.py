@@ -4,9 +4,11 @@ One protocol, three implementations. `write` never raises: a decision the
 caller already has must not be undone by a storage failure, and one sink
 failing must not stop the others.
 
-The FK ordering (session row -> decision row -> allow-cache row) lives
-here and nowhere else -- `decisions.session_id` references `sessions.id`
-and `allow_cache.decision_id` references `decisions.id`.
+The session row is not written here -- the session state store writes it
+during the decision, which is what satisfies the `decisions.session_id`
+foreign key by the time this runs. What is left of the FK ordering lives
+here: `allow_cache.decision_id` references `decisions.id`, so the cache row
+follows the decision row.
 """
 
 import logging
@@ -39,8 +41,6 @@ class PostgresDecisionWriter:
         self._cache_ttl_seconds = cache_ttl_seconds
 
     async def write(self, decision: Decision) -> None:
-        if decision.state is not None:
-            await self._sessions.upsert(decision.state)
         await self._decisions.insert(decision)
         if self._should_cache(decision):
             expires_at = datetime.now(timezone.utc) + timedelta(seconds=self._cache_ttl_seconds)
