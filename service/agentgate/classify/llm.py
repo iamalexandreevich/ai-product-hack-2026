@@ -15,14 +15,11 @@ import logging
 import httpx
 
 from agentgate.api.schemas import DecisionKind
-from agentgate.classify.base import Classifier
+from agentgate.classify.base import Classifier, ReviewCase
 from agentgate.classify.client import LLMClient, Stage2Error
 from agentgate.classify.prompt import build_system_prompt, build_user_message
 from agentgate.classify.schema import ClassifierOutput
-from agentgate.domain.dialogue import Dialogue
-from agentgate.domain.policy import Policy
 from agentgate.domain.verdict import Verdict
-from agentgate.normalize.model import NormalizedAction
 from agentgate.profiles.schema import ModelConfig, Profile
 
 log = logging.getLogger(__name__)
@@ -35,11 +32,9 @@ class LLMClassifier:
         self.name = name
         self._client = LLMClient(name, model_config, http)
 
-    async def classify(
-        self, action: NormalizedAction, user_request: str, policy: Policy, stage1_note: str
-    ) -> Verdict:
-        system = build_system_prompt(policy)
-        user = build_user_message(action, user_request, Dialogue(), stage1_note)
+    async def classify(self, case: ReviewCase) -> Verdict:
+        system = build_system_prompt(case.policy)
+        user = build_user_message(case.action, case.intent, case.dialogue, case.stage1_note)
         try:
             output, raw = await self._client.classify(system, user)
         except Stage2Error as exc:

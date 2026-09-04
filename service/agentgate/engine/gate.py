@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 from ulid import ULID
 
 from agentgate.api.schemas import DecideRequest, DecisionKind
-from agentgate.classify.base import Classifier
+from agentgate.classify.base import Classifier, ReviewCase
 from agentgate.domain.dialogue import Dialogue
 from agentgate.domain.policy import Policy
 from agentgate.domain.session import SessionState, SessionStateStore
@@ -99,12 +99,12 @@ class Gate:
                 history_digest=history_digest,
             )
 
-        verdict = await self._evaluate(request, action, resolved, timings)
+        verdict, seen = await self._evaluate(request, action, dialogue, resolved, timings)
         verdict = self._escalate(resolved.state, resolved.policy, verdict)
         await self._settle_session(resolved.state, verdict, cache_key, decision_id)
         return self._finish(
             decision_id, request, verdict, timings, profile_id, resolved.policy.profile_hash,
-            action, resolved.state, cache_key, history_digest=history_digest,
+            action, resolved.state, cache_key, history_digest=history_digest, dialogue=seen,
         )
 
     async def _resolve(self, request: DecideRequest, profile_id: str) -> "_Context | Verdict":
@@ -135,16 +135,17 @@ class Gate:
         return await self._states.cache_get(context.state.session_id, cache_key) is not None
 
     async def _evaluate(
-        self, request: DecideRequest, action: NormalizedAction, context: _Context, timings: Timings
-    ) -> Verdict:
+        self, request: DecideRequest, action: NormalizedAction, dialogue: Dialogue,
+        context: _Context, timings: Timings,
+    ) -> tuple[Verdict, Dialogue | None]:
+        """The verdict, and the dialogue the classifier saw -- None when stage 1 settled it."""
         with timings.stage(1):
             verdict = self._rules.evaluate(action, context.policy)
         if verdict is not None:
-            return verdict
+            return verdict, None
+        case = ReviewCase.build(action, request.user_request, dialogue, context.policy, STAGE1_PASSED)
         with timings.stage(2):
-            return await context.classifier.classify(
-                action, request.user_request, context.policy, STAGE1_PASSED
-            )
+            return await context.classifier.classify(case), case.dialogue
 
     def _escalate(self, state: SessionState | None, policy: Policy, verdict: Verdict) -> Verdict:
         if state is None or verdict.hard or verdict.decision is DecisionKind.ask:
@@ -171,11 +172,11 @@ class Gate:
         self, decision_id: str, request: DecideRequest, verdict: Verdict, timings: Timings,
         profile_id: str, profile_hash: str, action: NormalizedAction | None = None,
         state: SessionState | None = None, cache_key: str | None = None, cached: bool = False,
-        history_digest: str = "",
+        history_digest: str = "", dialogue: Dialogue | None = None,
     ) -> Decision:
         return Decision(
             id=decision_id, ts=datetime.now(timezone.utc), request=request, verdict=verdict,
             latency=timings.finish(), profile_id=profile_id, profile_hash=profile_hash,
             action=action, state=state, cache_key=cache_key, cached=cached,
-            history_digest=history_digest,
+            history_digest=history_digest, dialogue=dialogue,
         )

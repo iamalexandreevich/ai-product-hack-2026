@@ -5,7 +5,7 @@ each other -- renaming a test module must not break three others.
 from datetime import datetime, timezone
 
 from agentgate.api.schemas import DecideRequest, DecisionKind, Turn
-from agentgate.classify.base import Classifier
+from agentgate.classify.base import Classifier, ReviewCase
 from agentgate.domain.dialogue import Dialogue
 from agentgate.domain.policy import Policy
 from agentgate.domain.session import SessionState
@@ -95,17 +95,19 @@ def hard_deny_policy(**overrides) -> Policy:
 
 
 class FakeClassifier:
-    """A Classifier that answers what it was told to, and counts calls."""
+    """A Classifier that answers what it was told to, and keeps what it was asked."""
 
     def __init__(self, verdict: Verdict | None = None, name: str = "m") -> None:
         self.name = name
         self.calls = 0
+        self.cases: list[ReviewCase] = []
         self._verdict = verdict or Verdict(
             decision=DecisionKind.allow, stage=2, model=name, raw_response={"choices": []}
         )
 
-    async def classify(self, action, user_request, policy, stage1_note) -> Verdict:
+    async def classify(self, case: ReviewCase) -> Verdict:
         self.calls += 1
+        self.cases.append(case)
         return self._verdict
 
 

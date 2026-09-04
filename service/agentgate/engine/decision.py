@@ -21,6 +21,7 @@ from typing import Any
 from pydantic import BaseModel, Field, computed_field
 
 from agentgate.api.schemas import DecideRequest, DecideResponse, DecisionKind, Tool
+from agentgate.domain.dialogue import Dialogue
 from agentgate.domain.session import SessionState
 from agentgate.domain.verdict import Verdict
 from agentgate.engine.timings import Latency
@@ -84,6 +85,7 @@ class Decision:
     cache_key: str | None = None
     cached: bool = False
     history_digest: str = ""
+    dialogue: Dialogue | None = None
 
     def to_response(self) -> DecideResponse:
         return DecideResponse(

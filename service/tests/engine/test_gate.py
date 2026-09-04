@@ -1,4 +1,5 @@
 from agentgate.api.schemas import DecisionKind
+from agentgate.domain.dialogue import Dialogue
 from agentgate.engine.gate import Gate
 from agentgate.rules.chain import STAGE1
 from agentgate.session.memory import InMemorySessionStateStore
@@ -172,9 +173,30 @@ async def test_allow_is_not_replayed_from_the_cache_under_a_different_history():
 
 
 async def test_decision_records_the_digest_of_the_full_history():
-    from agentgate.domain.dialogue import Dialogue
-
     history = [turn(content="x")]
     decision = await gate().decide(decide_request("ls -la", history=history))
     assert decision.history_digest == Dialogue.of(history).digest()
     assert (await gate().decide(decide_request("ls -la"))).history_digest == Dialogue().digest()
+
+
+async def test_classifier_receives_the_fitted_dialogue_and_the_key_uses_the_full_one():
+    classifier = FakeClassifier(stage2_verdict("A"))
+    g = gate(classifier, history={"budget_chars": 50, "per_turn_chars": {"toolresult": 20}})
+    history = [turn(content="install it"), turn(role="toolresult", author="system", content="r" * 500)]
+    decision = await g.decide(decide_request("npm install lodash", history=history))
+    case = classifier.cases[0]
+    assert case.intent == "task" and case.dialogue.turns[-1].content != "r" * 500
+    assert decision.dialogue == case.dialogue
+    assert decision.history_digest == Dialogue.of(history).digest()
+
+
+async def test_intent_falls_back_to_the_last_human_turn_when_user_request_is_empty():
+    classifier = FakeClassifier(stage2_verdict("A"))
+    history = [turn(content="please install lodash"), turn(role="human", author="agent", content="not the user")]
+    await gate(classifier).decide(decide_request("npm install lodash", user_request="", history=history))
+    assert classifier.cases[0].intent == "please install lodash"
+
+
+async def test_a_stage1_decision_records_no_fitted_dialogue():
+    decision = await gate().decide(decide_request("ls -la", history=[turn()]))
+    assert decision.dialogue is None and decision.verdict.stage == 1
