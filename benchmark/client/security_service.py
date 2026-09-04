@@ -119,13 +119,25 @@ def derive_components(payload: dict[str, Any]) -> tuple[list[str], ComponentsSou
     return components, ComponentsSource.DERIVED
 
 
+# Stages that never reach a model, so their price is a real zero (spec section 5:
+# 0 = allow-cache hit or API-level refusal, 1 = deterministic rules).
+STAGES_WITHOUT_MODEL: frozenset[int] = frozenset({0, 1})
+
+
 def extract_usage_and_cost(
     payload: dict[str, Any],
     config: ServiceConfig,
     *,
     model_names: tuple[str | None, ...] = (),
+    stage: int | None = None,
 ) -> tuple[Usage, float | None, CostSource, str | None]:
-    """Cost of one request, or ``None`` plus the reason it is unknown."""
+    """Cost of one request: a number, or ``None`` plus the reason it is unknown.
+
+    A price the service reported always wins. Failing that, a decision taken without
+    calling a model costs ``0.0`` — derived from the ``stage`` the service itself
+    reports, not guessed. Only a decision that did reach the classifier and whose price
+    we cannot establish is ``None``.
+    """
     usage = Usage(
         input_tokens=_first_int(payload, config.input_token_paths),
         output_tokens=_first_int(payload, config.output_token_paths),
@@ -137,6 +149,9 @@ def extract_usage_and_cost(
     reported = _first_float(payload, config.cost_paths)
     if reported is not None:
         return usage, reported, CostSource.SERVICE_REPORTED, None
+
+    if stage in STAGES_WITHOUT_MODEL:
+        return usage, 0.0, CostSource.NO_MODEL_CALL, None
 
     if usage.input_tokens is None or usage.output_tokens is None:
         return (
@@ -224,11 +239,12 @@ def normalize_response(
     components, components_source = derive_components(payload)
     model = payload.get("model")
     model = model if isinstance(model, str) and model else None
+    stage = payload.get("stage") if isinstance(payload.get("stage"), int) else None
     usage, cost, cost_source, cost_reason = extract_usage_and_cost(
-        payload, config, model_names=(model,)
+        payload, config, model_names=(model,), stage=stage
     )
     currency: str | None = None
-    if cost is not None:
+    if cost is not None and cost_source is not CostSource.NO_MODEL_CALL:
         currency = extract_currency(payload, config) or (
             config.pricing.currency if cost_source is CostSource.COMPUTED_FROM_TOKENS else None
         )
@@ -246,7 +262,7 @@ def normalize_response(
         decision=decision,
         reason=_as_str(payload.get("reason")),
         suggest=_as_str(payload.get("suggest")),
-        stage=payload.get("stage") if isinstance(payload.get("stage"), int) else None,
+        stage=stage,
         rule_id=_as_str(payload.get("rule_id")),
         cached=payload.get("cached") if isinstance(payload.get("cached"), bool) else None,
         decision_id=_as_str(payload.get("decision_id")),

@@ -113,12 +113,24 @@ results alone, so any of them can be recomputed later from `results-<run_id>.jso
   `human_decision_count`, `false_positive`) are derived, never stored, so nothing duplicates.
 - **A case without a decision is a failed measurement, not a result.** Transport errors and timeouts
   are excluded from every rate and counted separately as `*_without_decision`.
-- **Missing is missing.** An unknown price is `None` plus a reason, never `0.0`; task slowdown has no
-  baseline in this benchmark and says so instead of estimating.
+- **Missing is missing, and free is not missing.** Price has three states: known, a real `0.0` with
+  `cost_source: no_model_call` (stage 0/1 never calls a model, derived from the `stage` the service
+  reports), and unknown as `None` plus a reason. Collapsing the last two would make the average price
+  per request meaningless, since the cascade's whole point is that most requests never reach the
+  classifier. Task slowdown is `None` with a reason that names what is missing in the current
+  `execution_mode`.
+- **One shape per breakdown.** `metrics["by"][<dimension>]` maps a group name to the same flat row
+  (ASR, Utility, FP, friction, latency, price). Add a dimension by adding a key there; never add a
+  parallel `<metric>_by_<dimension>` map, and never mirror a metric into a second summary block.
 
 `dataset_source` (`baseline | team`, `team` by default) splits the population so ASR is measurable
 on an imported corpus separately from cases written here. Everything in `attacks/cases/` today is
 `team`.
+
+`RunConfig.execution_mode` records what a run measured: `single_decision` (one action per case, what
+the benchmark does today) or `harness_loop` (a real harness drives the task, so wall clock covers
+retries after a `deny` and waits after an `ask`). It exists so a per-decision latency and a per-task
+latency can never be compared by accident.
 
 ### Scoring
 

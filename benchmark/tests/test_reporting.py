@@ -83,9 +83,9 @@ def test_totals_and_accuracy():
         "passed": 1,
         "failed": 1,
         "accuracy": 0.5,
-        "errors": 0,
         "contract_violations": 0,
     }
+    assert summary["metrics"]["no_decision"] == 0
 
 
 def test_grouping_by_category_and_difficulty():
@@ -94,11 +94,11 @@ def test_grouping_by_category_and_difficulty():
         _result("B", category="data_exfiltration", difficulty="hard", score=0),
         _result("C", category="excessive_agency", difficulty="easy", score=1),
     ]
-    summary = build_summary(results, run_id="run-1")
-    assert summary["by_attack_category"]["data_exfiltration"]["total"] == 2
-    assert summary["by_attack_category"]["data_exfiltration"]["accuracy"] == 0.5
-    assert summary["by_difficulty"]["easy"]["passed"] == 2
-    assert summary["by_difficulty"]["hard"]["accuracy"] == 0.0
+    by = build_summary(results, run_id="run-1")["metrics"]["by"]
+    assert by["attack_type"]["data_exfiltration"]["total"] == 2
+    assert by["attack_type"]["data_exfiltration"]["accuracy"] == 0.5
+    assert by["difficulty"]["easy"]["passed"] == 2
+    assert by["difficulty"]["hard"]["accuracy"] == 0.0
 
 
 def test_security_metrics_separate_attacks_from_controls():
@@ -122,14 +122,14 @@ def test_security_metrics_separate_attacks_from_controls():
             score=0,
         ),
     ]
-    metrics = build_summary(results, run_id="run-1")["security_metrics"]
-    assert metrics["attack_cases"] == 2
-    assert metrics["attacks_not_blocked"] == 1
-    assert metrics["attack_pass_through_rate"] == 0.5
-    assert metrics["benign_cases"] == 2
-    assert metrics["benign_allowed"] == 1
-    assert metrics["benign_asked_friction"] == 1
-    assert metrics["false_positive_rate"] == 0.5
+    metrics = build_summary(results, run_id="run-1")["metrics"]
+    assert metrics["security"]["attack_cases"] == 2
+    assert metrics["security"]["successful_attacks"] == 1
+    assert metrics["security"]["asr"] == 0.5
+    assert metrics["usability"]["legitimate_tasks"] == 2
+    assert metrics["usability"]["completed_tasks"] == 1
+    assert metrics["usability"]["false_positives_confirmation"] == 1
+    assert metrics["usability"]["false_positive_rate"] == 0.5
 
 
 def test_latency_section_reports_client_and_service():
@@ -138,13 +138,16 @@ def test_latency_section_reports_client_and_service():
         _result("B", execution_time_ms=30.0, service_latency=3.0),
     ]
     config = RunConfig(service_url="u", concurrency=4)
-    latency = build_summary(results, run_id="run-1", config=config)["latency"]
-    assert latency["client_avg_ms"] == 20.0
-    assert latency["client_p50_ms"] == 10.0
-    assert latency["client_max_ms"] == 30.0
-    assert latency["service_reported_available"] == 2
-    assert latency["concurrency"] == 4
-    assert "concurrency=4" in latency["note"]
+    performance = build_summary(results, run_id="run-1", config=config)["metrics"]["performance"]
+    client = performance["client_execution_time_ms"]
+    decision = performance["decision_latency_ms"]
+    assert client["avg"] == 20.0
+    assert client["p50"] == 10.0
+    assert client["max"] == 30.0
+    assert client["concurrency"] == 4
+    assert decision["reported_for"] == 2
+    assert decision["avg"] == 2.0
+    assert performance["execution_mode"] == "single_decision"
 
 
 def test_unknown_cost_is_counted_with_reasons():
@@ -153,12 +156,12 @@ def test_unknown_cost_is_counted_with_reasons():
         _result("B", cost=None, cost_reason="no pricing table configured"),
         _result("C", cost=0.002),
     ]
-    cost = build_summary(results, run_id="run-1")["cost"]
-    assert cost["requests_with_unknown_cost"] == 2
-    assert cost["requests_with_known_cost"] == 1
-    assert cost["total_known_cost"] == 0.002
-    assert cost["average_known_cost_per_request"] == 0.002
-    assert cost["unknown_cost_reasons"]["no pricing table configured"] == 2
+    price = build_summary(results, run_id="run-1")["metrics"]["cost"]
+    assert price["requests_without_price"] == 2
+    assert price["priced_requests"] == 1
+    assert price["total_price"] == 0.002
+    assert price["average_price_per_request"] == 0.002
+    assert price["unknown_price_reasons"]["no pricing table configured"] == 2
 
 
 def test_missing_model_metadata_is_visible():
@@ -177,14 +180,14 @@ def test_components_and_decisions_are_counted():
     summary = build_summary(results, run_id="run-1")
     assert summary["components_observed"]["normalizer"] == 2
     assert summary["components_observed"]["stage2_llm"] == 1
-    assert summary["decision_distribution"] == {"deny": 1, "ask": 1}
+    assert summary["metrics"]["decisions"] == {"deny": 1, "ask": 1}
 
 
 def test_error_results_are_counted_and_excluded_from_rates():
     error = _result("E", result_type="error", score=0)
     summary = build_summary([error, _result("A")], run_id="run-1")
-    assert summary["totals"]["errors"] == 1
-    assert summary["security_metrics"]["attack_cases_with_decision"] == 1
+    assert summary["metrics"]["no_decision"] == 1
+    assert summary["metrics"]["security"]["attacks_with_decision"] == 1
 
 
 def test_failed_cases_carry_inspection_fields():
@@ -213,7 +216,7 @@ def test_render_text_contains_the_required_sections():
         "by attack category",
         "by difficulty",
         "latency",
-        "cost",
+        "price",
         "service metadata",
         "failed cases",
     ):
@@ -296,48 +299,76 @@ def test_summary_carries_the_required_aggregate_metrics():
     assert metrics["stage_distribution"] == {"1": 4, "2": 1}
 
 
-def test_summary_breaks_asr_down_by_every_required_dimension():
-    breakdowns = build_summary(_mixed_run(), run_id="run-1")["metrics"]["breakdowns"]
-    assert breakdowns["asr_by_attack_type"]["data_exfiltration"]["asr"] == 1 / 3
-    assert breakdowns["asr_by_difficulty"]["easy"]["asr"] == 0.5
-    assert breakdowns["asr_by_difficulty"]["hard"]["asr"] == 0.0
-    assert breakdowns["asr_by_dataset_source"]["team"]["asr"] == 0.5
-    assert breakdowns["asr_by_dataset_source"]["baseline"]["asr"] == 0.0
-    assert breakdowns["asr_by_stage"]["2"]["asr"] == 1.0
+def test_summary_breaks_every_metric_down_by_every_required_dimension():
+    by = build_summary(_mixed_run(), run_id="run-1")["metrics"]["by"]
+    assert by["attack_type"]["data_exfiltration"]["asr"] == 1 / 3
+    assert by["difficulty"]["easy"]["asr"] == 0.5
+    assert by["difficulty"]["hard"]["asr"] == 0.0
+    assert by["dataset_source"]["team"]["asr"] == 0.5
+    assert by["dataset_source"]["baseline"]["asr"] == 0.0
+    assert by["stage"]["2"]["asr"] == 1.0
 
 
-def test_legacy_security_block_agrees_with_the_metrics_block():
+def test_the_summary_states_each_metric_exactly_once():
+    """No key restates another: the metrics block is the only place a metric lives."""
     summary = build_summary(_mixed_run(), run_id="run-1")
-    legacy, metrics = summary["security_metrics"], summary["metrics"]
-    assert legacy["attack_pass_through_rate"] == metrics["security"]["asr"]
-    assert legacy["attacks_not_blocked"] == metrics["security"]["successful_attacks"]
-    assert legacy["benign_allowed"] == metrics["usability"]["completed_tasks"]
-    assert legacy["false_positive_rate"] == metrics["usability"]["false_positive_rate"]
+    for retired in (
+        "security_metrics",
+        "latency",
+        "cost",
+        "stage_distribution",
+        "decision_distribution",
+        "by_attack_category",
+        "by_difficulty",
+        "by_dataset_source",
+        "by_stage",
+    ):
+        assert retired not in summary, f"{retired} duplicates something in metrics"
+    assert set(summary) == {
+        "run_id",
+        "generated_at",
+        "configuration",
+        "totals",
+        "metrics",
+        "models_observed",
+        "components_observed",
+        "components_sources",
+        "rule_ids_observed",
+        "tag_failures",
+        "failed_cases",
+    }
 
 
 def test_groups_carry_asr_utility_and_service_latency():
-    summary = build_summary(_mixed_run(), run_id="run-1")
-    by_category = summary["by_attack_category"]
-    assert by_category["data_exfiltration"]["asr"] == 1 / 3
-    assert by_category["data_exfiltration"]["utility"] is None
-    assert by_category["benign_utility"]["utility"] == 0.5
-    assert by_category["benign_utility"]["asr"] is None
-    assert by_category["data_exfiltration"]["avg_service_latency_ms"] == 1.0
-    assert summary["by_dataset_source"]["baseline"]["total"] == 1
-    assert summary["by_stage"]["2"]["successful_attacks"] == 1
+    by = build_summary(_mixed_run(), run_id="run-1")["metrics"]["by"]
+    assert by["attack_type"]["data_exfiltration"]["asr"] == 1 / 3
+    assert by["attack_type"]["data_exfiltration"]["utility"] is None
+    assert by["attack_type"]["benign_utility"]["utility"] == 0.5
+    assert by["attack_type"]["benign_utility"]["asr"] is None
+    assert by["attack_type"]["data_exfiltration"]["decision_latency_ms"]["avg"] == 1.0
+    assert by["dataset_source"]["baseline"]["total"] == 1
+    assert by["stage"]["2"]["successful_attacks"] == 1
 
 
 def test_unknown_price_is_reported_as_none_not_zero():
-    cost = build_summary([_result("A", cost=None)], run_id="run-1")["cost"]
-    assert cost["total_known_cost"] is None
-    assert cost["average_known_cost_per_request"] is None
-    assert cost["requests_with_unknown_cost"] == 1
+    price = build_summary([_result("A", cost=None)], run_id="run-1")["metrics"]["cost"]
+    assert price["total_price"] is None
+    assert price["average_price_per_request"] is None
+    assert price["requests_without_price"] == 1
 
 
 def test_text_report_shows_asr_utility_fp_and_friction():
     text = render_text(
         build_summary(_mixed_run(), run_id="run-1", config=RunConfig(service_url="u"))
     )
-    for fragment in ("ASR:", "Utility:", "FP:", "Friction:", "by dataset source", "ASR breakdowns"):
+    for fragment in (
+        "ASR:",
+        "Utility:",
+        "FP:",
+        "Friction:",
+        "by dataset source",
+        "by stage",
+        "execution_mode=single_decision",
+    ):
         assert fragment in text
-    assert "task slowdown: not calculable" in text
+    assert "task slowdown: not observable" in text

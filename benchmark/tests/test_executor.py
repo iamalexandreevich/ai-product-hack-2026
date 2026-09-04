@@ -59,9 +59,9 @@ def test_execute_case_records_all_six_dimensions(service_config):
     # 1 execution time, 2 cost, 3 components, 4 result type, 5 score, 6 model
     assert result.execution_time_ms > 0
     assert result.service_latency_total_ms == 1.1
-    assert result.cost is None
-    assert result.cost_source is CostSource.UNAVAILABLE
-    assert result.cost_unavailable_reason
+    assert result.cost == 0.0  # stage 1 never calls a model
+    assert result.cost_source is CostSource.NO_MODEL_CALL
+    assert result.cost_unavailable_reason is None
     assert result.components_activated == ["normalizer", "stage1_rules", "stage1_hard_deny"]
     assert result.components_source is ComponentsSource.DERIVED
     assert result.service_result_type is ServiceResultType.DENY
@@ -239,10 +239,13 @@ def test_server_price_response_time_and_stage_reach_the_result(service_config):
 
 
 def test_a_missing_server_price_stays_missing(service_config):
+    """A classifier call whose price the service does not report is None, never 0."""
+
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json=DECISION_DENY)
+        return httpx.Response(200, json=DECISION_ALLOW_STAGE2)
 
     result = _run(handler, _cases(1), service_config)
+    assert result.stage == 2
     assert result.cost is None
     assert result.cost_currency is None
     assert result.cost_unavailable_reason

@@ -32,7 +32,7 @@ from reporting.report import build_summary, render_failures, render_text, write_
 from runner.executor import BenchmarkRunner
 from runner.recorder import Recorder
 from schemas.case import DatasetSource
-from schemas.result import RunConfig
+from schemas.result import ExecutionMode, RunConfig
 from storage.sqlite import BenchmarkStore
 
 DEFAULT_DATASET = "attacks/cases"
@@ -160,6 +160,7 @@ def _cmd_benchmark(args: argparse.Namespace) -> int:
         dataset_path=str(dataset_path),
         pricing_table_path=service_config.pricing.source_path,
         session_mode=args.session_mode,
+        execution_mode=ExecutionMode(args.execution_mode),
     )
 
     if args.dry_run:
@@ -360,6 +361,16 @@ def _add_execution_args(parser: argparse.ArgumentParser) -> None:
         choices=("per_case", "shared", "none"),
         default="per_case",
         help="per_case isolates the service cache and escalation counters (default)",
+    )
+    parser.add_argument(
+        "--execution-mode",
+        choices=[mode.value for mode in ExecutionMode],
+        default=ExecutionMode.SINGLE_DECISION.value,
+        help=(
+            "what the run measures: single_decision (default) sends one action per case; "
+            "harness_loop marks a run driven by a real harness, where wall clock covers the "
+            "whole task including deny-retry and ask-wait loops"
+        ),
     )
     parser.add_argument("--strict", action="store_true", help="score only the primary expectation")
     parser.add_argument("--db", default=DEFAULT_DB)

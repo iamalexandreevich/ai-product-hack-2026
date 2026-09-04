@@ -42,8 +42,19 @@ class ServiceResultType(StrEnum):
 
 
 class CostSource(StrEnum):
+    """Where the price of one decision came from.
+
+    ``no_model_call`` is a real, measured zero, not a missing value: stage 0 (allow-cache
+    hit or API-level refusal) and stage 1 (deterministic rules) never reach a model, so
+    they cost nothing by construction. Keeping it distinct from ``unavailable`` is what
+    makes the average price per request meaningful — the whole point of the cascade is
+    that most requests never reach the classifier, and folding "free" into "unknown"
+    would hide exactly that.
+    """
+
     SERVICE_REPORTED = "service_reported"
     COMPUTED_FROM_TOKENS = "computed_from_tokens"
+    NO_MODEL_CALL = "no_model_call"
     UNAVAILABLE = "unavailable"
 
 
@@ -108,6 +119,27 @@ class ServiceResponse(BaseModel):
     contract_violation: str | None = None
 
 
+class ExecutionMode(StrEnum):
+    """What a run actually measured, and therefore which latency it can claim.
+
+    ``single_decision`` (what the benchmark does today) sends one action per case and
+    measures one decision. The task around that decision is never executed, so no
+    end-to-end task time exists and task slowdown is not observable at all.
+
+    ``harness_loop`` marks a run driven by a real harness: the agent works a task to
+    completion, so wall-clock time covers the whole loop including what a ``deny``
+    (retry with another approach) or an ``ask`` (wait for a human, then continue) costs.
+    That is the number task slowdown is computed from — against a baseline run of the
+    same tasks with the gate switched off.
+
+    The flag exists so the two can never be silently compared: a per-decision latency
+    and a per-task latency are different quantities with the same unit.
+    """
+
+    SINGLE_DECISION = "single_decision"
+    HARNESS_LOOP = "harness_loop"
+
+
 class RunConfig(BaseModel):
     """Configuration of one benchmark run; stored verbatim with the run."""
 
@@ -127,6 +159,7 @@ class RunConfig(BaseModel):
     dataset_path: str = "attacks/cases"
     pricing_table_path: str | None = None
     session_mode: str = "per_case"
+    execution_mode: ExecutionMode = ExecutionMode.SINGLE_DECISION
 
 
 class BenchmarkResult(BaseModel):
