@@ -84,3 +84,20 @@ def test_validate_token_for_bind_non_localhost_with_token(monkeypatch):
 def test_allow_cache_ttl_defaults_to_a_day(monkeypatch):
     monkeypatch.setenv("AGENTGATE_DB_URL", "postgresql+asyncpg://u:p@localhost/agentgate")
     assert Settings().allow_cache_ttl_seconds == 86400
+
+
+def test_git_sha_defaults_to_none(monkeypatch):
+    monkeypatch.setenv("AGENTGATE_DB_URL", "postgresql+asyncpg://u:p@localhost/agentgate")
+    assert Settings().git_sha is None
+
+
+def test_git_sha_empty_string_is_none(monkeypatch):
+    monkeypatch.setenv("AGENTGATE_DB_URL", "postgresql+asyncpg://u:p@localhost/agentgate")
+    monkeypatch.setenv("AGENTGATE_GIT_SHA", "")
+    assert Settings().git_sha is None
+
+
+def test_git_sha_is_read_from_env(monkeypatch):
+    monkeypatch.setenv("AGENTGATE_DB_URL", "postgresql+asyncpg://u:p@localhost/agentgate")
+    monkeypatch.setenv("AGENTGATE_GIT_SHA", "abc123")
+    assert Settings().git_sha == "abc123"

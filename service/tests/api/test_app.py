@@ -44,8 +44,9 @@ class FakeDecisionRepo:
 
 
 def build(tmp_path, token=None, bind="127.0.0.1:8400", classifier=None, db_ok=True,
-          gate=None, key_repo=None, sessions_broken=False):
-    settings = Settings(db_url="postgresql+asyncpg://x", token=token, bind=bind, log_path=tmp_path / "d.jsonl")
+          gate=None, key_repo=None, sessions_broken=False, git_sha=None):
+    settings = Settings(db_url="postgresql+asyncpg://x", token=token, bind=bind,
+                        log_path=tmp_path / "d.jsonl", git_sha=git_sha)
     profiles = {"default": profile()}
     classifier = classifier or FakeClassifier()
     sessions = FakeSessionRecords(upsert_error=RuntimeError("db down") if sessions_broken else None)
@@ -292,6 +293,18 @@ async def test_healthz_needs_no_token(tmp_path):
     app, _, _, _ = build(tmp_path, token="secret")
     r = await call(app, "GET", "/healthz")
     assert r.status_code == 200
+
+
+async def test_healthz_reports_git_sha_from_settings(tmp_path):
+    app, _, _, _ = build(tmp_path, git_sha="0123456789abcdef0123456789abcdef01234567")
+    r = await call(app, "GET", "/healthz")
+    assert r.json()["git_sha"] == "0123456789abcdef0123456789abcdef01234567"
+
+
+async def test_healthz_git_sha_is_null_when_unset(tmp_path):
+    app, _, _, _ = build(tmp_path)
+    r = await call(app, "GET", "/healthz")
+    assert "git_sha" in r.json() and r.json()["git_sha"] is None
 
 
 # --- Persistence never changes the answer ---------------------------------

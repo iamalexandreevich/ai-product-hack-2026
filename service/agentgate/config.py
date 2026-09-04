@@ -60,6 +60,15 @@ class Settings(BaseSettings):
     # up to this long: revocation is not instantaneous, it is bounded by
     # this TTL.
     api_key_cache_ttl_seconds: float = 45.0
+    # Full commit SHA the image was built from (Dockerfile ARG GIT_SHA ->
+    # ENV AGENTGATE_GIT_SHA). None for a build without the argument.
+    git_sha: str | None = None
+
+    @field_validator("git_sha")
+    @classmethod
+    def _blank_git_sha_is_none(cls, value: str | None) -> str | None:
+        # A compose build-arg that was not supplied arrives as "", not unset.
+        return value or None
 
     @field_validator("bind")
     @classmethod

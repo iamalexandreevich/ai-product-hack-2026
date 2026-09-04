@@ -427,7 +427,8 @@ paths:
         "db": <bool>, "llm": null}`: `status` is `degraded` when the database probe
         fails, `ok` otherwise; `db` is the boolean result of that probe; `llm` is
         reserved and currently always `null`. The status code is always `200` — a
-        `degraded` body, not a 5xx, signals a dependency is down. A single `/healthz`
+        `degraded` body, not a 5xx, signals a dependency is down. `git_sha` is the
+        commit the running image was built from, or `null` for a build without it. A single `/healthz`
         right after a container start can briefly report `db: false` during connection
         warmup and then recover.
       operationId: healthz
@@ -851,12 +852,20 @@ components:
           - type: 'null'
           title: Llm
           description: Reserved for the active LLM endpoint's status; currently always null.
+        git_sha:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Git Sha
+          description: Full commit SHA the running image was built from; `null` when the image
+            was built without it (local builds).
       additionalProperties: false
       type: object
       required:
       - status
       - db
       - llm
+      - git_sha
       title: Health
       description: Response of `GET /healthz`. Always delivered with HTTP 200.
     LatencyMs:

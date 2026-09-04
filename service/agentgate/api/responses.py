@@ -40,6 +40,12 @@ class Health(BaseModel):
     llm: str | None = Field(
         description="Reserved for the active LLM endpoint's status; currently always null."
     )
+    git_sha: str | None = Field(
+        description=(
+            "Full commit SHA the running image was built from; `null` when the image "
+            "was built without it (local builds)."
+        )
+    )
 
 
 class Error(BaseModel):

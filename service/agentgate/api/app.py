@@ -373,7 +373,8 @@ def create_app(
         "db": <bool>, "llm": null}`: `status` is `degraded` when the database probe
         fails, `ok` otherwise; `db` is the boolean result of that probe; `llm` is
         reserved and currently always `null`. The status code is always `200` — a
-        `degraded` body, not a 5xx, signals a dependency is down. A single `/healthz`
+        `degraded` body, not a 5xx, signals a dependency is down. `git_sha` is the
+        commit the running image was built from, or `null` for a build without it. A single `/healthz`
         right after a container start can briefly report `db: false` during connection
         warmup and then recover.
         """
@@ -384,7 +385,7 @@ def create_app(
             except Exception:  # noqa: BLE001 - a broken probe means "not ok", not a 500 from /healthz
                 log.warning("database probe failed", exc_info=True)
                 db_ok = False
-        return Health(status="ok" if db_ok else "degraded", db=db_ok, llm=None)
+        return Health(status="ok" if db_ok else "degraded", db=db_ok, llm=None, git_sha=settings.git_sha)
 
     install_openapi(app)
     return app
