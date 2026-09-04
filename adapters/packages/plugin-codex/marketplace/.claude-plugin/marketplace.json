@@ -1,0 +1,9 @@
+{
+  "name": "agentgate",
+  "owner": { "name": "AgentGate" },
+  "metadata": { "description": "AgentGate security gate for Codex", "version": "0.1.0" },
+  "plugins": [
+    { "name": "gate", "description": "Gate every tool call through the AgentGate guard service.",
+      "version": "0.1.0", "author": { "name": "AgentGate" }, "source": "./plugins/gate" }
+  ]
+}

@@ -1,0 +1,135 @@
+From 29ce183a4d0042f5cc01016d904269bf805d48da Mon Sep 17 00:00:00 2001
+From: AgentGate <gate@agentgate.dev>
+Date: Thu, 3 Sep 2026 17:26:16 +0300
+Subject: [PATCH] gate: revive permission.ask hook via a permission reviewer
+
+Adds a reviewer callback to the permission service that sees the effective
+rule decision (allow/ask) and may replace it with allow/ask/deny. The plugin
+service registers a reviewer that runs the previously-dead permission.ask
+hook, giving opencode 1.x / Kilo the same interception point opencode 2.0 has
+via permission.hook("evaluate"). Reviewer is stored in the layer closure (not
+InstanceState) so it can be registered at construction; it runs inside the
+permission ask flow, which already carries the instance context.
+---
+ packages/opencode/src/permission/index.ts | 39 ++++++++++++++++++++++-
+ packages/opencode/src/plugin/index.ts     | 15 ++++++++-
+ 2 files changed, 52 insertions(+), 2 deletions(-)
+
+diff --git a/packages/opencode/src/permission/index.ts b/packages/opencode/src/permission/index.ts
+index 2e27ff2..361dbbc 100644
+--- a/packages/opencode/src/permission/index.ts
++++ b/packages/opencode/src/permission/index.ts
+@@ -9,10 +9,18 @@ import { EventV2Bridge } from "@/event-v2-bridge"
+ 
+ export const Event = PermissionV1.Event
+ 
++// gate_change: a reviewer sees the effective rule decision and may replace it,
++// giving 1.x the same interception point opencode 2.0 has via permission.hook.
++export type GateReviewer = (
++  input: PermissionV1.Request,
++  output: { status: "allow" | "ask" | "deny"; message?: string },
++) => Effect.Effect<void>
++
+ export interface Interface {
+   readonly ask: (input: PermissionV1.AskInput) => Effect.Effect<void, PermissionV1.Error>
+   readonly reply: (input: PermissionV1.ReplyInput) => Effect.Effect<void, PermissionV1.NotFoundError>
+   readonly list: () => Effect.Effect<ReadonlyArray<PermissionV1.Request>>
++  readonly setReviewer: (fn: GateReviewer) => Effect.Effect<void> // gate_change
+ }
+ 
+ interface PendingEntry {
+@@ -43,6 +51,7 @@ const layer = Layer.effect(
+   Service,
+   Effect.gen(function* () {
+     const events = yield* EventV2Bridge.Service
++    let reviewer: GateReviewer | undefined // gate_change: closure-scoped, shared
+     const state = yield* InstanceState.make<State>(
+       Effect.fn("Permission.state")(function* (ctx) {
+         void ctx
+@@ -81,6 +90,33 @@ const layer = Layer.effect(
+         needsAsk = true
+       }
+ 
++      // gate_change start: reviewer may replace the effective decision.
++      if (reviewer) {
++        const gate = {
++          status: (needsAsk ? "ask" : "allow") as "allow" | "ask" | "deny",
++          message: undefined as string | undefined,
++        }
++        const info: PermissionV1.Request = {
++          id: request.id ?? PermissionV1.ID.ascending(),
++          sessionID: request.sessionID,
++          permission: request.permission,
++          patterns: request.patterns,
++          metadata: request.metadata,
++          always: request.always,
++          tool: request.tool,
++        }
++        yield* reviewer(info, gate)
++        if (gate.status === "deny") {
++          return yield* new PermissionV1.DeniedError({
++            ruleset: [
++              { permission: request.permission, pattern: request.patterns[0] ?? "*", action: "deny" } as PermissionV1.Rule,
++            ],
++          })
++        }
++        needsAsk = gate.status === "ask"
++      }
++      // gate_change end
++
+       if (!needsAsk) return
+ 
+       const id = request.id ?? PermissionV1.ID.ascending()
+@@ -171,7 +207,8 @@ const layer = Layer.effect(
+       return Array.from(pending.values(), (item) => item.info)
+     })
+ 
+-    return Service.of({ ask, reply, list })
++    const setReviewer = (fn: GateReviewer) => Effect.sync(() => { reviewer = fn }) // gate_change
++    return Service.of({ ask, reply, list, setReviewer })
+   }),
+ )
+ 
+diff --git a/packages/opencode/src/plugin/index.ts b/packages/opencode/src/plugin/index.ts
+index 1558c70..13b275d 100644
+--- a/packages/opencode/src/plugin/index.ts
++++ b/packages/opencode/src/plugin/index.ts
+@@ -30,6 +30,7 @@ import { registerAdapter } from "@/control-plane/adapters"
+ import type { WorkspaceAdapter } from "@/control-plane/types"
+ import { RuntimeFlags } from "@/effect/runtime-flags"
+ import { EventV2Bridge } from "@/event-v2-bridge"
++import { Permission } from "../permission" // gate_change
+ import { InstallationChannel } from "@opencode-ai/core/installation/version"
+ 
+ type State = {
+@@ -301,6 +302,18 @@ const layer = Layer.effect(
+       yield* InstanceState.get(state)
+     })
+ 
++    // gate_change: revive the (dead) permission.ask hook by registering a
++    // reviewer that runs the plugin hooks. The runtime is captured here so the
++    // hook trigger executes with the plugin instance context available, even
++    // though the reviewer is invoked from inside the permission service.
++    // The reviewer is invoked from inside the permission service's ask flow,
++    // which already carries the instance context, so the hook trigger runs
++    // directly — trigger mutates `output` in place and asVoid drops its return.
++    const permission = yield* Permission.Service
++    yield* permission.setReviewer((input, output) =>
++      trigger("permission.ask", input as any, output as any).pipe(Effect.asVoid),
++    )
++
+     return Service.of({ trigger, list, init })
+   }),
+ )
+@@ -308,7 +321,7 @@ const layer = Layer.effect(
+ export const node = LayerNode.make({
+   service: Service,
+   layer: layer,
+-  deps: [EventV2Bridge.node, Config.node, RuntimeFlags.node],
++  deps: [EventV2Bridge.node, Config.node, RuntimeFlags.node, Permission.node], // gate_change
+ })
+ 
+ export * as Plugin from "."
+-- 
+2.50.1 (Apple Git-155)
+
