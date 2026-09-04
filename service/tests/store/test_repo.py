@@ -13,7 +13,7 @@ from agentgate.engine.timings import Latency
 from agentgate.store.models import SessionRow
 from agentgate.store.repo import DecisionRepo, SessionRepo
 from tests.conftest import requires_db
-from tests.factories import WORKSPACE, decide_request, decision, session_state, shell_action
+from tests.factories import WORKSPACE, decide_request, decision, dialogue, session_state, shell_action, turn
 
 pytestmark = requires_db
 
@@ -333,3 +333,46 @@ async def test_cache_put_requires_timezone_aware_expires_at(session_factory):
     naive = datetime(2099, 1, 1, 12, 0, 0)  # no tzinfo
     with pytest.raises(ValueError):
         await srepo.cache_put("s1", "hash", d.id, naive)
+
+
+# --- v2: history, protocol, idempotency key, replay --------------------------
+
+
+async def test_v2_columns_round_trip(session_factory):
+    await _seed_session(session_factory)
+    repo = DecisionRepo(session_factory)
+    seen = dialogue(turn(content="x"), turn(role="toolresult", author="system", content="y", tool="bash", call_id="c1"))
+    d = decision(id=str(ULID()), request=decide_request("ls", history=[turn(content="x")]),
+                 action=shell_action("ls"), dialogue=seen, history_digest="h" * 64, idempotency_key="k-1")
+    await repo.insert(d)
+    row = (await repo.list(session_id=None, model=None, limit=1, before=None))[0]
+    assert row.protocol == 1 and row.history_digest == "h" * 64 and row.idempotency_key == "k-1"
+    assert [t.content for t in row.history] == ["x", "y"] and row.history[1].tool == "bash"
+
+
+async def test_second_insert_with_the_same_idempotency_key_creates_no_row(session_factory):
+    await _seed_session(session_factory)
+    repo = DecisionRepo(session_factory)
+    await repo.insert(decision(id=str(ULID()), request=decide_request("ls"), action=shell_action("ls"), idempotency_key="dup"))
+    await repo.insert(decision(id=str(ULID()), request=decide_request("ls"), action=shell_action("ls"), idempotency_key="dup"))
+    rows = await repo.list(session_id=None, model=None, limit=10, before=None)
+    assert len(rows) == 1
+
+
+async def test_rows_without_a_key_never_conflict_with_each_other(session_factory):
+    await _seed_session(session_factory)
+    repo = DecisionRepo(session_factory)
+    await repo.insert(rec())
+    await repo.insert(rec())
+    assert len(await repo.list(session_id=None, model=None, limit=10, before=None)) == 2
+
+
+async def test_load_replayable_returns_keyed_rows_newer_than_the_cutoff(session_factory):
+    await _seed_session(session_factory)
+    repo = DecisionRepo(session_factory)
+    old_ts = datetime.now(timezone.utc) - timedelta(days=2)
+    await repo.insert(decision(id=str(ULID()), ts=old_ts, request=decide_request("ls"), action=shell_action("ls"), idempotency_key="old"))
+    await repo.insert(decision(id=str(ULID()), request=decide_request("ls"), action=shell_action("ls"), idempotency_key="fresh"))
+    await repo.insert(rec())
+    loaded = await repo.load_replayable(datetime.now(timezone.utc) - timedelta(days=1))
+    assert [r.idempotency_key for r in loaded] == ["fresh"]

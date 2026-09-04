@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from agentgate.domain.session import RECENT_MAXLEN, SessionState
 from agentgate.engine.decision import Decision, DecisionRecord
-from agentgate.store.mapper import row_from_record, record_from_row
+from agentgate.store.mapper import record_from_row
 from agentgate.store.models import AllowCacheRow, DecisionRow, SessionRow
 
 
@@ -36,14 +36,35 @@ class DecisionRepo:
     async def insert(self, decision: Decision) -> None:
         """Insert one decision.
 
+        A row whose ``idempotency_key`` is already present is silently not
+        inserted: two concurrent repeats of one call must leave one row.
         Raises ``sqlalchemy.exc.IntegrityError`` if the decision's session id
         is not ``None`` and does not reference an existing session (see class
         docstring for the required call ordering), or if its id collides
         with an existing decision.
         """
+        # Core insert against the Table, keyed by column *names* (so `metadata`
+        # is just `metadata`), not the ORM entity with its `metadata_` attribute.
+        table = DecisionRow.__table__
+        values = decision.to_record().model_dump(exclude={"decision_id"})
+        stmt = pg_insert(table).values(**values).on_conflict_do_nothing(
+            index_elements=[table.c.idempotency_key],
+            index_where=table.c.idempotency_key.isnot(None),
+        )
         async with self._sf() as s:
-            s.add(row_from_record(decision.to_record()))
+            await s.execute(stmt)
             await s.commit()
+
+    async def load_replayable(self, newer_than: datetime) -> list[DecisionRecord]:
+        """Decisions that carried an ``Idempotency-Key`` and are recent enough to replay."""
+        stmt = (
+            select(DecisionRow)
+            .where(DecisionRow.idempotency_key.isnot(None), DecisionRow.ts > newer_than)
+            .order_by(DecisionRow.id)
+        )
+        async with self._sf() as s:
+            rows = (await s.execute(stmt)).scalars().all()
+        return [record_from_row(r) for r in rows]
 
     async def list(
         self, session_id: str | None, model: str | None, limit: int, before: str | None
