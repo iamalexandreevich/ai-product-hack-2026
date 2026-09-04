@@ -45,6 +45,33 @@ DEFAULT_KEY_CACHE_TTL_SECONDS = 45.0
 
 _BEARER_PREFIX = "Bearer "
 
+BEARER_SCHEME = {
+    "type": "http",
+    "scheme": "bearer",
+    "description": """\
+`Authorization: Bearer <credential>`. The credential is EITHER the static
+`AGENTGATE_TOKEN` (set in the service's environment) OR an issued API key. A
+request authenticates if the bearer matches either one; both are checked in
+constant time.
+
+**API keys** are minted by the operator from the CLI, never over HTTP:
+`python -m agentgate keys create --label <name>` (also `keys list`,
+`keys revoke <key_id>`). A key is shown exactly once at creation, looks like
+`agk_` followed by 43 URL-safe characters, and is stored only as a SHA-256 hash
+— the plaintext is never persisted or logged. A revoked or expired key stops
+working within a short in-process cache TTL (revocation is not instant, up to a
+minute). Hand each integrator their own key so it can be revoked individually.
+
+OpenAPI cannot express the conditional rule, so it is stated here: on a
+non-localhost bind a credential is required (the service will not start without a
+token, and issued keys are also accepted); on a localhost bind with no token and
+no keys, every request passes (dev mode) — which is why the scheme is declared
+optional in `security`. `GET /healthz` never requires a credential. A missing,
+wrong, expired or revoked credential all return the same opaque HTTP 401 (the
+body does not say which); every other failure is a 200 `ask`, not a 401.
+""",
+}
+
 
 class _KeyVerifier:
     """Verifies a bearer token as an API key, with a short in-process TTL cache.
@@ -126,7 +153,7 @@ def make_require_token(
 
     async def require_token(
         background: BackgroundTasks,
-        authorization: str | None = Header(default=None),
+        authorization: str | None = Header(default=None, include_in_schema=False),
     ) -> None:
         if expected is None:
             return

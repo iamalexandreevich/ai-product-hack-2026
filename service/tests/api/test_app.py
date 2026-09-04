@@ -40,7 +40,7 @@ class FakeDecisionRepo:
         rows = sorted(rows, key=lambda r: r.id, reverse=True)
         if before:
             rows = [r for r in rows if r.id < before]
-        return [r.to_view() for r in rows[:limit]]
+        return [r.to_record() for r in rows[:limit]]
 
 
 def build(tmp_path, token=None, bind="127.0.0.1:8400", classifier=None, db_ok=True,
@@ -84,7 +84,7 @@ async def test_decide_allow_and_persist(tmp_path):
     assert r.status_code == 200
     data = r.json()
     assert data["decision"] == "allow" and data["stage"] == 1 and data["decision_id"]
-    assert len(drepo.rows) == 1 and drepo.rows[0].to_view().metadata == {"run_id": "r"}
+    assert len(drepo.rows) == 1 and drepo.rows[0].to_record().metadata == {"run_id": "r"}
     # FK order: the writer puts the session row down first, so it exists by
     # the time the decision row referencing it is inserted.
     assert sessions.upserts == ["s1"]
@@ -98,7 +98,7 @@ async def test_decide_deny_is_200(tmp_path):
     assert r.status_code == 200
     data = r.json()
     assert data["decision"] == "deny" and data["rule_id"] == "hard-deny.pipe-exec"
-    assert drepo.rows[0].to_view().decision is DecisionKind.deny
+    assert drepo.rows[0].to_record().decision is DecisionKind.deny
 
 
 async def test_decide_ask_is_200(tmp_path):

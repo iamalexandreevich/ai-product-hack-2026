@@ -34,20 +34,20 @@ def test_response_latency_comes_from_the_measured_stages():
     assert response.latency_ms.stage1 == 1 and response.latency_ms.stage2 is None
 
 
-def test_view_exposes_both_id_and_decision_id():
-    dumped = decision().to_view().model_dump(mode="json")
+def test_record_exposes_both_id_and_decision_id():
+    dumped = decision().to_record().model_dump(mode="json")
     assert dumped["id"] == "01J0" and dumped["decision_id"] == "01J0"
 
 
-def test_view_normalized_is_empty_when_nothing_was_normalized():
-    assert decision(action=None).to_view().normalized == {}
+def test_record_normalized_is_empty_when_nothing_was_normalized():
+    assert decision(action=None).to_record().normalized == {}
 
 
-def test_view_does_not_smuggle_the_cache_key_into_normalized():
-    view = decision(cache_key="k" * 64).to_view()
-    assert "cache_key" not in view.normalized
+def test_record_does_not_smuggle_the_cache_key_into_normalized():
+    record = decision(cache_key="k" * 64).to_record()
+    assert "cache_key" not in record.normalized
 
 
-def test_view_ts_serializes_as_an_iso_string():
-    dumped = decision().to_view().model_dump(mode="json")
+def test_record_ts_serializes_as_an_iso_string():
+    dumped = decision().to_record().model_dump(mode="json")
     assert isinstance(dumped["ts"], str) and dumped["ts"].startswith(str(datetime.now(timezone.utc).year))

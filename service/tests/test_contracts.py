@@ -31,6 +31,11 @@ def committed_openapi():
     return yaml.safe_load((CONTRACTS / "openapi.yaml").read_text(encoding="utf-8"))
 
 
+@pytest.fixture(scope="module")
+def generated_openapi(exporter):
+    return exporter.build_document()
+
+
 def test_request_schema_matches_contract():
     committed = json.loads((CONTRACTS / "decide_request.schema.json").read_text())
     assert committed == DecideRequest.model_json_schema()
@@ -41,13 +46,21 @@ def test_response_schema_matches_contract():
     assert committed == DecideResponse.model_json_schema()
 
 
-def test_openapi_matches_generated_document(exporter, committed_openapi):
-    """The committed OpenAPI document must equal freshly generated output.
+def test_openapi_yaml_matches_what_the_app_generates(committed_openapi, generated_openapi):
+    """The committed document must equal the one the assembled service serves.
 
-    This is what stops contracts/openapi.yaml from drifting away from the
-    pydantic models: change a model without regenerating and this fails.
+    Nothing about the contract is authored twice: change a route or a model
+    without regenerating and this fails.
     """
-    assert committed_openapi == exporter.build_document()
+    assert committed_openapi == generated_openapi
+
+
+def test_openapi_publishes_one_schema_per_model(generated_openapi):
+    """A model whose validation and serialization shapes differ is split by
+    pydantic into `<name>-Input`/`<name>-Output`, silently renaming a type
+    external clients generate from."""
+    split = [name for name in generated_openapi["components"]["schemas"] if "-" in name]
+    assert split == []
 
 
 def test_openapi_refs_all_resolve(committed_openapi):
@@ -114,13 +127,12 @@ def test_openapi_documents_every_v1_endpoint(committed_openapi):
     }
 
 
-def test_openapi_marks_no_endpoint_as_provisional(committed_openapi):
-    """All four routes are implemented — none may still claim to be unbuilt."""
-    for path, item in committed_openapi["paths"].items():
-        for method in item.values():
-            description = method.get("description", "")
-            assert "NOT YET IMPLEMENTED" not in description, path
-            assert "provisional" not in description.lower(), path
+def test_no_endpoint_is_marked_provisional(committed_openapi):
+    """All four routes are implemented — nothing in the document may still
+    describe one as unbuilt."""
+    document = yaml.safe_dump(committed_openapi).lower()
+    assert "provisional" not in document
+    assert "not yet implemented" not in document
 
 
 def test_openapi_auth_covers_api_keys(committed_openapi):
@@ -136,21 +148,3 @@ def test_openapi_bearer_scheme_is_optional(committed_openapi):
     assert {} in security
     assert {"bearerAuth": []} in security
     assert "bearerAuth" in committed_openapi["components"]["securitySchemes"]
-
-
-def test_export_openapi_rejects_stale_field_descriptions(exporter):
-    """The description overlay fails loudly when a field disappears.
-
-    Without this, renaming a model field would silently drop its
-    documentation instead of breaking the exporter.
-    """
-    original = exporter.FIELD_DESCRIPTIONS["DecideRequest"]
-    exporter.FIELD_DESCRIPTIONS["DecideRequest"] = {
-        **original,
-        "field_that_does_not_exist": "stale",
-    }
-    try:
-        with pytest.raises(RuntimeError, match="unknown fields"):
-            exporter.build_document()
-    finally:
-        exporter.FIELD_DESCRIPTIONS["DecideRequest"] = original

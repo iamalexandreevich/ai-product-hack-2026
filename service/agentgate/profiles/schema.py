@@ -67,6 +67,10 @@ class Prose(BaseModel):
 
 
 class Profile(BaseModel):
+    """A policy profile as the service loaded it. Server-side configuration; a
+    harness never receives this in normal operation. Contains no secret values
+    — only the *names* of the environment variables holding API keys."""
+
     id: str
     allowed_paths: list[str]
     protected_paths: list[str]

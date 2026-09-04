@@ -13,8 +13,8 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from agentgate.domain.session import RECENT_MAXLEN, SessionState
-from agentgate.engine.decision import Decision, DecisionView
-from agentgate.store.mapper import row_from_view, view_from_row
+from agentgate.engine.decision import Decision, DecisionRecord
+from agentgate.store.mapper import row_from_record, record_from_row
 from agentgate.store.models import AllowCacheRow, DecisionRow, SessionRow
 
 
@@ -40,12 +40,12 @@ class DecisionRepo:
         with an existing decision.
         """
         async with self._sf() as s:
-            s.add(row_from_view(decision.to_view()))
+            s.add(row_from_record(decision.to_record()))
             await s.commit()
 
     async def list(
         self, session_id: str | None, model: str | None, limit: int, before: str | None
-    ) -> list[DecisionView]:
+    ) -> list[DecisionRecord]:
         """List decisions ordered by ``id`` descending (newest first).
 
         ``before`` pages backwards: only rows with ``id < before`` are
@@ -64,7 +64,7 @@ class DecisionRepo:
             stmt = stmt.where(DecisionRow.id < before)
         async with self._sf() as s:
             rows = (await s.execute(stmt)).scalars().all()
-        return [view_from_row(r) for r in rows]
+        return [record_from_row(r) for r in rows]
 
 
 class SessionRepo:

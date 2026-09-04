@@ -37,7 +37,7 @@ class JsonlDecisionWriter:
         self._logger = logger
 
     async def write(self, decision: Decision) -> None:
-        self._logger.write(decision.to_view().model_dump(mode="json"))
+        self._logger.write(decision.to_record().model_dump(mode="json"))
 
 
 class PostgresDecisionWriter:

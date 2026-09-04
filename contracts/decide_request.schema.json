@@ -3,11 +3,13 @@
     "ActionArgs": {
       "properties": {
         "cwd": {
+          "description": "Absolute path of the agent's working directory. Must be non-empty.",
           "minLength": 1,
           "title": "Cwd",
           "type": "string"
         },
         "paths": {
+          "description": "Paths the action touches, for `file_read` and `file_write`. **Ignored for `shell`** — the service extracts paths itself from the command's syntax tree. Sending them for `shell` is harmless.",
           "items": {
             "type": "string"
           },
@@ -15,6 +17,7 @@
           "type": "array"
         },
         "domains": {
+          "description": "Domains the action contacts, for `network`. **Ignored for `shell`** — the service extracts domains itself from the command.",
           "items": {
             "type": "string"
           },
@@ -30,7 +33,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "description": "Server, tool and arguments of an MCP call. Used for `tool: mcp_call`."
         }
       },
       "required": [
@@ -42,15 +46,18 @@
     "McpArgs": {
       "properties": {
         "server": {
+          "description": "Name of the MCP server.",
           "title": "Server",
           "type": "string"
         },
         "tool": {
+          "description": "Name of the tool being called on that server.",
           "title": "Tool",
           "type": "string"
         },
         "arguments": {
           "additionalProperties": true,
+          "description": "Arguments passed to the MCP tool.",
           "title": "Arguments",
           "type": "object"
         }
@@ -63,6 +70,7 @@
       "type": "object"
     },
     "Tool": {
+      "description": "Kind of action a harness can ask the gate about.",
       "enum": [
         "shell",
         "file_write",
@@ -74,6 +82,7 @@
       "type": "string"
     }
   },
+  "description": "One proposed agent action, plus the intent behind it.",
   "properties": {
     "session_id": {
       "anyOf": [
@@ -86,26 +95,32 @@
         }
       ],
       "default": null,
+      "description": "Harness session identifier, at most 128 characters. Optional, but without it the service keeps no per-session counters and no allow cache, and the decision is stored with a null session.",
       "title": "Session Id"
     },
     "harness": {
+      "description": "Free-form name of the calling harness: `opencode`, `claude-code`, `codex`, `kilo`, `bench`, … 1-64 characters.",
       "maxLength": 64,
       "minLength": 1,
       "title": "Harness",
       "type": "string"
     },
     "tool": {
-      "$ref": "#/$defs/Tool"
+      "$ref": "#/$defs/Tool",
+      "description": "Kind of action being gated."
     },
     "raw": {
       "default": "",
+      "description": "Raw payload as text. **Required and non-blank for `tool: shell`**, where it is the command line stage 1 parses; for the other tools it is the raw payload. At most 32768 **bytes** of UTF-8, not characters — Cyrillic costs 2 bytes per character. Over the limit the request is refused fail-closed as `ask` with HTTP 200.",
       "title": "Raw",
       "type": "string"
     },
     "args": {
-      "$ref": "#/$defs/ActionArgs"
+      "$ref": "#/$defs/ActionArgs",
+      "description": "Structured arguments of the action."
     },
     "user_request": {
+      "description": "The user's last message, used as intent for the classifier. Not rejected when long: the server truncates it to 2048 characters **keeping the tail**.",
       "title": "User Request",
       "type": "string"
     },
@@ -120,6 +135,7 @@
         }
       ],
       "default": null,
+      "description": "Server-side policy profile to apply; defaults to `default`. The harness never sees the profile contents.",
       "title": "Profile Id"
     },
     "model": {
@@ -133,10 +149,12 @@
         }
       ],
       "default": null,
+      "description": "Name of a model configuration inside the profile. Overrides the profile's `models.default`.",
       "title": "Model"
     },
     "metadata": {
       "additionalProperties": true,
+      "description": "Arbitrary JSON, stored with the decision and echoed back by the decision feed. It never reaches the decision logic or the stage-2 prompt. At most 16384 bytes when serialized as UTF-8 JSON.",
       "title": "Metadata",
       "type": "object"
     }
