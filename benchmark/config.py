@@ -84,11 +84,11 @@ class PricingTable:
     def load(cls, path: Path) -> PricingTable:
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         if not isinstance(data, dict):
-            raise ValueError(f"{path}: pricing table must be a YAML mapping")
+            raise TypeError(f"{path}: pricing table must be a YAML mapping")
         models: dict[str, ModelPrice] = {}
         for name, entry in (data.get("models") or {}).items():
             if not isinstance(entry, dict):
-                raise ValueError(f"{path}: entry for {name!r} must be a mapping")
+                raise TypeError(f"{path}: entry for {name!r} must be a mapping")
             try:
                 models[str(name)] = ModelPrice(
                     input_per_1m=float(entry["input_per_1m"]),

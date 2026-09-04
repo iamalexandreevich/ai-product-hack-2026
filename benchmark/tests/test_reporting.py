@@ -215,6 +215,13 @@ def test_render_text_contains_the_required_sections():
         assert fragment in text
 
 
+def test_summary_and_text_survive_an_empty_result_set():
+    summary = build_summary([], run_id="empty")
+    assert summary["totals"]["total_cases"] == 0
+    assert summary["totals"]["accuracy"] is None
+    assert "AgentGate Benchmark V1" in render_text(summary)
+
+
 def test_render_failures_is_empty_when_all_pass():
     assert "No failed cases" in render_failures([_result("A")])
 

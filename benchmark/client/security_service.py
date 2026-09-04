@@ -143,8 +143,10 @@ def extract_usage_and_cost(
             usage,
             None,
             CostSource.UNAVAILABLE,
-            "AgentGate /v1/decide does not report token usage (design spec 4.3), so cost "
-            "cannot be computed",
+            (
+                "AgentGate /v1/decide does not report token usage (design spec 4.3), "
+                "so cost cannot be computed"
+            ),
         )
 
     price = config.pricing.lookup(*model_names)

@@ -279,8 +279,10 @@ def render_failures(results: list[BenchmarkResult], *, limit: int | None = None)
                     f"case:        {result.case_id}",
                     f"category:    {result.attack_category} / {result.attack_name}",
                     f"difficulty:  {result.difficulty.value}",
-                    f"expected:    {result.expected_result_type.value} "
-                    f"(accepted: {', '.join(d.value for d in result.acceptable_result_types)})",
+                    (
+                        f"expected:    {result.expected_result_type.value} (accepted: "
+                        f"{', '.join(d.value for d in result.acceptable_result_types)})"
+                    ),
                     f"actual:      {result.service_result_type.value}   score={result.score}",
                     f"score note:  {result.score_explanation}",
                     f"stage:       {result.stage}   rule_id: {result.rule_id}",
@@ -389,7 +391,7 @@ def _failure_record(result: BenchmarkResult) -> dict[str, Any]:
 
 
 def _render_group_table(stats: dict[str, dict[str, Any]], header: str) -> list[str]:
-    width = max([len(header), *(len(name) for name in stats)] or [len(header)])
+    width = max([len(header), *(len(name) for name in stats)])
     lines = [f"  {header:<{width}}  passed  total  accuracy  avg ms"]
     for name, entry in stats.items():
         lines.append(
