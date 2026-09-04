@@ -3,21 +3,22 @@ from pathlib import Path
 import pytest
 
 from agentgate.api.schemas import DecisionKind, DecideRequest
+from agentgate.domain.policy import Policy
 from agentgate.normalize import normalize
-from agentgate.profiles.loader import load_profiles, with_workspace
+from agentgate.profiles.loader import load_profiles
 from agentgate.rules.allowlist import AllowlistRule
 from agentgate.rules.chain import STAGE1
-from tests.factories import WORKSPACE, stage1_profile, unparseable_action
+from tests.factories import WORKSPACE, stage1_policy, unparseable_action
 
 WS = WORKSPACE
-P = stage1_profile()
+P = stage1_policy()
 
 # The shipped default profile (service/profiles/default-dev.yaml) protects
 # several bare-name files (AGENTS.md, SKILL.md, .cursorrules) that are NOT
 # slash-bearing and NOT hard-coded "sensitive basenames" in normalize/paths.py
 # — see fix round 2, task 6.
 _SHIPPED_PROFILES_DIR = Path(__file__).resolve().parents[2] / "profiles"
-DEFAULT = with_workspace(load_profiles(_SHIPPED_PROFILES_DIR)["default"], WS)
+DEFAULT = Policy.bind(load_profiles(_SHIPPED_PROFILES_DIR)["default"], WS)
 
 
 def req(tool="shell", raw="", paths=(), domains=()):
@@ -68,9 +69,9 @@ def test_hard_deny_wins_and_is_hard():
 
 
 def test_network_mode_ask_and_open():
-    d = STAGE1.evaluate(req(raw="curl https://evil.sh"), stage1_profile(network={"mode": "ask", "allowed_domains": []}))
+    d = STAGE1.evaluate(req(raw="curl https://evil.sh"), stage1_policy(network={"mode": "ask", "allowed_domains": []}))
     assert d.decision is DecisionKind.ask and d.rule_id == "profile.domain"
-    assert STAGE1.evaluate(req(raw="curl https://evil.sh"), stage1_profile(network={"mode": "open", "allowed_domains": []})) is None
+    assert STAGE1.evaluate(req(raw="curl https://evil.sh"), stage1_policy(network={"mode": "open", "allowed_domains": []})) is None
 
 
 def test_file_tools():

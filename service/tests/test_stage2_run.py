@@ -14,7 +14,7 @@ def action():
 
 
 def client(handler):
-    name, cfg = P.models.model_config_for(None)
+    name, cfg = P.profile.models.model_config_for(None)
     return LLMClient(name, cfg, httpx.AsyncClient(transport=httpx.MockTransport(handler)))
 
 

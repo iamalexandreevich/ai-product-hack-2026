@@ -12,7 +12,7 @@ import pytest
 from agentgate.api.schemas import DecideRequest
 from agentgate.normalize import normalize
 from agentgate.rules.chain import STAGE1
-from tests.factories import WORKSPACE, hard_deny_profile
+from tests.factories import WORKSPACE, hard_deny_policy
 
 BASELINE = json.loads(Path(__file__).with_name("baseline.json").read_text(encoding="utf-8"))
 
@@ -22,7 +22,7 @@ def _current(raw: str) -> dict:
         action = normalize(DecideRequest(
             harness="t", tool="shell", raw=raw, args={"cwd": WORKSPACE}, user_request="x",
         ))
-        verdict = STAGE1.evaluate(action, hard_deny_profile())
+        verdict = STAGE1.evaluate(action, hard_deny_policy())
     except Exception as exc:  # noqa: BLE001 - an input the request schema rejects is part of the corpus
         return {"error": type(exc).__name__}
     return {

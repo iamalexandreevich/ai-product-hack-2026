@@ -7,11 +7,14 @@ import json
 import httpx
 
 from agentgate.api.schemas import DecideRequest
+from agentgate.domain.policy import Policy
 from agentgate.engine.decision import Decision
+from agentgate.engine.gate import Gate
 from agentgate.normalize import normalize
 from agentgate.normalize.model import NormalizedAction
-from agentgate.profiles.loader import with_workspace
 from agentgate.profiles.schema import Profile
+from agentgate.rules.chain import STAGE1
+from agentgate.session.memory import InMemorySessionStateStore
 
 WORKSPACE = "/home/u/repo"
 
@@ -35,10 +38,30 @@ def profile(**overrides) -> Profile:
     return Profile.model_validate(data)
 
 
-def stage1_profile(**overrides) -> Profile:
-    """The operator profile the stage 1 chain runs against in tests, with
-    ``${WORKSPACE}`` already bound -- rules read the resolved profile, so an
-    unbound one would measure nothing real.
+def minimal_profile_data(**overrides) -> dict:
+    """The smallest profile that validates, as the plain dict the loader
+    tests write to a YAML file.
+    """
+    data = {
+        "id": "t",
+        "allowed_paths": ["${WORKSPACE}"],
+        "protected_paths": [".env*"],
+        "network": {"mode": "allowlist", "allowed_domains": ["pypi.org"]},
+        "models": {"default": "m", "configs": {"m": {"base_url": "http://x/v1", "model": "qwen"}}},
+    }
+    data.update(overrides)
+    return data
+
+
+def policy(**overrides) -> Policy:
+    """``profile()`` bound to the test workspace -- what a rule actually sees."""
+    return Policy.bind(profile(**overrides), WORKSPACE)
+
+
+def stage1_policy(**overrides) -> Policy:
+    """The policy the stage 1 chain runs against in tests: a profile bound to
+    the test workspace, since rules read resolved paths and an unbound
+    profile would measure nothing real.
     """
     data = {
         "id": "t",
@@ -49,11 +72,11 @@ def stage1_profile(**overrides) -> Profile:
         "models": {"default": "m", "configs": {"m": {"base_url": "http://x/v1", "model": "q"}}},
     }
     data.update(overrides)
-    return with_workspace(Profile.model_validate(data), WORKSPACE)
+    return Policy.bind(Profile.model_validate(data), WORKSPACE)
 
 
-def hard_deny_profile(**overrides) -> Profile:
-    """The profile the hard-deny table tests run against: its protected
+def hard_deny_policy(**overrides) -> Policy:
+    """The policy the hard-deny table tests run against: its protected
     paths and branches are what those tables assert on.
     """
     data = {
@@ -65,7 +88,20 @@ def hard_deny_profile(**overrides) -> Profile:
         "models": {"default": "m", "configs": {"m": {"base_url": "http://x/v1", "model": "q"}}},
     }
     data.update(overrides)
-    return with_workspace(Profile.model_validate(data), WORKSPACE)
+    return Policy.bind(Profile.model_validate(data), WORKSPACE)
+
+
+def gate_for_binding_tests() -> Gate:
+    """A Gate whose classifier always allows, so a case that reaches stage 2
+    is visible as "stage 1 said nothing" rather than as an accidental refusal.
+    """
+    return Gate(
+        profiles={"default": profile(allowed_paths=["${WORKSPACE}", "/tmp/agentgate-scratch"])},
+        default_profile="default",
+        rules=STAGE1,
+        state_store=InMemorySessionStateStore(),
+        http=httpx.AsyncClient(transport=httpx.MockTransport(FakeLLM("A"))),
+    )
 
 
 def shell_action(raw: str, cwd: str = WORKSPACE) -> NormalizedAction:

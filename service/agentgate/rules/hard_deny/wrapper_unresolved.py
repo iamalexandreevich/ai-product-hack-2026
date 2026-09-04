@@ -7,9 +7,9 @@ instead. Not itself a hard verdict -- nothing was determined, so nothing
 is final.
 """
 
+from agentgate.domain.policy import Policy
 from agentgate.domain.verdict import Verdict
 from agentgate.normalize.model import NormalizedAction
-from agentgate.profiles.schema import Profile
 from agentgate.rules.hard_deny.shared import EFFECTIVE_WRAPPERS
 from agentgate.shell.wrappers import chain_unresolved
 
@@ -18,7 +18,7 @@ class WrapperUnresolvedRule:
     id = "ambiguous.wrapper"
     hard = False
 
-    def evaluate(self, action: NormalizedAction, profile: Profile) -> Verdict | None:
+    def evaluate(self, action: NormalizedAction, policy: Policy) -> Verdict | None:
         for command in action.commands:
             why = chain_unresolved(command.argv, EFFECTIVE_WRAPPERS)
             if why is None:

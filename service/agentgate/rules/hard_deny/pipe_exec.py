@@ -5,9 +5,9 @@ interpreter, and a `shell -c` whose command substitution does the
 downloading. Both hand a remote file the authority of the local shell.
 """
 
+from agentgate.domain.policy import Policy
 from agentgate.domain.verdict import Verdict
 from agentgate.normalize.model import NormalizedAction
-from agentgate.profiles.schema import Profile
 from agentgate.rules.hard_deny.shared import DOWNLOADERS, by_pipeline, effective_argv
 
 _SHELLS = {"sh", "bash", "zsh", "dash", "ksh"}
@@ -20,7 +20,7 @@ class PipeExecRule:
     id = "hard-deny.pipe-exec"
     hard = True
 
-    def evaluate(self, action: NormalizedAction, profile: Profile) -> Verdict | None:
+    def evaluate(self, action: NormalizedAction, policy: Policy) -> Verdict | None:
         for cmds in by_pipeline(action).values():
             downloaded = False
             for c in cmds:

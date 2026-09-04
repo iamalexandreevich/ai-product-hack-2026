@@ -13,9 +13,9 @@ the classifier is never asked about an action it could not have seen.
 import logging
 
 from agentgate.api.schemas import DecisionKind
+from agentgate.domain.policy import Policy
 from agentgate.domain.verdict import Verdict
 from agentgate.normalize.model import NormalizedAction
-from agentgate.profiles.schema import Profile
 from agentgate.stage2.client import LLMClient, Stage2Error
 from agentgate.stage2.prompt import build_system_prompt, build_user_message
 
@@ -27,12 +27,12 @@ _MAP = {"A": DecisionKind.allow, "D": DecisionKind.deny, "U": DecisionKind.ask}
 async def run_stage2(
     action: NormalizedAction,
     user_request: str,
-    profile: Profile,
+    policy: Policy,
     model_name: str,
     client: LLMClient,
     stage1_note: str,
 ) -> Verdict:
-    system = build_system_prompt(profile)
+    system = build_system_prompt(policy)
     user = build_user_message(action, user_request, stage1_note)
     try:
         out, raw = await client.classify(system, user)

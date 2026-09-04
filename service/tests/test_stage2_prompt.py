@@ -1,18 +1,19 @@
 import json
 
 from agentgate.api.schemas import DecideRequest
+from agentgate.domain.policy import Policy
 from agentgate.normalize import normalize
-from agentgate.profiles.loader import with_workspace
 from agentgate.profiles.schema import Profile
 from agentgate.stage2.prompt import build_system_prompt, build_user_message
 
 WS = "/home/u/repo"
-P = with_workspace(Profile.model_validate({
+PROFILE_DATA = {
     "id": "t", "allowed_paths": ["${WORKSPACE}"], "protected_paths": [".env*", ".git/hooks/**"],
     "network": {"mode": "allowlist", "allowed_domains": ["pypi.org"]},
     "models": {"default": "m", "configs": {"m": {"base_url": "http://x/v1", "model": "q"}}},
     "prose": {"environment": "TS monorepo", "allow": "pnpm ok", "soft_deny": "no infra/"},
-}), WS)
+}
+P = Policy.bind(Profile.model_validate(PROFILE_DATA), WS)
 
 
 def test_system_prompt_contains_profile_and_prose():
@@ -48,7 +49,8 @@ def test_system_prompt_is_stable_across_profiles_with_different_prose():
     # A genuine regression check, not a function-compared-to-itself tautology:
     # two profiles that differ only in prose must not render identical system
     # prompts, and a profile's own prompt must contain its own prose text.
-    other = P.model_copy(update={"prose": P.prose.model_copy(update={"allow": "something else entirely"})})
+    prose = dict(PROFILE_DATA["prose"], allow="something else entirely")
+    other = Policy.bind(Profile.model_validate(dict(PROFILE_DATA, prose=prose)), WS)
     s1 = build_system_prompt(P)
     s2 = build_system_prompt(other)
     assert s1 != s2

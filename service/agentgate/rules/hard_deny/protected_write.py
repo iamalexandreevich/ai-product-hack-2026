@@ -8,10 +8,10 @@ segment before it expands to.
 """
 
 from agentgate.api.schemas import Tool
+from agentgate.domain.policy import Policy
 from agentgate.domain.verdict import Verdict
 from agentgate.normalize.model import NormalizedAction, SimpleCommand
 from agentgate.normalize.paths import matches_any, resolve_path
-from agentgate.profiles.schema import Profile
 from agentgate.rules.hard_deny.shared import LAST_ARG_WRITE_COMMANDS, effective_argv
 
 
@@ -19,10 +19,9 @@ class ProtectedWriteRule:
     id = "hard-deny.protected-write"
     hard = True
 
-    def evaluate(self, action: NormalizedAction, profile: Profile) -> Verdict | None:
-        protected = profile.resolved_protected_paths()
+    def evaluate(self, action: NormalizedAction, policy: Policy) -> Verdict | None:
         for path in _write_targets(action):
-            if matches_any(path, protected, profile.workspace):
+            if matches_any(path, policy.protected_paths, policy.workspace):
                 return Verdict.deny(
                     self.id, f"write to protected path {path}",
                     "Protected files are changed only by the user", hard=True,

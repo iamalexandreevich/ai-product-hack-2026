@@ -100,12 +100,12 @@ def create_app(
         next_before = rows[-1].id if len(rows) == limit else None
         return {"items": items, "next_before": next_before}
 
-    @app.get("/v1/profiles/{profile_id}", dependencies=[auth])
-    async def get_profile(profile_id: str) -> dict:
-        p = profiles.get(profile_id)
-        if p is None:
+    @app.get("/v1/profiles/{profile_id}", response_model=Profile, dependencies=[auth])
+    async def get_profile(profile_id: str) -> Profile:
+        profile = profiles.get(profile_id)
+        if profile is None:
             raise HTTPException(status_code=404, detail="profile not found")
-        return p.public_dict()
+        return profile
 
     @app.get("/healthz")
     async def healthz() -> JSONResponse:

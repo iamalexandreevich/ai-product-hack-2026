@@ -8,10 +8,12 @@ sudo and doas are never unwrapped by wrapper resolution, so "env sudo rm
 -rf /" still arrives here as sudo.
 """
 
+from collections.abc import Sequence
+
+from agentgate.domain.policy import Policy
 from agentgate.domain.verdict import Verdict
 from agentgate.normalize.model import NormalizedAction
 from agentgate.normalize.paths import is_within, resolve_path
-from agentgate.profiles.schema import Profile
 from agentgate.rules.hard_deny.shared import effective_argv
 
 _ESCALATORS = ("sudo", "su", "doas")
@@ -23,18 +25,17 @@ class PrivilegeRule:
     id = "hard-deny.privilege"
     hard = True
 
-    def evaluate(self, action: NormalizedAction, profile: Profile) -> Verdict | None:
-        allowed = profile.resolved_allowed_paths()
+    def evaluate(self, action: NormalizedAction, policy: Policy) -> Verdict | None:
         for command in action.commands:
             argv = effective_argv(command.argv)
             if not argv:
                 continue
-            verdict = self._for_command(argv, action.cwd, allowed)
+            verdict = self._for_command(argv, action.cwd, policy.allowed_paths)
             if verdict is not None:
                 return verdict
         return None
 
-    def _for_command(self, argv: list[str], cwd: str, allowed: list[str]) -> Verdict | None:
+    def _for_command(self, argv: list[str], cwd: str, allowed: Sequence[str]) -> Verdict | None:
         exe = argv[0]
         if exe in _ESCALATORS:
             return self._deny(f"'{exe}' is not allowed", "Ask the user to run privileged commands")
@@ -56,7 +57,7 @@ class PrivilegeRule:
         return None
 
     def _ownership_outside_workspace(
-        self, argv: list[str], cwd: str, allowed: list[str]
+        self, argv: list[str], cwd: str, allowed: Sequence[str]
     ) -> Verdict | None:
         # argv[1] is the owner spec, not a path.
         for arg in argv[2:]:

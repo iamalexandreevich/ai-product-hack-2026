@@ -110,7 +110,7 @@ def looks_like_path(token: str) -> bool:
     return _is_sensitive_basename(token)
 
 
-def is_within(path: str, roots: list[str]) -> bool:
+def is_within(path: str, roots: Sequence[str]) -> bool:
     """True if ``path`` is equal to or nested under one of ``roots``.
 
     Uses os.path.commonpath so it operates purely on path components, not

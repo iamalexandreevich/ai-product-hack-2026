@@ -916,12 +916,6 @@ components:
             type: object
           title: Rules
           type: array
-        workspace:
-          anyOf:
-          - type: string
-          - type: 'null'
-          default: null
-          title: Workspace
       required:
       - id
       - allowed_paths

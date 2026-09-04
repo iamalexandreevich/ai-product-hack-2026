@@ -22,10 +22,10 @@ protected file would otherwise slip past the guard as allow.
 """
 
 from agentgate.api.schemas import Tool
+from agentgate.domain.policy import Policy
 from agentgate.domain.verdict import Verdict
 from agentgate.normalize.model import NormalizedAction, SimpleCommand
 from agentgate.normalize.paths import is_within, matches_any
-from agentgate.profiles.schema import Profile
 from agentgate.rules.argv_paths import command_argv_paths
 
 READONLY = {"ls", "cat", "head", "tail", "wc", "grep", "rg", "pwd", "which", "stat", "du", "file", "tree", "sort", "uniq", "cut", "tr", "less", "more", "diff"}
@@ -36,40 +36,38 @@ class AllowlistRule:
     id = "allowlist"
     hard = False
 
-    def evaluate(self, action: NormalizedAction, profile: Profile) -> Verdict | None:
+    def evaluate(self, action: NormalizedAction, policy: Policy) -> Verdict | None:
         if action.tool is Tool.file_read:
-            return Verdict.allow("allowlist.file_read") if _paths_are_safe(action, profile) else None
+            return Verdict.allow("allowlist.file_read") if _paths_are_safe(action, policy) else None
         if action.tool is Tool.file_write:
-            return Verdict.allow("allowlist.file_write") if _paths_are_safe(action, profile) else None
+            return Verdict.allow("allowlist.file_write") if _paths_are_safe(action, policy) else None
         if action.tool is not Tool.shell or not action.commands or action.flags.unparseable:
             return None
         if action.flags.has_eval or action.flags.has_subst:
             return None
-        allowed = profile.resolved_allowed_paths()
-        protected = profile.resolved_protected_paths()
-        if action.paths and not all(is_within(p, allowed) for p in action.paths):
+        if action.paths and not all(is_within(p, policy.allowed_paths) for p in action.paths):
             return None
         if any(
-            matches_any(p, protected, profile.workspace)
+            matches_any(p, policy.protected_paths, policy.workspace)
             for c in action.commands
             for p in command_argv_paths(c, action.cwd)
         ):
             return None
-        if all(_matches_prefix(c, profile.safe_prefixes) for c in action.commands):
+        if all(_matches_prefix(c, policy.safe_prefixes) for c in action.commands):
             return Verdict.allow("allowlist.prefix")
-        if all(_is_readonly(c) or _matches_prefix(c, profile.safe_prefixes) for c in action.commands):
+        if all(_is_readonly(c) or _matches_prefix(c, policy.safe_prefixes) for c in action.commands):
             return Verdict.allow("allowlist.readonly")
         return None
 
 
-def _paths_are_safe(action: NormalizedAction, profile: Profile) -> bool:
+def _paths_are_safe(action: NormalizedAction, policy: Policy) -> bool:
     """Every path of a file_read/file_write call is inside the allowed
     paths and none of them is protected. No paths at all is not safe --
     there is nothing to have checked.
     """
-    allowed, protected = profile.resolved_allowed_paths(), profile.resolved_protected_paths()
     return bool(action.paths) and all(
-        is_within(p, allowed) and not matches_any(p, protected, profile.workspace)
+        is_within(p, policy.allowed_paths)
+        and not matches_any(p, policy.protected_paths, policy.workspace)
         for p in action.paths
     )
 

@@ -11,10 +11,10 @@ stage 1 note and must be escaped there like any other such content.
 """
 
 from agentgate.api.schemas import Tool
+from agentgate.domain.policy import Policy
 from agentgate.domain.verdict import Verdict
 from agentgate.normalize.model import NormalizedAction
 from agentgate.normalize.paths import is_within
-from agentgate.profiles.schema import Profile
 from agentgate.rules.argv_paths import command_argv_paths
 
 _MUTATING = {"rm", "mv", "cp", "mkdir", "rmdir", "touch", "chmod", "chown", "tee", "install", "ln", "truncate", "dd", "shred"}
@@ -24,10 +24,9 @@ class ProfilePathRule:
     id = "profile.path"
     hard = False
 
-    def evaluate(self, action: NormalizedAction, profile: Profile) -> Verdict | None:
-        allowed = profile.resolved_allowed_paths()
+    def evaluate(self, action: NormalizedAction, policy: Policy) -> Verdict | None:
         for path in _mutating_targets(action):
-            if not is_within(path, allowed):
+            if not is_within(path, policy.allowed_paths):
                 return Verdict.deny(
                     self.id, f"write outside allowed paths: {path}", "Work inside the workspace"
                 )

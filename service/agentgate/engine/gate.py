@@ -21,12 +21,13 @@ import httpx
 from ulid import ULID
 
 from agentgate.api.schemas import DecideRequest, DecisionKind
+from agentgate.domain.policy import Policy
 from agentgate.domain.verdict import Verdict
 from agentgate.engine.decision import Decision
 from agentgate.engine.timings import Timings
 from agentgate.normalize import normalize
 from agentgate.normalize.model import NormalizedAction
-from agentgate.profiles.loader import with_workspace
+from agentgate.profiles.loader import detect_workspace
 from agentgate.profiles.schema import ModelConfig, Profile
 from agentgate.rules.base import RuleChain
 from agentgate.session.cache_key import allow_cache_key
@@ -44,8 +45,7 @@ STAGE1_PASSED = "passed: no hard-deny match, not in allowlist"
 class _Context:
     """Everything resolved from the request before any rule runs."""
 
-    profile: Profile
-    profile_hash: str
+    policy: Policy
     profile_id: str
     model_name: str
     model_config: ModelConfig
@@ -85,40 +85,42 @@ class Gate:
 
         action = normalize(request)
         cache_key = allow_cache_key(
-            resolved.profile_hash, action.action_hash(), request.user_request
+            resolved.policy.profile_hash, action.action_hash(), request.user_request
         )
         if await self._cache_hit(resolved, cache_key):
             return self._finish(
-                decision_id, request, Verdict.allow("cache", stage=0), timings,
-                profile_id, resolved.profile_hash, action, resolved.state, cache_key, cached=True,
+                decision_id, request, Verdict.allow("cache", stage=0), timings, profile_id,
+                resolved.policy.profile_hash, action, resolved.state, cache_key, cached=True,
             )
 
         verdict = await self._evaluate(request, action, resolved, timings)
-        verdict = self._escalate(resolved.state, resolved.profile, verdict)
+        verdict = self._escalate(resolved.state, resolved.policy, verdict)
         await self._settle_session(resolved.state, verdict, cache_key, decision_id)
         return self._finish(
-            decision_id, request, verdict, timings, profile_id, resolved.profile_hash,
+            decision_id, request, verdict, timings, profile_id, resolved.policy.profile_hash,
             action, resolved.state, cache_key,
         )
 
     async def _resolve(self, request: DecideRequest, profile_id: str) -> "_Context | Verdict":
-        base = self._profiles.get(profile_id)
-        if base is None:
+        profile = self._profiles.get(profile_id)
+        if profile is None:
             return Verdict.ask("api.unknown-profile", f"unknown profile '{profile_id}'", stage=0)
         try:
-            model_name, model_config = base.models.model_config_for(request.model)
+            model_name, model_config = profile.models.model_config_for(request.model)
         except KeyError:
             return Verdict.ask("api.unknown-model", f"unknown model '{request.model}'", stage=0)
 
-        profile = with_workspace(base, request.args.cwd)
         state = None
         if request.session_id:
             state = await self._states.get_or_create(
                 request.session_id, request.harness, profile_id,
-                profile.workspace or request.args.cwd,
+                detect_workspace(request.args.cwd),
             )
+        # A session keeps the workspace its first request established: a later
+        # `cwd` must not be able to widen the allowed paths under the agent.
+        workspace = state.workspace if state is not None else detect_workspace(request.args.cwd)
         return _Context(
-            profile=profile, profile_hash=profile.profile_hash(), profile_id=profile_id,
+            policy=Policy.bind(profile, workspace), profile_id=profile_id,
             model_name=model_name, model_config=model_config, state=state,
         )
 
@@ -131,20 +133,20 @@ class Gate:
         self, request: DecideRequest, action: NormalizedAction, context: _Context, timings: Timings
     ) -> Verdict:
         with timings.stage(1):
-            verdict = self._rules.evaluate(action, context.profile)
+            verdict = self._rules.evaluate(action, context.policy)
         if verdict is not None:
             return verdict
         with timings.stage(2):
             client = LLMClient(context.model_name, context.model_config, self._http)
             return await run_stage2(
-                action, request.user_request, context.profile,
+                action, request.user_request, context.policy,
                 context.model_name, client, STAGE1_PASSED,
             )
 
-    def _escalate(self, state: SessionState | None, profile: Profile, verdict: Verdict) -> Verdict:
+    def _escalate(self, state: SessionState | None, policy: Policy, verdict: Verdict) -> Verdict:
         if state is None or verdict.hard or verdict.decision is DecisionKind.ask:
             return verdict
-        if not should_escalate(state, profile.escalation):
+        if not should_escalate(state, policy.escalation):
             return verdict
         hits = state.deny_consecutive
         state.reset_after_escalation()

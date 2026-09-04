@@ -16,10 +16,10 @@ fabricated value answers that question wrongly in both directions.
 import re
 from collections.abc import Sequence
 
+from agentgate.domain.policy import Policy
 from agentgate.domain.verdict import Verdict
 from agentgate.normalize.model import NormalizedAction, SimpleCommand
 from agentgate.normalize.paths import looks_like_path, looks_unresolved, resolve_path
-from agentgate.profiles.schema import Profile
 from agentgate.rules.hard_deny.shared import (
     DOWNLOADERS,
     LAST_ARG_WRITE_COMMANDS,
@@ -84,7 +84,7 @@ class ExfilRule:
     id = "hard-deny.exfil"
     hard = True
 
-    def evaluate(self, action: NormalizedAction, profile: Profile) -> Verdict | None:
+    def evaluate(self, action: NormalizedAction, policy: Policy) -> Verdict | None:
         for cmds in by_pipeline(action).values():
             upstream_secret: str | None = None
             for c in cmds:
@@ -92,7 +92,7 @@ class ExfilRule:
                 exe = argv[0] if argv else ""
                 if exe in _NETWORK_COMMANDS:
                     candidate = next(
-                        (p for p in _sent_secret_paths(c, action.cwd) if is_secret_path(p, profile.workspace)), None
+                        (p for p in _sent_secret_paths(c, action.cwd) if is_secret_path(p, policy.workspace)), None
                     )
                     if candidate is None and upstream_secret and _consumes_piped_stdin(argv):
                         # Nothing is sent by this command's own flags, but a
@@ -107,7 +107,7 @@ class ExfilRule:
                             hard=True,
                         )
                 for p in _read_role_paths(c, action.cwd):
-                    if is_secret_path(p, profile.workspace):
+                    if is_secret_path(p, policy.workspace):
                         upstream_secret = p
         return None
 

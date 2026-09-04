@@ -17,10 +17,10 @@ it has earned but can never excuse one.
 import os
 from dataclasses import dataclass
 
+from agentgate.domain.policy import Policy
 from agentgate.domain.verdict import Verdict
 from agentgate.normalize.model import NormalizedAction
 from agentgate.normalize.paths import is_within, resolve_path
-from agentgate.profiles.schema import Profile
 from agentgate.rules.hard_deny.shared import effective_argv
 
 # find predicates that narrow -delete to a specific set of PATHS, as
@@ -49,9 +49,8 @@ class DestructiveRule:
     id = "hard-deny.destructive"
     hard = True
 
-    def evaluate(self, action: NormalizedAction, profile: Profile) -> Verdict | None:
-        allowed = profile.resolved_allowed_paths()
-        workspace = os.path.normpath(profile.workspace) if profile.workspace else None
+    def evaluate(self, action: NormalizedAction, policy: Policy) -> Verdict | None:
+        workspace = os.path.normpath(policy.workspace)
         for command in action.commands:
             argv = effective_argv(command.argv)
             deletion = _deletion(argv, action.cwd)
@@ -60,10 +59,9 @@ class DestructiveRule:
             for target in deletion.targets:
                 equals_workspace = (
                     deletion.deny_on_workspace_equal
-                    and workspace is not None
                     and os.path.normpath(target) == workspace
                 )
-                if not is_within(target, allowed) or equals_workspace:
+                if not is_within(target, policy.allowed_paths) or equals_workspace:
                     return Verdict.deny(
                         self.id, f"'{argv[0]}' targets {target} outside or equal to the workspace",
                         "Delete only build artifacts inside the workspace", hard=True,

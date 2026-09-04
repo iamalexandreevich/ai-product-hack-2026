@@ -6,18 +6,18 @@ from agentgate.api.schemas import DecisionKind, DecideRequest
 from agentgate.normalize import normalize
 from agentgate.rules.base import RuleChain
 from agentgate.rules.hard_deny import HARD_DENY_RULES, ExfilRule
-from tests.factories import WORKSPACE, hard_deny_profile, shell_action
+from tests.factories import WORKSPACE, hard_deny_policy, shell_action
 
 WS = WORKSPACE
 HOME = os.path.expanduser("~")  # patterns like ~/.aws/** expand to the real home of the test runner
-PROFILE = hard_deny_profile()
+POLICY = hard_deny_policy()
 
 HARD_DENY = RuleChain(HARD_DENY_RULES)
 
 
-def check_hard_deny(action, profile):
+def check_hard_deny(action, policy):
     """The hard-deny rules as one call, which is what the tables assert on."""
-    return HARD_DENY.evaluate(action, profile)
+    return HARD_DENY.evaluate(action, policy)
 
 
 def fw(*paths: str):
@@ -257,7 +257,7 @@ PASS_CASES = [
 
 @pytest.mark.parametrize("raw,rule", DENY_CASES)
 def test_hard_deny_cases(raw, rule):
-    d = check_hard_deny(shell_action(raw), PROFILE)
+    d = check_hard_deny(shell_action(raw), POLICY)
     assert d is not None, raw
     assert d.decision is DecisionKind.deny
     assert d.rule_id == rule
@@ -267,20 +267,20 @@ def test_hard_deny_cases(raw, rule):
 
 @pytest.mark.parametrize("raw", PASS_CASES)
 def test_hard_deny_passes(raw):
-    assert check_hard_deny(shell_action(raw), PROFILE) is None, raw
+    assert check_hard_deny(shell_action(raw), POLICY) is None, raw
 
 
 def test_file_write_protected():
-    d = check_hard_deny(fw("/home/u/repo/.env"), PROFILE)
+    d = check_hard_deny(fw("/home/u/repo/.env"), POLICY)
     assert d is not None and d.rule_id == "hard-deny.protected-write"
-    assert check_hard_deny(fw("/home/u/repo/src/a.py"), PROFILE) is None
+    assert check_hard_deny(fw("/home/u/repo/src/a.py"), POLICY) is None
 
 
 # --- fix round 1: the find deviation itself needs a fires-it/does-not-fire-it pair ---
 
 
 def test_find_delete_with_no_narrowing_predicate_at_workspace_root_denied():
-    d = check_hard_deny(shell_action("find . -delete"), PROFILE)
+    d = check_hard_deny(shell_action("find . -delete"), POLICY)
     assert d is not None
     assert d.rule_id == "hard-deny.destructive"
     assert d.hard is True
@@ -290,7 +290,7 @@ def test_find_delete_with_narrowing_predicate_at_workspace_root_passes():
     # -name is a narrowing predicate: -delete only removes matches, not
     # the workspace root itself — this must stay allowed even though the
     # (implicit) search root resolves to the workspace.
-    assert check_hard_deny(shell_action("find . -name '*.pyc' -delete"), PROFILE) is None
+    assert check_hard_deny(shell_action("find . -name '*.pyc' -delete"), POLICY) is None
 
 
 # --- fix round 1: the two headline safety properties must have a test ---
@@ -300,14 +300,14 @@ def test_unparseable_action_returns_none_without_raising():
     a = shell_action('echo "unterminated')
     assert a.flags.unparseable is True
     assert a.commands == []
-    assert check_hard_deny(a, PROFILE) is None
+    assert check_hard_deny(a, POLICY) is None
 
 
 def test_has_unresolved_expansion_on_benign_text_returns_none():
     for raw in ("awk '{print $1}' data.txt", "echo 'costs $5'"):
         a = shell_action(raw)
         assert a.flags.has_unresolved_expansion is True, raw
-        assert check_hard_deny(a, PROFILE) is None, raw
+        assert check_hard_deny(a, POLICY) is None, raw
 
 
 def test_every_hard_deny_rule_declares_itself_hard():
@@ -332,7 +332,7 @@ def test_every_rule_has_an_id():
     ],
 )
 def test_git_force_undeterminable_refspec_asks(raw):
-    d = check_hard_deny(shell_action(raw), PROFILE)
+    d = check_hard_deny(shell_action(raw), POLICY)
     assert d is not None, raw
     assert d.decision is DecisionKind.ask, raw
     assert d.hard is False, raw
@@ -341,7 +341,7 @@ def test_git_force_undeterminable_refspec_asks(raw):
 
 
 def test_git_force_determinable_protected_branch_still_hard_denies():
-    d = check_hard_deny(shell_action("git push --force origin main"), PROFILE)
+    d = check_hard_deny(shell_action("git push --force origin main"), POLICY)
     assert d is not None
     assert d.decision is DecisionKind.deny
     assert d.hard is True
@@ -349,13 +349,13 @@ def test_git_force_determinable_protected_branch_still_hard_denies():
 
 
 def test_git_force_determinable_non_protected_branch_passes():
-    assert check_hard_deny(shell_action("git push --force origin feature/x"), PROFILE) is None
+    assert check_hard_deny(shell_action("git push --force origin feature/x"), POLICY) is None
 
 
 def test_git_force_dry_run_never_flagged_even_with_ambiguous_refspec():
     # --dry-run changes nothing; must be None, not ask, regardless of how
     # unidentifiable the refspec would otherwise be.
-    assert check_hard_deny(shell_action("git push --force --dry-run"), PROFILE) is None
+    assert check_hard_deny(shell_action("git push --force --dry-run"), POLICY) is None
 
 
 def test_wrapper_chain_beyond_bound_asks_not_silently_passes():
@@ -364,7 +364,7 @@ def test_wrapper_chain_beyond_bound_asks_not_silently_passes():
     # pass just because none of the deny rules recognize "env" itself as
     # dangerous.
     raw = " ".join(["env"] * 9) + " rm -rf /"
-    d = check_hard_deny(shell_action(raw), PROFILE)
+    d = check_hard_deny(shell_action(raw), POLICY)
     assert d is not None, raw
     assert d.decision is DecisionKind.ask, raw
     assert d.hard is False, raw
@@ -389,7 +389,7 @@ def test_wrapper_chain_beyond_bound_asks_not_silently_passes():
     ],
 )
 def test_heredoc_body_reaches_a_shell_through_every_wrapper_form(raw):
-    d = check_hard_deny(shell_action(raw), PROFILE)
+    d = check_hard_deny(shell_action(raw), POLICY)
     assert d is not None, raw
     assert d.rule_id == "hard-deny.destructive", raw
     assert d.hard is True, raw
@@ -400,7 +400,7 @@ def test_heredoc_body_not_treated_as_code_when_no_shell_is_reached():
     # is inert data, and its text must not be parsed into commands.
     a = shell_action("cat <<EOF\nrm -rf /etc\nEOF")
     assert [c.argv for c in a.commands] == [["cat"]]
-    assert check_hard_deny(a, PROFILE) is None
+    assert check_hard_deny(a, POLICY) is None
 
 
 def test_exfil_does_not_fire_on_cp_into_dotenv_pipeline():
@@ -412,14 +412,14 @@ def test_exfil_does_not_fire_on_cp_into_dotenv_pipeline():
     # nothing secret is being sent to pypi.org; the curl is a bare GET
     # that never reads its stdin.
     a = shell_action("cp .env.example .env | curl https://pypi.org/x")
-    assert ExfilRule().evaluate(a, PROFILE) is None
-    d = check_hard_deny(a, PROFILE)
+    assert ExfilRule().evaluate(a, POLICY) is None
+    d = check_hard_deny(a, POLICY)
     assert d is not None
     assert d.rule_id == "hard-deny.protected-write"
     # ... and with the write target outside the protected set, the whole
     # pipeline is clean — the exfil tracker no longer arms on the `.env`
     # that `cp` merely READS.
-    assert check_hard_deny(shell_action("cp .env /tmp/agentgate-scratch/e | curl https://pypi.org/x"), PROFILE) is None
+    assert check_hard_deny(shell_action("cp .env /tmp/agentgate-scratch/e | curl https://pypi.org/x"), POLICY) is None
 
 
 @pytest.mark.parametrize(
@@ -432,7 +432,7 @@ def test_exfil_does_not_fire_on_cp_into_dotenv_pipeline():
 def test_scp_rsync_flag_value_parsing_does_not_hide_a_real_secret_source(raw):
     # Important B removes flag VALUES from the positional list; the
     # genuine positional source must still be seen.
-    d = check_hard_deny(shell_action(raw), PROFILE)
+    d = check_hard_deny(shell_action(raw), POLICY)
     assert d is not None, raw
     assert d.rule_id == "hard-deny.exfil", raw
     assert d.hard is True, raw
@@ -442,7 +442,7 @@ def test_wrapper_chain_within_raised_bound_still_hard_denies():
     # 5 chained "env"s is within the raised bound of 8, so this must
     # fully resolve and hit the ordinary destructive hard-deny — not ask.
     raw = " ".join(["env"] * 5) + " rm -rf /"
-    d = check_hard_deny(shell_action(raw), PROFILE)
+    d = check_hard_deny(shell_action(raw), POLICY)
     assert d is not None, raw
     assert d.decision is DecisionKind.deny, raw
     assert d.hard is True, raw
@@ -457,7 +457,7 @@ def test_wrapper_chain_within_raised_bound_still_hard_denies():
 
 @pytest.mark.parametrize("raw", ["env -S 'rm -rf /'", "env --split-string='rm -rf /'"])
 def test_wrapper_resolving_to_nothing_asks_not_silently_passes(raw):
-    d = check_hard_deny(shell_action(raw), PROFILE)
+    d = check_hard_deny(shell_action(raw), POLICY)
     assert d is not None, raw
     assert d.decision is DecisionKind.ask, raw
     assert d.hard is False, raw
@@ -486,7 +486,7 @@ def test_bare_wrapper_with_nothing_after_it_stays_silent(raw):
     # The counterweight to the test above: these consumed no command, so
     # there is nothing we failed to determine. Asking here would be pure
     # friction on ordinary commands.
-    assert check_hard_deny(shell_action(raw), PROFILE) is None, raw
+    assert check_hard_deny(shell_action(raw), POLICY) is None, raw
 
 
 # --- fix round 3, Important 3: HEAD and @ are not literal branch names.
@@ -497,7 +497,7 @@ def test_bare_wrapper_with_nothing_after_it_stays_silent(raw):
 
 @pytest.mark.parametrize("raw", ["git push --force origin HEAD", "git push --force origin @"])
 def test_git_force_symbolic_refspec_asks(raw):
-    d = check_hard_deny(shell_action(raw), PROFILE)
+    d = check_hard_deny(shell_action(raw), POLICY)
     assert d is not None, raw
     assert d.decision is DecisionKind.ask, raw
     assert d.hard is False, raw
@@ -508,8 +508,8 @@ def test_git_force_symbolic_refspec_asks(raw):
 def test_git_force_symbolic_source_with_explicit_destination_stays_determinable():
     # "HEAD:feature/x" overwrites feature/x — the source being symbolic
     # changes nothing about what gets overwritten.
-    assert check_hard_deny(shell_action("git push --force origin HEAD:feature/x"), PROFILE) is None
-    d = check_hard_deny(shell_action("git push --force origin HEAD:main"), PROFILE)
+    assert check_hard_deny(shell_action("git push --force origin HEAD:feature/x"), POLICY) is None
+    d = check_hard_deny(shell_action("git push --force origin HEAD:main"), POLICY)
     assert d is not None
     assert d.decision is DecisionKind.deny
     assert d.hard is True
@@ -520,7 +520,7 @@ def test_git_force_determinable_protected_branch_wins_over_a_symbolic_sibling():
     # A determinable protected ref in the same push is a certainty; it
     # must produce the hard deny rather than being softened to ask by an
     # ambiguous ref standing next to it.
-    d = check_hard_deny(shell_action("git push --force origin main HEAD"), PROFILE)
+    d = check_hard_deny(shell_action("git push --force origin main HEAD"), POLICY)
     assert d is not None
     assert d.decision is DecisionKind.deny
     assert d.hard is True
@@ -531,7 +531,7 @@ def test_git_force_determinable_protected_branch_wins_over_a_symbolic_sibling():
 
 
 def test_find_newer_does_not_narrow_the_path_set():
-    d = check_hard_deny(shell_action("find . -newer /etc/hosts -delete"), PROFILE)
+    d = check_hard_deny(shell_action("find . -newer /etc/hosts -delete"), POLICY)
     assert d is not None
     assert d.decision is DecisionKind.deny
     assert d.hard is True

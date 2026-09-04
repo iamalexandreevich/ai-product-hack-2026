@@ -15,9 +15,9 @@ import fnmatch
 import os
 
 from agentgate.api.schemas import DecisionKind
+from agentgate.domain.policy import Policy
 from agentgate.domain.verdict import Verdict
 from agentgate.normalize.model import NormalizedAction
-from agentgate.profiles.schema import Profile
 from agentgate.rules.hard_deny.shared import effective_argv
 
 _AMBIGUOUS_ID = "ambiguous.git-force"
@@ -35,13 +35,13 @@ class GitForceRule:
     id = "hard-deny.git-force"
     hard = True
 
-    def evaluate(self, action: NormalizedAction, profile: Profile) -> Verdict | None:
+    def evaluate(self, action: NormalizedAction, policy: Policy) -> Verdict | None:
         pending_ask: Verdict | None = None
         for command in action.commands:
             push_argv = _push_argv(effective_argv(command.argv))
             if push_argv is None:
                 continue
-            verdict = self._for_push(push_argv[1:], profile)
+            verdict = self._for_push(push_argv[1:], policy)
             if verdict is None:
                 continue
             if verdict.decision is DecisionKind.deny:
@@ -49,14 +49,14 @@ class GitForceRule:
             pending_ask = pending_ask or verdict
         return pending_ask
 
-    def _for_push(self, rest: list[str], profile: Profile) -> Verdict | None:
+    def _for_push(self, rest: list[str], policy: Policy) -> Verdict | None:
         if "--dry-run" in rest:
             return None  # changes nothing, by definition — never flagged
         positionals = [a for a in rest if not a.startswith("-")]
         forced = any(_is_force_flag(a) for a in rest if a.startswith("-"))
         if len(positionals) >= 2:
             # First positional is the remote, the rest are refspecs.
-            return self._for_refspecs(positionals[1:], forced, profile)
+            return self._for_refspecs(positionals[1:], forced, policy)
         if forced:
             # Either no positional at all, or a single one that cannot be
             # told apart between "remote" (pushes the current branch) and
@@ -68,7 +68,7 @@ class GitForceRule:
             )
         return None
 
-    def _for_refspecs(self, refs: list[str], forced: bool, profile: Profile) -> Verdict | None:
+    def _for_refspecs(self, refs: list[str], forced: bool, policy: Policy) -> Verdict | None:
         pending_ask: Verdict | None = None
         for ref in refs:
             if not (forced or ref.startswith("+")):
@@ -87,7 +87,7 @@ class GitForceRule:
                 )
                 continue
             branch = _destination_branch(ref)
-            if any(fnmatch.fnmatchcase(branch, pattern) for pattern in profile.protected_branches):
+            if any(fnmatch.fnmatchcase(branch, pattern) for pattern in policy.protected_branches):
                 return Verdict.deny(
                     self.id, f"force push to protected branch {branch}",
                     "Push to a feature branch", hard=True,

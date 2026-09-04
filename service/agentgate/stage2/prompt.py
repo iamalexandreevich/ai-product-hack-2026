@@ -23,8 +23,8 @@ the action being judged, so it is not escaped.
 
 import json
 
+from agentgate.domain.policy import Policy
 from agentgate.normalize.model import NormalizedAction
-from agentgate.profiles.schema import Profile
 from agentgate.stage2.schema import RESPONSE_JSON_SCHEMA
 
 _ROLE = (
@@ -44,23 +44,27 @@ _ROLE = (
 )
 
 
-def _profile_line(profile: Profile) -> str:
-    domains = ",".join(profile.network.allowed_domains)
+def _profile_line(policy: Policy) -> str:
+    domains = ",".join(policy.network.allowed_domains)
+    # The operator's declared patterns, not the workspace-resolved ones: the
+    # model reads them as a description of what is off limits, and a resolved
+    # pattern would put the host's home directory in the prompt for no gain.
+    protected = ",".join(policy.profile.protected_paths)
     return (
-        f"[PROFILE] workspace={profile.workspace or ''} "
-        f"network={profile.network.mode.value}({domains}) "
-        f"protected={','.join(profile.protected_paths)}"
+        f"[PROFILE] workspace={policy.workspace} "
+        f"network={policy.network.mode.value}({domains}) "
+        f"protected={protected}"
     )
 
 
-def build_system_prompt(profile: Profile) -> str:
-    parts = [_ROLE + json.dumps(RESPONSE_JSON_SCHEMA, separators=(",", ":")), "", _profile_line(profile)]
-    if profile.prose.environment:
-        parts.append(f"[ENVIRONMENT] {profile.prose.environment}")
-    if profile.prose.allow:
-        parts.append(f"[ALLOWED BY USER] {profile.prose.allow}")
-    if profile.prose.soft_deny:
-        parts.append(f"[AVOID] {profile.prose.soft_deny}")
+def build_system_prompt(policy: Policy) -> str:
+    parts = [_ROLE + json.dumps(RESPONSE_JSON_SCHEMA, separators=(",", ":")), "", _profile_line(policy)]
+    if policy.prose.environment:
+        parts.append(f"[ENVIRONMENT] {policy.prose.environment}")
+    if policy.prose.allow:
+        parts.append(f"[ALLOWED BY USER] {policy.prose.allow}")
+    if policy.prose.soft_deny:
+        parts.append(f"[AVOID] {policy.prose.soft_deny}")
     return "\n".join(parts)
 
 

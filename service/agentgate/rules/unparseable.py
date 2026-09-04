@@ -6,16 +6,16 @@ classifier would be answering about a command it never saw. First in the
 chain, so both facts stay true.
 """
 
+from agentgate.domain.policy import Policy
 from agentgate.domain.verdict import Verdict
 from agentgate.normalize.model import NormalizedAction
-from agentgate.profiles.schema import Profile
 
 
 class UnparseableRule:
     id = "unparseable"
     hard = False
 
-    def evaluate(self, action: NormalizedAction, profile: Profile) -> Verdict | None:
+    def evaluate(self, action: NormalizedAction, policy: Policy) -> Verdict | None:
         if not action.flags.unparseable:
             return None
         return Verdict.ask(

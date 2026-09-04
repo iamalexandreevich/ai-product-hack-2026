@@ -19,16 +19,16 @@ on `rule_id` to identify an outcome, on `id` to identify a rule.
 from collections.abc import Sequence
 from typing import Protocol
 
+from agentgate.domain.policy import Policy
 from agentgate.domain.verdict import Verdict
 from agentgate.normalize.model import NormalizedAction
-from agentgate.profiles.schema import Profile
 
 
 class Rule(Protocol):
     id: str
     hard: bool
 
-    def evaluate(self, action: NormalizedAction, profile: Profile) -> Verdict | None: ...
+    def evaluate(self, action: NormalizedAction, policy: Policy) -> Verdict | None: ...
 
 
 class RuleChain:
@@ -39,9 +39,9 @@ class RuleChain:
     def __init__(self, rules: Sequence[Rule]) -> None:
         self._rules = tuple(rules)
 
-    def evaluate(self, action: NormalizedAction, profile: Profile) -> Verdict | None:
+    def evaluate(self, action: NormalizedAction, policy: Policy) -> Verdict | None:
         for rule in self._rules:
-            verdict = rule.evaluate(action, profile)
+            verdict = rule.evaluate(action, policy)
             if verdict is not None:
                 return verdict
         return None

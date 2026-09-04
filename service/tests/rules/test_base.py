@@ -11,7 +11,7 @@ class StaticRule:
         self._verdict = verdict
         self.calls = 0
 
-    def evaluate(self, action, profile):
+    def evaluate(self, action, policy):
         self.calls += 1
         return self._verdict
 
