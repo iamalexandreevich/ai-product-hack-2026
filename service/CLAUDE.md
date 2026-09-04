@@ -23,6 +23,7 @@
 
 - Спека: `docs/superpowers/service/specs/2026-09-03-agentgate-v1-design.md` (читать можно, менять нельзя)
 - Дорожная карта версий (v1→v5): `docs/superpowers/service/specs/context-versions-roadmap.md`. v1–v4 идут по оси «сколько контекста видит сервис», v5 — по оси независимости от провайдера модели. **Реализован v1**: одно действие + последнее сообщение пользователя, без истории диалога. Форма кода — v1.5 (карта ниже), поведение то же.
+- **Реализован v2** (спека `docs/superpowers/service/specs/2026-09-04-agentgate-v2-design.md`): история диалога в запросе, её дайджест в ключе allow-кэша, блок `[HISTORY]` в промпте, повтор по `Idempotency-Key`, поле `protocol`. Закрытый список содержимого промпта: системный промпт, профиль, prose-слоты, `[TASK]`, `[HISTORY]`, `[ACTION]`, `[FLAGS]`, `[STAGE1]`. Расширять только вместе с docstring `classify/prompt.py` и этим файлом.
 - API-ключи (выдача, хранение, проверка): `docs/superpowers/service/specs/api-keys.md`.
 - Авто-деплой на сервер (`make deploy` по SSH): `docs/superpowers/service/specs/deploy.md`.
 - План v1: `docs/superpowers/service/plans/2026-09-03-agentgate-v1.md`. Ревью и план рефакторинга v1.5: `docs/reports/code-quality-review-and-refactor-plan.md`, отчёт по нему — `docs/reports/task-v1.5-solid-refactor.md`.
@@ -37,7 +38,7 @@
 
 | Пакет | Что там лежит |
 |---|---|
-| `domain/` | Чистые типы без I/O. `verdict.py` — `Verdict`, единственный тип исхода. `policy.py` — `Policy` (профиль, привязанный к одному workspace, пути разрешены один раз); сам `Profile` живёт в `profiles/schema.py`. `session.py` — `SessionState`, протоколы `SessionStateStore` и `RestorableSessionStateStore`. |
+| `domain/` | Чистые типы без I/O. `verdict.py` — `Verdict`, единственный тип исхода. `policy.py` — `Policy` (профиль, привязанный к одному workspace, пути разрешены один раз); сам `Profile` живёт в `profiles/schema.py`. `session.py` — `SessionState`, протоколы `SessionStateStore` и `RestorableSessionStateStore`. `dialogue.py` — `Dialogue` (ходы как прислал харнесс, дайджест, усечение `fit`). |
 | `shell/` | Синтаксис и семантика shell без политики. `commands.py` — `CommandSpec` и таблица `COMMANDS` (единственный источник знания «что это за команда»), `argv.py` — `ParsedArgv`, `wrappers.py` — `sudo`/`env`/`xargs` и разрешение эффективного argv, `paths.py` — `command_paths(argv, cwd, role)`, `secrets.py` — один список шаблонов секретных файлов. |
 | `normalize/` | `DecideRequest` → `NormalizedAction` (`model.py`, `shell.py`, `paths.py`, `domains.py`). Решение по сырой строке запрещено везде — только по `NormalizedAction`. |
 | `rules/` | Ступень 1. `base.py` — `Rule` (Protocol) и `RuleChain`. `chain.py` — `STAGE1`, порядок правил и есть вся приоритетная политика ступени. По модулю на правило: `unparseable.py`, `hard_deny/` (шесть правил + `wrapper_unresolved.py` + общий `shared.py`), `profile_paths.py`, `profile_domains.py`, `allowlist.py`, `packages.py` (слот slopsquatting, в v1 всегда молчит). |

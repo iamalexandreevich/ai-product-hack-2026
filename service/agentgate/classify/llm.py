@@ -19,6 +19,7 @@ from agentgate.classify.base import Classifier
 from agentgate.classify.client import LLMClient, Stage2Error
 from agentgate.classify.prompt import build_system_prompt, build_user_message
 from agentgate.classify.schema import ClassifierOutput
+from agentgate.domain.dialogue import Dialogue
 from agentgate.domain.policy import Policy
 from agentgate.domain.verdict import Verdict
 from agentgate.normalize.model import NormalizedAction
@@ -38,7 +39,7 @@ class LLMClassifier:
         self, action: NormalizedAction, user_request: str, policy: Policy, stage1_note: str
     ) -> Verdict:
         system = build_system_prompt(policy)
-        user = build_user_message(action, user_request, stage1_note)
+        user = build_user_message(action, user_request, Dialogue(), stage1_note)
         try:
             output, raw = await self._client.classify(system, user)
         except Stage2Error as exc:
