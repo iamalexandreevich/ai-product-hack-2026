@@ -42,8 +42,19 @@ class ServiceResultType(StrEnum):
 
 
 class CostSource(StrEnum):
+    """Where the price of one decision came from.
+
+    ``no_model_call`` is a real, measured zero, not a missing value: stage 0 (allow-cache
+    hit or API-level refusal) and stage 1 (deterministic rules) never reach a model, so
+    they cost nothing by construction. Keeping it distinct from ``unavailable`` is what
+    makes the average price per request meaningful — the whole point of the cascade is
+    that most requests never reach the classifier, and folding "free" into "unknown"
+    would hide exactly that.
+    """
+
     SERVICE_REPORTED = "service_reported"
     COMPUTED_FROM_TOKENS = "computed_from_tokens"
+    NO_MODEL_CALL = "no_model_call"
     UNAVAILABLE = "unavailable"
 
 
@@ -71,7 +82,13 @@ class Usage(BaseModel):
 
 
 class ServiceResponse(BaseModel):
-    """Normalised view of one ``POST /v1/decide`` response."""
+    """Normalised view of one ``POST /v1/decide`` response.
+
+    This is our server's decision outcome specifically, not a generic execution result:
+    it is what ``ServerAutomodeAdapter`` puts into an ``AutomodeExecutionResult``. An
+    automode implementation that has no single AgentGate-style decision extends the
+    envelope instead of stretching this model — see ``automode/base.py``.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -108,11 +125,40 @@ class ServiceResponse(BaseModel):
     contract_violation: str | None = None
 
 
+class ExecutionMode(StrEnum):
+    """What a run actually measured, and therefore which latency it can claim.
+
+    ``single_decision`` (what the benchmark does today) sends one action per case and
+    measures one decision. The task around that decision is never executed, so no
+    end-to-end task time exists and task slowdown is not observable at all.
+
+    ``harness_loop`` marks a run driven by a real harness: the agent works a task to
+    completion, so wall-clock time covers the whole loop including what a ``deny``
+    (retry with another approach) or an ``ask`` (wait for a human, then continue) costs.
+    That is the number task slowdown is computed from — against a baseline run of the
+    same tasks with the gate switched off.
+
+    The flag exists so the two can never be silently compared: a per-decision latency
+    and a per-task latency are different quantities with the same unit.
+    """
+
+    SINGLE_DECISION = "single_decision"
+    HARNESS_LOOP = "harness_loop"
+
+
 class RunConfig(BaseModel):
-    """Configuration of one benchmark run; stored verbatim with the run."""
+    """Configuration of one benchmark run; stored verbatim with the run.
+
+    ``adapter_name`` says which automode implementation the run measured; the rest is
+    still partly server-specific (``service_url`` is required, and ``profile_id``,
+    ``model``, ``harness`` and ``session_mode`` are AgentGate concepts). Splitting it
+    into a generic block plus an adapter-specific one waits until a second production
+    adapter exists to judge the shape of that split.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
+    adapter_name: str = "server"
     service_url: str
     profile_id: str | None = None
     model: str | None = None
@@ -127,6 +173,7 @@ class RunConfig(BaseModel):
     dataset_path: str = "attacks/cases"
     pricing_table_path: str | None = None
     session_mode: str = "per_case"
+    execution_mode: ExecutionMode = ExecutionMode.SINGLE_DECISION
 
 
 class BenchmarkResult(BaseModel):
@@ -137,6 +184,11 @@ class BenchmarkResult(BaseModel):
     run_id: str
     case_id: str
     ts: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    # Which automode implementation produced this result (``AutomodeAdapter.name``). A
+    # free-form string, not an enum, so a new implementation needs no schema change; the
+    # default keeps results written before the field existed loadable.
+    adapter_name: str = "server"
 
     attack_category: str
     attack_name: str

@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS benchmark_results (
     run_id                   TEXT NOT NULL,
     case_id                  TEXT NOT NULL,
     ts                       TEXT NOT NULL,
+    adapter_name             TEXT NOT NULL DEFAULT 'server',
     attack_category          TEXT NOT NULL,
     difficulty               TEXT NOT NULL,
     is_benign                INTEGER NOT NULL DEFAULT 0,
@@ -100,6 +101,7 @@ MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("benchmark_cases", "dataset_source", "TEXT NOT NULL DEFAULT 'team'"),
     ("benchmark_results", "dataset_source", "TEXT NOT NULL DEFAULT 'team'"),
     ("benchmark_results", "cost_currency", "TEXT"),
+    ("benchmark_results", "adapter_name", "TEXT NOT NULL DEFAULT 'server'"),
 )
 
 
@@ -249,7 +251,8 @@ class BenchmarkStore:
         self._conn.execute(
             """
             INSERT INTO benchmark_results (
-                run_id, case_id, ts, attack_category, difficulty, is_benign, dataset_source,
+                run_id, case_id, ts, adapter_name,
+                attack_category, difficulty, is_benign, dataset_source,
                 execution_time_ms, service_latency_total_ms,
                 input_tokens, output_tokens, total_tokens,
                 cost, cost_currency, cost_source, cost_unavailable_reason,
@@ -260,7 +263,8 @@ class BenchmarkStore:
                 model, provider, model_version, model_source,
                 error, contract_violation, result_json
             ) VALUES (
-                ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?,
+                ?, ?, ?, ?,
                 ?, ?,
                 ?, ?, ?,
                 ?, ?, ?, ?,
@@ -273,6 +277,7 @@ class BenchmarkStore:
             )
             ON CONFLICT (run_id, case_id) DO UPDATE SET
                 ts = excluded.ts,
+                adapter_name = excluded.adapter_name,
                 dataset_source = excluded.dataset_source,
                 execution_time_ms = excluded.execution_time_ms,
                 service_latency_total_ms = excluded.service_latency_total_ms,
@@ -306,6 +311,7 @@ class BenchmarkStore:
                 result.run_id,
                 result.case_id,
                 result.ts.isoformat(),
+                result.adapter_name,
                 result.attack_category,
                 result.difficulty.value,
                 int(result.is_benign),

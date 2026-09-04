@@ -1,10 +1,12 @@
 import assert from "node:assert/strict"
 import fs from "node:fs"
+import http from "node:http"
 import os from "node:os"
 import path from "node:path"
 import { after, describe, it } from "node:test"
 
 import {
+  GuardClient,
   InspectCache,
   LIMITS,
   VerdictBook,
@@ -288,5 +290,68 @@ describe("opencode 2.0 tool vocabulary", () => {
     const mapped = mapToolCall("write", { path: "/repo/out.txt", content: "x" }, "/repo")
     assert.equal(mapped.tool, "file_write")
     assert.deepEqual(mapped.args.paths, ["/repo/out.txt"])
+  })
+})
+
+describe("guard route missing (service without PostToolUse)", () => {
+  it("classifies 404 as not_implemented, not as a refusal", async () => {
+    const server = http.createServer((_req, res) => {
+      res.writeHead(404, { "content-type": "application/json" })
+      res.end(JSON.stringify({ detail: "Not Found" }))
+    })
+    await new Promise<void>((done) => server.listen(0, "127.0.0.1", done))
+    const { port } = server.address() as { port: number }
+    try {
+      const client = new GuardClient(loadConfig({ url: `http://127.0.0.1:${port}` }), () => {})
+      const result = await client.inspect({
+        session_id: "s", harness: "test", call_id: "c", tool: "shell",
+        output: "text", provenance: { kind: "shell" },
+      } as any)
+      assert.equal(result.ok, false)
+      assert.equal(result.ok === false && result.failure.kind, "not_implemented")
+    } finally {
+      await new Promise<void>((done) => server.close(() => done()))
+    }
+  })
+
+  it("passes the tool result through instead of withholding it", () => {
+    const failed = { ok: false as const, failure: { kind: "not_implemented" as const, detail: "HTTP 404" } }
+    // A route the guard never claimed to have must not break the agent's
+    // tool results, under any on_unavailable policy.
+    for (const onUnavailable of ["allow", "ask", "deny"] as const) {
+      assert.equal(resolveIn("auto", failed, "some tool output", onUnavailable).action, "pass")
+    }
+  })
+
+  it("still escalates the outgoing direction to ask on a missing route", () => {
+    const failed = { ok: false as const, failure: { kind: "not_implemented" as const, detail: "HTTP 404" } }
+    // A 404 on /v1/decide means the gate is misconfigured — never allow.
+    assert.equal(resolveOut("auto", "ask", failed, "allow").status, "ask")
+    assert.equal(resolveOut("auto", "allow", failed, "allow").status, "ask")
+  })
+})
+
+describe("classifier model vs agent model", () => {
+  const action = mapToolCall("bash", { command: "git status" }, "/repo")
+  const base = {
+    harness: { name: "codex", version: "0.146.0", patched: false },
+    sessionId: "s", callId: "c", userRequest: "статус", mode: "auto",
+  }
+
+  it("leaves `model` null unless a classifier config was configured", () => {
+    // `model` selects a config inside the guard's profile. Passing the coding
+    // agent's model there is refused by the service as `api.unknown-model`.
+    const req = buildDecideRequest(action, { ...base, agentModel: "gpt-5.6-sol" })
+    assert.equal(req.model, null)
+  })
+
+  it("records the agent's own model in metadata instead", () => {
+    const req = buildDecideRequest(action, { ...base, agentModel: "gpt-5.6-sol" })
+    assert.equal((req.metadata as any).agent_model, "gpt-5.6-sol")
+  })
+
+  it("still passes a configured classifier config through", () => {
+    const req = buildDecideRequest(action, { ...base, model: "sonnet", agentModel: "gpt-5.6-sol" })
+    assert.equal(req.model, "sonnet")
   })
 })

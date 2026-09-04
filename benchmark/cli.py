@@ -24,6 +24,7 @@ from collections import Counter
 from pathlib import Path
 from urllib.parse import urlparse
 
+from automode.server import ServerAutomodeAdapter
 from client.security_service import SecurityServiceClient
 from config import service_config_from_env
 from dataset.loader import DatasetLoadError, load_dataset
@@ -32,7 +33,7 @@ from reporting.report import build_summary, render_failures, render_text, write_
 from runner.executor import BenchmarkRunner
 from runner.recorder import Recorder
 from schemas.case import DatasetSource
-from schemas.result import RunConfig
+from schemas.result import ExecutionMode, RunConfig
 from storage.sqlite import BenchmarkStore
 
 DEFAULT_DATASET = "attacks/cases"
@@ -146,6 +147,7 @@ def _cmd_benchmark(args: argparse.Namespace) -> int:
         return 2
 
     run_config = RunConfig(
+        adapter_name=ServerAutomodeAdapter.name,
         service_url=service_config.url,
         profile_id=service_config.profile_id,
         model=service_config.model,
@@ -160,6 +162,7 @@ def _cmd_benchmark(args: argparse.Namespace) -> int:
         dataset_path=str(dataset_path),
         pricing_table_path=service_config.pricing.source_path,
         session_mode=args.session_mode,
+        execution_mode=ExecutionMode(args.execution_mode),
     )
 
     if args.dry_run:
@@ -241,7 +244,8 @@ async def _execute(
             jsonl_path=out_dir / f"stream-{run_id}.jsonl",
             progress=progress,
         ) as recorder:
-            runner = BenchmarkRunner(client, run_config, run_id=run_id, on_result=recorder.record)
+            adapter = ServerAutomodeAdapter(client, session_mode=run_config.session_mode)
+            runner = BenchmarkRunner(adapter, run_config, run_id=run_id, on_result=recorder.record)
             results = await runner.run(cases)
 
         if store is not None:
@@ -360,6 +364,16 @@ def _add_execution_args(parser: argparse.ArgumentParser) -> None:
         choices=("per_case", "shared", "none"),
         default="per_case",
         help="per_case isolates the service cache and escalation counters (default)",
+    )
+    parser.add_argument(
+        "--execution-mode",
+        choices=[mode.value for mode in ExecutionMode],
+        default=ExecutionMode.SINGLE_DECISION.value,
+        help=(
+            "what the run measures: single_decision (default) sends one action per case; "
+            "harness_loop marks a run driven by a real harness, where wall clock covers the "
+            "whole task including deny-retry and ask-wait loops"
+        ),
     )
     parser.add_argument("--strict", action="store_true", help="score only the primary expectation")
     parser.add_argument("--db", default=DEFAULT_DB)

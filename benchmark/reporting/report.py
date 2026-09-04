@@ -11,23 +11,13 @@ consumers keep working; they are filled from the same metric functions.
 from __future__ import annotations
 
 import json
-from collections import Counter, defaultdict
+from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from evaluator.metrics import (
-    BY_ATTACK_TYPE,
-    BY_DATASET_SOURCE,
-    BY_DIFFICULTY,
-    BY_STAGE,
-    compute_run_metrics,
-    friction_metrics,
-    percentile,
-    security_metrics,
-    usability_metrics,
-)
-from schemas.result import BenchmarkResult, RunConfig, ServiceResultType
+from evaluator.metrics import compute_run_metrics, percentile
+from schemas.result import BenchmarkResult, ExecutionMode, RunConfig
 
 MAX_FAILURE_DETAIL = 4000
 
@@ -48,23 +38,18 @@ def build_summary(
 ) -> dict[str, Any]:
     """Aggregate results into the JSON summary document.
 
-    ``metrics`` carries the required aggregates and their breakdowns, straight from
-    :mod:`evaluator.metrics`. The other blocks are the v1 keys, filled from the same
-    numbers so that both views of a run always agree.
+    ``metrics`` is the only place a metric appears: the overall figures plus ``by``, one
+    breakdown per dimension. ``totals`` next to it is score-level (how many cases the
+    service got right), which is a different question from any of the metrics.
     """
     concurrency = config.concurrency if config else None
-    metrics = compute_run_metrics(results, concurrency=concurrency)
-    security = metrics["security"]
-    usability = metrics["usability"]
-    friction = metrics["friction"]
-    decision_latency = metrics["performance"]["decision_latency_ms"]
-    client_latency = metrics["performance"]["client_execution_time_ms"]
-    price = metrics["cost"]
+    execution_mode = config.execution_mode if config else ExecutionMode.SINGLE_DECISION
+    metrics = compute_run_metrics(results, concurrency=concurrency, execution_mode=execution_mode)
 
     total = len(results)
     passed = sum(r.score for r in results)
 
-    summary: dict[str, Any] = {
+    return {
         "run_id": run_id,
         "generated_at": datetime.now(UTC).isoformat(),
         "configuration": config.model_dump(mode="json") if config else None,
@@ -73,67 +58,9 @@ def build_summary(
             "passed": passed,
             "failed": total - passed,
             "accuracy": _ratio(passed, total),
-            "errors": sum(1 for r in results if r.service_result_type is ServiceResultType.ERROR),
             "contract_violations": sum(1 for r in results if r.contract_violation),
         },
         "metrics": metrics,
-        "by_attack_category": _group_stats(results, key=BY_ATTACK_TYPE),
-        "by_difficulty": _group_stats(results, key=BY_DIFFICULTY),
-        "by_dataset_source": _group_stats(results, key=BY_DATASET_SOURCE),
-        "by_stage": _group_stats(results, key=BY_STAGE),
-        "security_metrics": {
-            # v1 key names. ``attacks_not_blocked`` is now the ground-truth count of
-            # attacks that succeeded (the service permitted an action the case forbids),
-            # and ``attack_pass_through_rate`` is the ASR over answered attacks.
-            "attack_cases": security["attack_cases"],
-            "attack_cases_with_decision": security["attacks_with_decision"],
-            "attacks_not_blocked": security["successful_attacks"],
-            "attack_pass_through_rate": security["asr"],
-            "asr": security["asr"],
-            "benign_cases": usability["legitimate_tasks"],
-            "benign_allowed": usability["completed_tasks"],
-            "benign_asked_friction": usability["false_positives_confirmation"],
-            "benign_denied_false_positive": usability["false_positives_blocked"],
-            "false_positive_rate": usability["false_positive_rate"],
-            "false_positives": usability["false_positives"],
-            "utility": usability["utility"],
-            "human_decisions_total": friction["human_decisions_total"],
-        },
-        "latency": {
-            "note": (
-                "execution_time_ms is client-side wall clock and includes queueing; with "
-                f"concurrency={concurrency if concurrency is not None else 'unknown'} it is not "
-                "a pure service-latency measurement. service_latency_* comes from the service "
-                "itself and is the decision-latency metric."
-            ),
-            "concurrency": concurrency,
-            "client_avg_ms": client_latency["avg"],
-            "client_p50_ms": client_latency["p50"],
-            "client_p95_ms": client_latency["p95"],
-            "client_max_ms": client_latency["max"],
-            "service_reported_available": decision_latency["reported_for"],
-            "service_avg_ms": decision_latency["avg"],
-            "service_p50_ms": decision_latency["p50"],
-            "service_p95_ms": decision_latency["p95"],
-            "task_slowdown": metrics["performance"]["task_slowdown"],
-            "task_slowdown_unavailable_reason": metrics["performance"][
-                "task_slowdown_unavailable_reason"
-            ],
-        },
-        "cost": {
-            # ``None``, not 0.0, when the service reported no price: a run whose price is
-            # unknown must not read as a run that was free.
-            "total_known_cost": price["total_price"],
-            "requests_with_known_cost": price["requests_with_price"],
-            "average_known_cost_per_request": price["average_price_per_request"],
-            "requests_with_unknown_cost": price["requests_without_price"],
-            "unknown_cost_reasons": price["unknown_price_reasons"],
-            "cost_sources": price["price_sources"],
-            "tokens_reported": price["requests_with_token_usage"],
-            "currencies_observed": dict(
-                Counter(r.cost_currency for r in results if r.cost_currency).most_common()
-            ),
-        },
         "models_observed": _models_observed(results),
         "components_observed": dict(
             Counter(
@@ -141,23 +68,23 @@ def build_summary(
             ).most_common()
         ),
         "components_sources": dict(Counter(r.components_source.value for r in results)),
-        "decision_distribution": dict(
-            Counter(r.service_result_type.value for r in results).most_common()
-        ),
-        "stage_distribution": metrics["stage_distribution"],
         "rule_ids_observed": dict(Counter(r.rule_id for r in results if r.rule_id).most_common()),
         "tag_failures": _tag_failures(results),
         "failed_cases": [_failure_record(r) for r in results if not r.score],
     }
-    return summary
 
 
 def render_text(summary: dict[str, Any]) -> str:
-    """Human-readable summary."""
+    """Human-readable summary. Reads ``metrics``; computes nothing."""
     totals = summary["totals"]
-    latency = summary["latency"]
-    cost = summary["cost"]
-    security = summary["security_metrics"]
+    metrics = summary["metrics"]
+    security = metrics["security"]
+    usability = metrics["usability"]
+    friction = metrics["friction"]
+    performance = metrics["performance"]
+    decision_latency = performance["decision_latency_ms"]
+    client_latency = performance["client_execution_time_ms"]
+    price = metrics["cost"]
     lines: list[str] = []
 
     lines.append("=" * 78)
@@ -169,126 +96,95 @@ def render_text(summary: dict[str, Any]) -> str:
     if config:
         lines.append(
             f"service:      {config.get('service_url')} "
+            f"adapter={config.get('adapter_name') or '-'} "
             f"profile={config.get('profile_id') or '-'} model={config.get('model') or '-'} "
             f"concurrency={config.get('concurrency')} "
             f"scoring={'strict' if config.get('strict_scoring') else 'default'}"
         )
+    lines.append(f"mode:         execution_mode={performance['execution_mode']}")
     lines.append("")
 
     lines.append(
         f"cases: {totals['total_cases']}   passed: {totals['passed']}   "
         f"failed: {totals['failed']}   accuracy: {_pct(totals['accuracy'])}"
     )
-    if totals["errors"]:
-        lines.append(f"service errors / no decision: {totals['errors']}")
+    if metrics["no_decision"]:
+        lines.append(f"service errors / no decision: {metrics['no_decision']}")
     if totals["contract_violations"]:
         lines.append(f"contract violations: {totals['contract_violations']}")
     lines.append("")
 
-    metrics = summary.get("metrics") or {}
-    sec = metrics.get("security", {})
-    usab = metrics.get("usability", {})
-    fric = metrics.get("friction", {})
-
     lines.append("-- security --------------------------------------------------------------")
     lines.append(
-        f"ASR: {_pct(sec.get('asr'))}   "
-        f"({sec.get('successful_attacks', 0)} of {sec.get('attacks_with_decision', 0)} answered "
-        f"attacks succeeded; {sec.get('attack_cases', 0)} attack cases, "
-        f"{sec.get('attacks_without_decision', 0)} without a decision)"
+        f"ASR: {_pct(security['asr'])}   "
+        f"({security['successful_attacks']} of {security['attacks_with_decision']} answered "
+        f"attacks succeeded; {security['attack_cases']} attack cases, "
+        f"{security['attacks_without_decision']} without a decision)"
     )
-    lines.append(
-        f"attack cases: {security['attack_cases']}   "
-        f"not blocked (allow): {security['attacks_not_blocked']}   "
-        f"pass-through rate: {_pct(security['attack_pass_through_rate'])}"
-    )
+    lines.append(f"blocked: {security['blocked_attacks']}   asked: {security['asked_attacks']}")
     lines.append("")
 
     lines.append("-- usability -------------------------------------------------------------")
     lines.append(
-        f"Utility: {_pct(usab.get('utility'))}   "
-        f"({usab.get('completed_tasks', 0)} of {usab.get('legitimate_tasks_with_decision', 0)} "
+        f"Utility: {_pct(usability['utility'])}   "
+        f"({usability['completed_tasks']} of {usability['legitimate_tasks_with_decision']} "
         "legitimate tasks completed without intervention)"
     )
     lines.append(
-        f"FP: {usab.get('false_positives', 0)}   "
-        f"(blocked {usab.get('false_positives_blocked', 0)}, "
-        f"confirmation {usab.get('false_positives_confirmation', 0)})   "
-        f"rate: {_pct(usab.get('false_positive_rate'))}"
+        f"FP: {usability['false_positives']}   "
+        f"(blocked {usability['false_positives_blocked']}, "
+        f"confirmation {usability['false_positives_confirmation']})   "
+        f"rate: {_pct(usability['false_positive_rate'])}"
     )
     lines.append(
-        f"Friction: {fric.get('human_decisions_total', 0)} human decision(s)   "
-        f"avg per task: {_num(fric.get('average_per_task'))}   "
-        f"legitimate: {fric.get('legitimate', {}).get('human_decisions', 0)}   "
-        f"attack: {fric.get('attack', {}).get('human_decisions', 0)}"
-    )
-    lines.append(
-        f"benign cases: {security['benign_cases']}   allowed: {security['benign_allowed']}   "
-        f"ask (friction): {security['benign_asked_friction']}   "
-        f"deny (false positive): {security['benign_denied_false_positive']}"
+        f"Friction: {friction['human_decisions_total']} human decision(s)   "
+        f"avg per task: {_num(friction['average_per_task'])}   "
+        f"legitimate: {friction['legitimate']['human_decisions']}   "
+        f"attack: {friction['attack']['human_decisions']}"
     )
     lines.append("")
 
-    lines.append("-- ASR breakdowns --------------------------------------------------------")
-    breakdowns = metrics.get("breakdowns", {})
-    for title, key in (
-        ("by attack type", "asr_by_attack_type"),
-        ("by difficulty", "asr_by_difficulty"),
-        ("by dataset source", "asr_by_dataset_source"),
-        ("by stage", "asr_by_stage"),
+    for title, dimension in (
+        ("by attack category", "attack_type"),
+        ("by difficulty", "difficulty"),
+        ("by dataset source", "dataset_source"),
+        ("by stage", "stage"),
     ):
-        entries = breakdowns.get(key, {})
-        if not entries:
-            lines.append(f"  {title}: no attack case in this run")
+        rows = metrics["by"].get(dimension) or {}
+        if not rows:
             continue
-        rendered = ", ".join(
-            f"{name} {_pct(entry['asr'])} ({entry['successful_attacks']}/"
-            f"{entry['attacks_with_decision']})"
-            for name, entry in entries.items()
-        )
-        lines.append(f"  {title}: {rendered}")
-    lines.append("")
-
-    lines.append("-- by attack category ----------------------------------------------------")
-    lines.extend(_render_group_table(summary["by_attack_category"], "category"))
-    lines.append("")
-    lines.append("-- by difficulty ---------------------------------------------------------")
-    lines.extend(_render_group_table(summary["by_difficulty"], "difficulty"))
-    lines.append("")
-    if summary.get("by_dataset_source"):
-        lines.append("-- by dataset source -----------------------------------------------------")
-        lines.extend(_render_group_table(summary["by_dataset_source"], "source"))
-        lines.append("")
-    if summary.get("by_stage"):
-        lines.append("-- by stage --------------------------------------------------------------")
-        lines.extend(_render_group_table(summary["by_stage"], "stage"))
+        lines.append(f"-- {title} " + "-" * max(0, 73 - len(title)))
+        lines.extend(_render_group_table(rows, dimension))
         lines.append("")
 
     lines.append("-- latency ---------------------------------------------------------------")
-    lines.append(f"note: {latency['note']}")
     lines.append(
-        f"client   avg {_ms(latency['client_avg_ms'])}  p50 {_ms(latency['client_p50_ms'])}  "
-        f"p95 {_ms(latency['client_p95_ms'])}  max {_ms(latency['client_max_ms'])}"
+        f"decision (service-reported)  avg {_ms(decision_latency['avg'])}  "
+        f"p50 {_ms(decision_latency['p50'])}  p95 {_ms(decision_latency['p95'])}  "
+        f"max {_ms(decision_latency['max'])}  "
+        f"(reported for {decision_latency['reported_for']}, missing for "
+        f"{decision_latency['missing_for']})"
     )
-    if latency["service_reported_available"]:
-        lines.append(
-            f"service  avg {_ms(latency['service_avg_ms'])}  p50 {_ms(latency['service_p50_ms'])}  "
-            f"p95 {_ms(latency['service_p95_ms'])}  "
-            f"(reported for {latency['service_reported_available']} requests)"
-        )
-    else:
-        lines.append("service  not reported")
-    lines.append(f"task slowdown: {latency.get('task_slowdown_unavailable_reason', 'n/a')}")
+    lines.append(
+        f"client wall clock            avg {_ms(client_latency['avg'])}  "
+        f"p50 {_ms(client_latency['p50'])}  p95 {_ms(client_latency['p95'])}  "
+        f"max {_ms(client_latency['max'])}  "
+        f"(concurrency={client_latency['concurrency']}, includes queueing)"
+    )
+    lines.append(f"task slowdown: {performance['task_slowdown_unavailable_reason']}")
     lines.append("")
 
-    lines.append("-- cost ------------------------------------------------------------------")
+    lines.append("-- price -----------------------------------------------------------------")
     lines.append(
-        f"total known price: {_num(cost['total_known_cost'])}   "
-        f"known for {cost['requests_with_known_cost']} request(s)   "
-        f"average: {_num(cost['average_known_cost_per_request'])}"
+        f"total: {_num(price['total_price'])}   "
+        f"priced requests: {price['priced_requests']} of {price['requests']}   "
+        f"average per priced request: {_num(price['average_price_per_request'])}"
     )
-    lines.append(f"unknown cost: {cost['requests_with_unknown_cost']} request(s)")
-    for reason, count in cost["unknown_cost_reasons"].items():
+    lines.append(
+        f"free (no model call): {price['free_requests_no_model_call']}   "
+        f"unknown: {price['requests_without_price']}"
+    )
+    for reason, count in price["unknown_price_reasons"].items():
         lines.append(f"  {count:>4}x {reason}")
     lines.append("")
 
@@ -310,8 +206,8 @@ def render_text(summary: dict[str, Any]) -> str:
         )
     )
     lines.append(f"  components source: {summary['components_sources']}")
-    lines.append(f"  decisions: {summary['decision_distribution']}")
-    lines.append(f"  stages: {summary['stage_distribution']}")
+    lines.append(f"  decisions: {metrics['decisions']}")
+    lines.append(f"  stages: {metrics['stage_distribution']}")
     if summary["rule_ids_observed"]:
         lines.append(f"  rule ids: {summary['rule_ids_observed']}")
     if summary["tag_failures"]:
@@ -403,45 +299,6 @@ def write_reports(
     return paths
 
 
-def _group_stats(results: list[BenchmarkResult], *, key: Any) -> dict[str, dict[str, Any]]:
-    """Per-group view: correctness, ASR, Utility, friction and both latencies.
-
-    ``asr`` and ``utility`` are ``None`` where the group holds no attack case / no
-    legitimate case, rather than 0, which would read as a measured result.
-    """
-    grouped: dict[str, list[BenchmarkResult]] = defaultdict(list)
-    for result in results:
-        grouped[key(result)].append(result)
-
-    stats: dict[str, dict[str, Any]] = {}
-    for name, group in sorted(grouped.items()):
-        passed = sum(r.score for r in group)
-        security = security_metrics(group)
-        usability = usability_metrics(group)
-        friction = friction_metrics(group)
-        service_latency = [
-            r.service_latency_total_ms for r in group if r.service_latency_total_ms is not None
-        ]
-        stats[name] = {
-            "total": len(group),
-            "passed": passed,
-            "failed": len(group) - passed,
-            "accuracy": _ratio(passed, len(group)),
-            "asr": security["asr"],
-            "attack_cases": security["attack_cases"],
-            "successful_attacks": security["successful_attacks"],
-            "utility": usability["utility"],
-            "legitimate_tasks": usability["legitimate_tasks"],
-            "false_positives": usability["false_positives"],
-            "human_decisions": friction["human_decisions_total"],
-            "avg_execution_time_ms": _mean([r.execution_time_ms for r in group]),
-            "avg_service_latency_ms": _mean(service_latency),
-            "service_latency_reported_for": len(service_latency),
-            "decisions": dict(Counter(r.service_result_type.value for r in group).most_common()),
-        }
-    return stats
-
-
 def _models_observed(results: list[BenchmarkResult]) -> list[dict[str, Any]]:
     counter = Counter((r.model, r.provider, r.model_version, r.model_source.value) for r in results)
     return [
@@ -486,21 +343,31 @@ def _failure_record(result: BenchmarkResult) -> dict[str, Any]:
 
 
 def _render_group_table(stats: dict[str, dict[str, Any]], header: str) -> list[str]:
-    """One row per group: correctness, ASR, Utility, friction and both latencies."""
+    """One row per group, straight from ``metrics["by"][<dimension>]``."""
     width = max([len(header), *(len(name) for name in stats)]) if stats else len(header)
     head = (
         f"  {header:<{width}}  passed  total  accuracy       ASR   utility  FP  human  "
-        "client ms  svc ms"
+        f"svc ms  {'price':>10}"
     )
     lines = [head]
+    partial = False
     for name, entry in stats.items():
+        # A group where some requests have no price carries a partial total; marking it
+        # keeps "these cost nothing" apart from "we could not price these".
+        incomplete = entry["requests_without_price"] > 0 and entry["priced_requests"] > 0
+        partial = partial or incomplete
+        price = _num(entry["total_price"]) + ("+?" if incomplete else "")
         lines.append(
             f"  {name:<{width}}  {entry['passed']:>6}  {entry['total']:>5}  "
             f"{_pct(entry['accuracy']):>8}  {_pct(entry['asr']):>8}  "
             f"{_pct(entry['utility']):>8}  {entry['false_positives']:>2}  "
             f"{entry['human_decisions']:>5}  "
-            f"{_ms(entry['avg_execution_time_ms']):>9}  "
-            f"{_ms(entry['avg_service_latency_ms']):>6}"
+            f"{_ms(entry['decision_latency_ms']['avg']):>6}  {price:>10}"
+        )
+    if partial:
+        lines.append(
+            "  (price +? = the group also holds requests whose price is unknown; "
+            "the total covers only the priced ones)"
         )
     return lines
 

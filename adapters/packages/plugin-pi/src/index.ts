@@ -33,6 +33,8 @@ import {
   resolveIn,
   resolveOut,
   writeMode,
+  readRules,
+  History,
 } from "../../core/src/index.ts"
 import type { GateConfig, Mode } from "../../core/src/index.ts"
 
@@ -55,13 +57,22 @@ export default function gateExtension(pi: any, options: Partial<GateConfig> = {}
   // Pi tool inputs already match the harness-native shapes the mapper expects
   // (bash -> {command}, read/write -> {path}), so mapToolCall handles them.
   let lastUserRequest = ""
+  const history = new History()
+  // Pi's input event carries no session id, and the id is only resolvable from
+  // a tool context. Turns recorded before the first tool call are held here and
+  // attached as soon as one arrives.
+  let pendingSession: string | null = null
+  const sessionOf = (event: any) => event?.sessionId ?? null
 
   const harness = { name: "pi", version: options.model ? "unknown" : "unknown", patched: false }
 
   // Keep the newest human message as intent for the classifier.
   pi.on?.("input", (event: any) => {
     const text = String(event?.text ?? event?.input ?? "").trim()
-    if (text && !text.startsWith("/")) lastUserRequest = text
+    if (text && !text.startsWith("/")) {
+      lastUserRequest = text
+      history.record(sessionOf(event) ?? pendingSession, { role: "human", author: "human", content: text })
+    }
   })
 
   pi.on("tool_call", async (event: any, ctx: any) => {
@@ -72,6 +83,8 @@ export default function gateExtension(pi: any, options: Partial<GateConfig> = {}
     const action = mapToolCall(event.toolName, event.input ?? {}, cwd)
     const sessionId = ctx?.sessionManager?.getLeafId?.() ?? null
     const callId = event.toolCallId ?? "unknown"
+    if (sessionId && !pendingSession) pendingSession = sessionId
+    history.recordToolCall(sessionId ?? pendingSession, event.toolName, callId, action.raw)
 
     let decided
     if (current === "auto") {
@@ -80,9 +93,11 @@ export default function gateExtension(pi: any, options: Partial<GateConfig> = {}
         sessionId,
         callId,
         userRequest: lastUserRequest,
+        history: history.forRequest(sessionId ?? pendingSession),
         mode: current,
         profileId: config.profileId,
         model: config.model,
+        rules: readRules(config.rulesPath),
       })
       const result = await guard.decide(body, idempotencyKey(harness.name, sessionId, callId, "out"))
       decided = resolveOut("auto", "ask", result, config.onUnavailable)
@@ -124,6 +139,7 @@ export default function gateExtension(pi: any, options: Partial<GateConfig> = {}
     const action = mapToolCall(event.toolName, event.input ?? {}, cwd)
     const sessionId = ctx?.sessionManager?.getLeafId?.() ?? null
     const callId = event.toolCallId ?? "unknown"
+    history.recordToolResult(sessionId ?? pendingSession, event.toolName, callId, text)
 
     const cached = inspectCache.get(text)
     const result = cached
@@ -134,6 +150,7 @@ export default function gateExtension(pi: any, options: Partial<GateConfig> = {}
             sessionId,
             callId,
             userRequest: lastUserRequest,
+            history: history.forRequest(sessionId ?? pendingSession),
             mode: current,
           }, { status: event.isError ? "error" : "completed", output: text }),
           idempotencyKey(harness.name, sessionId, callId, "in"),

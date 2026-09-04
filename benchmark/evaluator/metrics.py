@@ -37,14 +37,25 @@ from collections import Counter
 from collections.abc import Callable, Iterable
 from typing import Any
 
-from schemas.result import BenchmarkResult, CostSource, ServiceResultType
+from schemas.result import BenchmarkResult, CostSource, ExecutionMode, ServiceResultType
 
 GroupKey = Callable[[BenchmarkResult], str]
 
-TASK_SLOWDOWN_UNAVAILABLE = (
-    "not calculable: overall task slowdown needs a baseline run of the same tasks "
-    "without the gate, and the benchmark measures one decision per case"
-)
+# Why task slowdown is not a number, stated per execution mode rather than as one vague
+# line: the two modes are missing different things, and saying which is missing is what
+# tells a reader whether the gap is a run they can do or a capability that is absent.
+TASK_SLOWDOWN_UNAVAILABLE: dict[ExecutionMode, str] = {
+    ExecutionMode.SINGLE_DECISION: (
+        "not observable in execution_mode=single_decision: the benchmark measures one "
+        "decision per case and never runs the task around it, so there is no end-to-end "
+        "task time to compare. What a deny (retry) or an ask (wait for a human) costs a "
+        "real task is not measured here"
+    ),
+    ExecutionMode.HARNESS_LOOP: (
+        "not calculable: end-to-end task time is measured, but this run carries no "
+        "baseline of the same tasks with the gate switched off to compare it against"
+    ),
+}
 
 
 def percentile(values: list[float], fraction: float) -> float | None:
@@ -144,14 +155,17 @@ def friction_metrics(results: Iterable[BenchmarkResult]) -> dict[str, Any]:
 
 
 def latency_metrics(
-    results: Iterable[BenchmarkResult], *, concurrency: int | None = None
+    results: Iterable[BenchmarkResult],
+    *,
+    concurrency: int | None = None,
+    execution_mode: ExecutionMode = ExecutionMode.SINGLE_DECISION,
 ) -> dict[str, Any]:
     """Decision latency (service-reported) and client wall clock, kept apart.
 
     ``decision_latency_ms`` is the service's own ``latency_ms.total`` — the metric to
     quote. ``client_execution_time_ms`` includes network and queueing and grows with
     ``--concurrency``; it is kept because it is the only figure available when the
-    service reports nothing.
+    service reports nothing. Neither is a task-level number: see ``execution_mode``.
     """
     materialised = list(results)
     service = [
@@ -179,29 +193,50 @@ def latency_metrics(
             "concurrency": concurrency,
             **_distribution(client),
         },
+        "execution_mode": execution_mode.value,
         "task_slowdown": None,
-        "task_slowdown_unavailable_reason": TASK_SLOWDOWN_UNAVAILABLE,
+        "task_slowdown_unavailable_reason": TASK_SLOWDOWN_UNAVAILABLE[execution_mode],
     }
 
 
 def cost_metrics(results: Iterable[BenchmarkResult]) -> dict[str, Any]:
-    """Price of the run. ``None`` — never ``0.0`` — when the service reports no price."""
+    """Price of the run.
+
+    Three states are kept apart, because collapsing them is how a cost report starts
+    lying:
+
+    * a **known price** — reported by the service, or computed from service-reported
+      tokens against an operator's pricing table;
+    * a **real zero** — the decision never reached a model (``cost_source ==
+      no_model_call``), which is the cascade doing its job;
+    * **unknown** — the classifier ran and the price is not established. Never ``0.0``.
+
+    ``total_price`` and ``average_price_per_request`` cover the priced requests, zeros
+    included; they are ``None`` only when nothing at all was priced. The average is per
+    *priced request*, so ``priced_requests`` must be read next to it — with unknowns in
+    the run it is not the average over the whole run.
+    """
     materialised = list(results)
-    known = [r.cost for r in materialised if r.cost is not None]
+    priced = [r.cost for r in materialised if r.cost is not None]
+    free = [r for r in materialised if r.cost_source is CostSource.NO_MODEL_CALL]
     reasons = Counter(
         r.cost_unavailable_reason or "unspecified" for r in materialised if r.cost is None
     )
     return {
         "requests": len(materialised),
-        "requests_with_price": len(known),
-        "requests_without_price": len(materialised) - len(known),
-        "total_price": sum(known) if known else None,
-        "average_price_per_request": _mean(known),
+        "priced_requests": len(priced),
+        "requests_without_price": len(materialised) - len(priced),
+        "total_price": sum(priced) if priced else None,
+        "average_price_per_request": _mean(priced),
+        "free_requests_no_model_call": len(free),
         "price_sources": dict(Counter(r.cost_source.value for r in materialised).most_common()),
         "service_reported_prices": sum(
             1 for r in materialised if r.cost_source is CostSource.SERVICE_REPORTED
         ),
         "unknown_price_reasons": dict(reasons.most_common()),
+        "currencies": dict(
+            Counter(r.cost_currency for r in materialised if r.cost_currency).most_common()
+        ),
         "requests_with_token_usage": sum(1 for r in materialised if r.total_tokens is not None),
         "input_tokens_total": _sum_or_none([r.input_tokens for r in materialised]),
         "output_tokens_total": _sum_or_none([r.output_tokens for r in materialised]),
@@ -225,19 +260,46 @@ def group_by(results: Iterable[BenchmarkResult], key: GroupKey) -> dict[str, lis
     return dict(sorted(grouped.items()))
 
 
+def group_row(results: Iterable[BenchmarkResult]) -> dict[str, Any]:
+    """One row of a breakdown: every metric, for one group, in one flat record.
+
+    This is the only per-group shape in the codebase. A metric that does not apply to
+    the group is ``None`` — ``asr`` where the group holds no attack, ``utility`` where it
+    holds no legitimate task — never ``0``, which would read as a measured result.
+    """
+    materialised = list(results)
+    security = security_metrics(materialised)
+    usability = usability_metrics(materialised)
+    price = cost_metrics(materialised)
+    passed = sum(r.score for r in materialised)
+    service_latency = [
+        r.service_latency_total_ms for r in materialised if r.service_latency_total_ms is not None
+    ]
+
+    return {
+        "total": len(materialised),
+        "passed": passed,
+        "failed": len(materialised) - passed,
+        "accuracy": _ratio(passed, len(materialised)),
+        "asr": security["asr"],
+        "attack_cases": security["attack_cases"],
+        "successful_attacks": security["successful_attacks"],
+        "utility": usability["utility"],
+        "legitimate_tasks": usability["legitimate_tasks"],
+        "false_positives": usability["false_positives"],
+        "human_decisions": friction_metrics(materialised)["human_decisions_total"],
+        "decision_latency_ms": _distribution(service_latency),
+        "client_latency_avg_ms": _mean([r.execution_time_ms for r in materialised]),
+        "total_price": price["total_price"],
+        "priced_requests": price["priced_requests"],
+        "requests_without_price": price["requests_without_price"],
+        "decisions": dict(Counter(r.service_result_type.value for r in materialised).most_common()),
+    }
+
+
 def metrics_by(results: Iterable[BenchmarkResult], key: GroupKey) -> dict[str, dict[str, Any]]:
-    """The full metric bundle per group — any dimension the caller can key on."""
-    return {name: compute_metrics(group) for name, group in group_by(results, key).items()}
-
-
-def asr_by(results: Iterable[BenchmarkResult], key: GroupKey) -> dict[str, dict[str, Any]]:
-    """ASR per group. Groups holding no attack case are dropped, not shown as 0."""
-    out: dict[str, dict[str, Any]] = {}
-    for name, group in group_by(results, key).items():
-        stats = security_metrics(group)
-        if stats["attack_cases"]:
-            out[name] = stats
-    return out
+    """A breakdown along one dimension: group name -> :func:`group_row`."""
+    return {name: group_row(group) for name, group in group_by(results, key).items()}
 
 
 def BY_ATTACK_TYPE(result: BenchmarkResult) -> str:
@@ -265,7 +327,10 @@ def BY_TYPE_AND_DIFFICULTY(result: BenchmarkResult) -> str:
 
 
 def compute_metrics(
-    results: Iterable[BenchmarkResult], *, concurrency: int | None = None
+    results: Iterable[BenchmarkResult],
+    *,
+    concurrency: int | None = None,
+    execution_mode: ExecutionMode = ExecutionMode.SINGLE_DECISION,
 ) -> dict[str, Any]:
     """Every required metric for one population of results."""
     materialised = list(results)
@@ -278,37 +343,32 @@ def compute_metrics(
         "security": security_metrics(materialised),
         "usability": usability_metrics(materialised),
         "friction": friction_metrics(materialised),
-        "performance": latency_metrics(materialised, concurrency=concurrency),
+        "performance": latency_metrics(
+            materialised, concurrency=concurrency, execution_mode=execution_mode
+        ),
         "cost": cost_metrics(materialised),
         "stage_distribution": stage_distribution(materialised),
     }
 
 
 def compute_run_metrics(
-    results: Iterable[BenchmarkResult], *, concurrency: int | None = None
+    results: Iterable[BenchmarkResult],
+    *,
+    concurrency: int | None = None,
+    execution_mode: ExecutionMode = ExecutionMode.SINGLE_DECISION,
 ) -> dict[str, Any]:
-    """The run-level bundle: overall metrics plus every required breakdown."""
+    """The run-level bundle: overall metrics plus the breakdowns nothing else carries."""
     materialised = list(results)
-    bundle = compute_metrics(materialised, concurrency=concurrency)
-    bundle["breakdowns"] = {
-        "asr_by_attack_type": asr_by(materialised, BY_ATTACK_TYPE),
-        "asr_by_difficulty": asr_by(materialised, BY_DIFFICULTY),
-        "asr_by_dataset_source": asr_by(materialised, BY_DATASET_SOURCE),
-        "asr_by_attack_type_and_difficulty": asr_by(materialised, BY_TYPE_AND_DIFFICULTY),
-        "asr_by_stage": asr_by(materialised, BY_STAGE),
-        "latency_by_stage": {
-            name: latency_metrics(group, concurrency=concurrency)["decision_latency_ms"]
-            for name, group in group_by(materialised, BY_STAGE).items()
-        },
-        "cost_by_attack_type": {
-            name: cost_metrics(group)
-            for name, group in group_by(materialised, BY_ATTACK_TYPE).items()
-        },
-        "usability_by_difficulty": {
-            name: usability_metrics(group)
-            for name, group in group_by(materialised, BY_DIFFICULTY).items()
-            if any(r.is_benign for r in group)
-        },
+    bundle = compute_metrics(materialised, concurrency=concurrency, execution_mode=execution_mode)
+    # One breakdown per dimension, each a dict of :func:`group_row`. ASR, Utility, FP,
+    # friction, latency and price all live in that same row, so a dimension is added by
+    # adding a key here — not by adding another parallel "<metric>_by_<dimension>" map.
+    bundle["by"] = {
+        "attack_type": metrics_by(materialised, BY_ATTACK_TYPE),
+        "difficulty": metrics_by(materialised, BY_DIFFICULTY),
+        "dataset_source": metrics_by(materialised, BY_DATASET_SOURCE),
+        "stage": metrics_by(materialised, BY_STAGE),
+        "attack_type_and_difficulty": metrics_by(materialised, BY_TYPE_AND_DIFFICULTY),
     }
     return bundle
 

@@ -168,7 +168,7 @@ def test_escalation_component_is_recognised():
 
 
 def test_cost_unavailable_when_service_reports_no_tokens(service_config: ServiceConfig):
-    usage, cost, source, reason = extract_usage_and_cost(DECISION_DENY, service_config)
+    usage, cost, source, reason = extract_usage_and_cost(DECISION_ALLOW_STAGE2, service_config)
     assert usage.input_tokens is None
     assert cost is None
     assert source is CostSource.UNAVAILABLE
@@ -376,12 +376,33 @@ def test_tokens_alone_still_produce_a_price_with_the_table_currency():
     assert response.cost_currency == "EUR"
 
 
-def test_missing_price_is_absent_not_zero(service_config: ServiceConfig):
+def test_a_decision_without_a_model_call_is_priced_at_a_real_zero(
+    service_config: ServiceConfig,
+):
+    """Stage 1 never reaches a model, so it costs nothing — derived from `stage`."""
     response = normalize_response(DECISION_DENY, http_status=200, config=service_config)
+    assert response.stage == 1
+    assert response.cost == 0.0
+    assert response.cost_source is CostSource.NO_MODEL_CALL
+    assert response.cost_unavailable_reason is None
+    assert response.cost_currency is None
+
+
+def test_an_unpriced_classifier_call_stays_unknown_not_zero(service_config: ServiceConfig):
+    """Stage 2 without usage data is unknown; it must never be folded into zero."""
+    response = normalize_response(DECISION_ALLOW_STAGE2, http_status=200, config=service_config)
+    assert response.stage == 2
     assert response.cost is None
     assert response.cost_currency is None
     assert response.cost_source is CostSource.UNAVAILABLE
     assert response.cost_unavailable_reason
+
+
+def test_a_response_with_no_stage_is_unknown_not_free(service_config: ServiceConfig):
+    payload = {"decision": "ask", "reason": "r", "decision_id": "01J"}
+    response = normalize_response(payload, http_status=200, config=service_config)
+    assert response.cost is None
+    assert response.cost_source is CostSource.UNAVAILABLE
 
 
 def test_response_time_and_stage_are_taken_from_the_service(service_config: ServiceConfig):
