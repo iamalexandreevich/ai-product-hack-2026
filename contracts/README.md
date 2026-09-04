@@ -7,6 +7,15 @@
 - `deny_message_template.md` — шаблон текста, который адаптер отдаёт агенту при `deny`.
 - `hook_client.py` — эталонный клиент, зависимостей кроме stdlib нет: JSON хука харнесса на stdin → запрос `POST /v1/decide` → решение на stdout. Fail-closed: недоступность сервиса, таймаут или любая ошибка разбора хука дают `ask`, никогда не падают трейсбеком (что под семантикой кодов выхода Claude Code PreToolUse читалось бы как fail-open).
 
+## v2: история, протокол, идемпотентность
+
+- `history` в `POST /v1/decide` — список ходов `{role, author, content, tool?, call_id?}`, старые первыми. `role`: `human | assistant | toolcall | toolresult`; `author`: `human | agent | system` — только `human` считается словами пользователя. Не более 200 ходов и 128 КБ UTF-8 в сумме по `content`, `tool` и `call_id`; сверх — `ask` с `rule_id: api.history-too-large`. Пустая история ведёт себя как v1. Скрытые рассуждения агента (thinking, scratchpad) в `content` не отправляются.
+- `protocol` в запросе, ответе и `/healthz`. Сервис отвечает `1`; другое значение — `ask` с `rule_id: api.unsupported-protocol`.
+- Заголовок `Idempotency-Key` (до 128 символов): повтор с тем же ключом возвращает то же решение и тот же `decision_id`, не двигает счётчики сессии и не пишет вторую строку. Ключ должен быть уникален на вызов инструмента; сервис его не разбирает.
+- Лента `GET /v1/decisions` отдаёт `history` (то, что увидела модель, после усечения), `history_digest`, `protocol`, `idempotency_key`.
+
+По дорожной карте v2 остаётся внутренней до готовности v4 (Context Guard): поле `history` есть в контракте, но адаптерам как поддерживаемое не объявляется.
+
 Изменения здесь — только PR-ом с упоминанием направлений service, adapters и benchmark. Описание полей — в спеке `docs/superpowers/service/specs/2026-09-03-agentgate-v1-design.md`, раздел 4.
 
 ## hook_client.py — пример вызова

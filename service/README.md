@@ -13,6 +13,7 @@ FastAPI-сервис: `POST /v1/decide`, `GET /v1/decisions`, `GET /v1/profiles/
 | Правило ступени 1 | `Rule` (`agentgate/rules/base.py`) | 12 правил в `agentgate/rules/` | `STAGE1` в `agentgate/rules/chain.py` |
 | Ступень 2 | `Classifier` (`agentgate/classify/base.py`) | `LLMClassifier` | `bootstrap.build_service` |
 | Состояние сессии | `SessionStateStore` (`agentgate/domain/session.py`) | `InMemorySessionStateStore` внутри `PersistentSessionStateStore` | `bootstrap.build_service` |
+| Повтор по `Idempotency-Key` | `ReplayStore` (`agentgate/domain/replay.py`) | `InMemoryReplayStore` внутри `PersistentReplayStore` | `bootstrap.build_service` |
 | Запись решения | `DecisionWriter` (`agentgate/store/writer.py`) | `Jsonl…` + `Postgres…` внутри `Composite…` | `bootstrap.build_service` |
 
 Всё, что каскад возвращает, — один тип `Verdict` (`agentgate/domain/verdict.py`): и правило, и классификатор, и allow-кэш, и ранний отказ API.
@@ -80,6 +81,20 @@ store = state_store or PersistentSessionStateStore(RedisSessionStateStore(...), 
 ```
 
 Писать в Postgres из этих методов нельзя: строка allow-кэша ссылается на строку решения, которой на момент решения ещё нет (FK), а запись в базу на горячем пути оплачивается каждым вызовом агента. Всю персистентность решения делает `PostgresDecisionWriter` после отправки ответа.
+
+### …хранилище повторов
+
+Два метода. `PersistentReplayStore` оборачивает любую реализацию и добавляет восстановление из Postgres при старте.
+
+```python
+class RedisReplayStore:
+    async def get(self, key: str) -> DecisionRecord | None: ...
+    async def put(self, key: str, record: DecisionRecord, ttl_seconds: int) -> None: ...
+```
+
+```python
+replay = replay_store or PersistentReplayStore(RedisReplayStore(...), decisions, ttl)
+```
 
 ## Запуск
 

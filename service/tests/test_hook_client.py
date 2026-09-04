@@ -52,6 +52,7 @@ def test_claude_code_bash_maps_to_shell(hook_client):
     assert body["args"]["cwd"] == "/tmp/work"
     assert body["session_id"] == "s1"
     assert body["user_request"] == "fix the build"
+    assert body["protocol"] == 1
     assert "profile_id" not in body
 
 

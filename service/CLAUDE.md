@@ -38,13 +38,13 @@
 
 | Пакет | Что там лежит |
 |---|---|
-| `domain/` | Чистые типы без I/O. `verdict.py` — `Verdict`, единственный тип исхода. `policy.py` — `Policy` (профиль, привязанный к одному workspace, пути разрешены один раз); сам `Profile` живёт в `profiles/schema.py`. `session.py` — `SessionState`, протоколы `SessionStateStore` и `RestorableSessionStateStore`. `dialogue.py` — `Dialogue` (ходы как прислал харнесс, дайджест, усечение `fit`). |
+| `domain/` | Чистые типы без I/O. `verdict.py` — `Verdict`, единственный тип исхода. `policy.py` — `Policy` (профиль, привязанный к одному workspace, пути разрешены один раз); сам `Profile` живёт в `profiles/schema.py`. `session.py` — `SessionState`, протоколы `SessionStateStore` и `RestorableSessionStateStore`. `dialogue.py` — `Dialogue` (ходы как прислал харнесс, дайджест, усечение `fit`). `replay.py` — протокол `ReplayStore` (повтор решения по `Idempotency-Key`). |
 | `shell/` | Синтаксис и семантика shell без политики. `commands.py` — `CommandSpec` и таблица `COMMANDS` (единственный источник знания «что это за команда»), `argv.py` — `ParsedArgv`, `wrappers.py` — `sudo`/`env`/`xargs` и разрешение эффективного argv, `paths.py` — `command_paths(argv, cwd, role)`, `secrets.py` — один список шаблонов секретных файлов. |
 | `normalize/` | `DecideRequest` → `NormalizedAction` (`model.py`, `shell.py`, `paths.py`, `domains.py`). Решение по сырой строке запрещено везде — только по `NormalizedAction`. |
 | `rules/` | Ступень 1. `base.py` — `Rule` (Protocol) и `RuleChain`. `chain.py` — `STAGE1`, порядок правил и есть вся приоритетная политика ступени. По модулю на правило: `unparseable.py`, `hard_deny/` (шесть правил + `wrapper_unresolved.py` + общий `shared.py`), `profile_paths.py`, `profile_domains.py`, `allowlist.py`, `packages.py` (слот slopsquatting, в v1 всегда молчит). |
-| `classify/` | Ступень 2. `base.py` — `Classifier` (Protocol), `llm.py` — `LLMClassifier` и `build_classifiers`, `prompt.py`, `schema.py`, `client.py` (HTTP к OpenAI-совместимому API). |
-| `engine/` | `gate.py` — `Gate`, только оркестрация. `decision.py` — `Decision` (исход вызова целиком) и `DecisionRecord` (плоская проекция: строка JSONL, строка Postgres, элемент `GET /v1/decisions` — одна форма, определённая один раз). `timings.py`. |
-| `session/` | `memory.py` — in-memory store, `persistent.py` — он же плюс `restore()` из Postgres, `escalation.py`, `cache_key.py`. |
+| `classify/` | Ступень 2. `base.py` — `Classifier` (Protocol) и `ReviewCase` (единственный вход классификатора: действие, намерение, усечённый диалог, политика, заметка ступени 1), `llm.py` — `LLMClassifier` и `build_classifiers`, `prompt.py`, `schema.py`, `client.py` (HTTP к OpenAI-совместимому API). |
+| `engine/` | `gate.py` — `Gate`, только оркестрация. `decision.py` — `Decision` (исход вызова целиком) и `DecisionRecord` (плоская проекция: строка JSONL, строка Postgres, элемент `GET /v1/decisions` — одна форма, определённая один раз); `DecisionRecord.to_response()` — единственный конструктор `DecideResponse`, живое решение и повтор собираются одной функцией. `timings.py`. |
+| `session/` | `memory.py` — in-memory store, `persistent.py` — он же плюс `restore()` из Postgres, `escalation.py`, `cache_key.py`, `replay.py` — `InMemoryReplayStore` и `PersistentReplayStore` (восстановление из Postgres при старте). |
 | `store/` | `writer.py` — `DecisionWriter` (Protocol) и три реализации, `repo.py`, `models.py`, `mapper.py` (единственное место, знающее про `metadata_`), `keys.py`, `db.py`. |
 | `api/` | `app.py` (`create_app`), `schemas.py`, `responses.py`, `deps.py` (аутентификация), `examples.py`, `openapi.py`. |
 | `profiles/`, `log/` | Загрузка YAML-профилей; JSONL-лог решений. |
@@ -59,6 +59,7 @@
 - **Правило ступени 1** — новый класс (`id`, `hard`, `evaluate(action, policy) -> Verdict | None`) в `agentgate/rules/`, строка в `STAGE1` (`agentgate/rules/chain.py`). `Gate` не меняется. Hard-deny — в `agentgate/rules/hard_deny/` и в `HARD_DENY_RULES`; дописывать в конец списка безопасно, там все правила жёсткие (`WrapperUnresolvedRule`, отвечающее `ask`, вынесено в цепочку именно поэтому).
 - **Модель ступени 2** — если провайдер OpenAI-совместимый, это запись в `models.configs` профиля и ни строки кода. Иначе класс с протоколом `Classifier` и строка в `bootstrap.build_service`.
 - **Хранилище сессий** — класс с протоколом `SessionStateStore` (плюс `preload`, если его надо восстанавливать при старте) и строка в `bootstrap.build_service`.
+- **Хранилище повторов** — класс с протоколом `ReplayStore` (`agentgate/domain/replay.py`) и строка в `bootstrap.build_service`.
 - **Приёмник решений** — класс с протоколом `DecisionWriter` и элемент списка в `CompositeDecisionWriter`.
 - **Команда** — строка в таблице `COMMANDS` (`agentgate/shell/commands.py`). Про readonly-ность таблица знает не всё: `rules/allowlist.py` дополнительно зашивает `echo`, голый `env` и `find` без `-delete`.
 
@@ -70,7 +71,7 @@
 - Комментарии — только неочевидное «почему». Ссылок на задачи, PR, авторов, даты, «fix round N» в коде нет и быть не должно: эта история живёт в `docs/reports/`.
 - Fail-closed по всему сервису: любая ошибка, таймаут, невалидный ответ или невалидный запрос → `ask` с HTTP 200. `allow` по ошибке невозможен; на каждый путь отказа есть тест.
 - Решение по сырой строке команды запрещено везде; только по `NormalizedAction`.
-- `deny` и `ask` не кэшируются; кэшируется только `allow`.
+- `deny` и `ask` не кэшируются; кэшируется только `allow`. Повтор по `Idempotency-Key` обслуживается в API-слое до `Gate`; `Gate.decide` о ключе не знает. Ступень 1 историю не получает: у `Rule.evaluate(action, policy)` нет для неё параметра.
 - Запись в Postgres и JSONL — после отправки ответа, через `BackgroundTasks`. Ничего в `Gate.decide` не ждёт базу.
 - Хранилище — только Postgres (asyncpg). SQLite не поддерживается.
 - Ретраев к LLM нет: один вызов, один таймаут.

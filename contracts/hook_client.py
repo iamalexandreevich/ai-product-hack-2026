@@ -51,6 +51,7 @@ def to_request(hook: dict, user_request: str, profile: str | None) -> dict:
     else:
         raise ValueError("unrecognized hook payload")
     body = {
+        "protocol": 1,
         "session_id": session, "harness": harness, "tool": tool, "raw": raw,
         "args": {"cwd": cwd, "paths": [p for p in paths if p], "domains": []},
         "user_request": user_request,
