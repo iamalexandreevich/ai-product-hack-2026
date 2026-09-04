@@ -12,6 +12,11 @@ The record carries both `id` and `decision_id`: `decision_id` is the name
 the public contract uses everywhere else, `id` is what the log and the
 row have always been keyed by. One field, two spellings, no second
 source of truth.
+
+`DecisionRecord.to_response` is the only place a `DecideResponse` is
+built: a replayed record (repeated `Idempotency-Key`) and a live decision
+must answer identically, so both go through it -- `Decision.to_response`
+just stores itself and delegates.
 """
 
 from dataclasses import dataclass
@@ -20,7 +25,15 @@ from typing import Any
 
 from pydantic import BaseModel, Field, computed_field
 
-from agentgate.api.schemas import DecideRequest, DecideResponse, DecisionKind, Tool
+from agentgate.api.schemas import (
+    PROTOCOL,
+    DecideRequest,
+    DecideResponse,
+    DecisionKind,
+    LatencyMs,
+    Tool,
+    Turn,
+)
 from agentgate.domain.dialogue import Dialogue
 from agentgate.domain.session import SessionState
 from agentgate.domain.verdict import Verdict
@@ -64,11 +77,39 @@ class DecisionRecord(BaseModel):
     )
     cached: bool
     metadata: dict[str, Any]
+    protocol: int = Field(default=PROTOCOL, description="Protocol version the request declared.")
+    history: list[Turn] = Field(
+        default_factory=list,
+        description=(
+            "Dialogue turns the stage-2 model saw, after truncation to the profile "
+            "budget. Empty when stage 2 did not run."
+        ),
+    )
+    history_digest: str = Field(
+        default="",
+        description="sha256 of the full history the request carried, before truncation.",
+    )
+    idempotency_key: str | None = Field(
+        default=None,
+        description="`Idempotency-Key` the request carried, if any; a repeat replays this record.",
+    )
 
     @computed_field(description="Same ULID as `id`; mirrors the field name /v1/decide returns.")
     @property
     def decision_id(self) -> str:
         return self.id
+
+    def to_response(self) -> DecideResponse:
+        """The wire answer this record stands for -- the one built for a live
+        decision and the one replayed for a repeated `Idempotency-Key` alike."""
+        return DecideResponse(
+            decision=self.decision, reason=self.reason, suggest=self.suggest, stage=self.stage,
+            rule_id=self.rule_id, model=self.model,
+            latency_ms=LatencyMs(
+                stage1=self.latency_stage1_ms, stage2=self.latency_stage2_ms, total=self.latency_total_ms
+            ),
+            cached=self.cached, decision_id=self.id, protocol=self.protocol,
+        )
 
 
 @dataclass(frozen=True)
@@ -86,19 +127,10 @@ class Decision:
     cached: bool = False
     history_digest: str = ""
     dialogue: Dialogue | None = None
+    idempotency_key: str | None = None
 
     def to_response(self) -> DecideResponse:
-        return DecideResponse(
-            decision=self.verdict.decision,
-            reason=self.verdict.reason,
-            suggest=self.verdict.suggest,
-            stage=self.verdict.stage,
-            rule_id=self.verdict.rule_id,
-            model=self.verdict.model,
-            latency_ms=self.latency.to_schema(),
-            cached=self.cached,
-            decision_id=self.id,
-        )
+        return self.to_record().to_response()
 
     def to_record(self) -> DecisionRecord:
         return DecisionRecord(
@@ -125,4 +157,8 @@ class Decision:
             error=self.verdict.error,
             cached=self.cached,
             metadata=self.request.metadata,
+            protocol=self.request.protocol,
+            history=list(self.dialogue.turns) if self.dialogue is not None else [],
+            history_digest=self.history_digest,
+            idempotency_key=self.idempotency_key,
         )

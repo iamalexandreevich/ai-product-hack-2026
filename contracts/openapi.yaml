@@ -503,15 +503,15 @@ components:
       title: ActionArgs
       type: object
     Author:
-      description: |-
-        Who produced a turn. A `human`-role turn authored by an `agent` is a
-        parent model's message to a subagent, not the user's intent.
+      type: string
       enum:
       - human
       - agent
       - system
       title: Author
-      type: string
+      description: |-
+        Who produced a turn. A `human`-role turn authored by an `agent` is a
+        parent model's message to a subagent, not the user's intent.
     DecideRequest:
       description: One proposed agent action, plus the intent behind it.
       properties:
@@ -786,6 +786,30 @@ components:
           additionalProperties: true
           type: object
           title: Metadata
+        protocol:
+          type: integer
+          title: Protocol
+          description: Protocol version the request declared.
+          default: 1
+        history:
+          items:
+            $ref: '#/components/schemas/Turn'
+          type: array
+          title: History
+          description: Dialogue turns the stage-2 model saw, after truncation to the profile
+            budget. Empty when stage 2 did not run.
+        history_digest:
+          type: string
+          title: History Digest
+          description: sha256 of the full history the request carried, before truncation.
+          default: ''
+        idempotency_key:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Idempotency Key
+          description: '`Idempotency-Key` the request carried, if any; a repeat replays this
+            record.'
         decision_id:
           type: string
           title: Decision Id
@@ -1130,7 +1154,6 @@ components:
       title: Tool
       description: Kind of action a harness can ask the gate about.
     Turn:
-      description: One turn of the dialogue that preceded the proposed action.
       properties:
         role:
           $ref: '#/components/schemas/TurnRole'
@@ -1141,41 +1164,40 @@ components:
             `human`-role turn with `author: agent` is text a parent model wrote for a subagent
             and is not treated as the user''s intent.'
         content:
-          description: The message text, the tool call as text, or the tool output.
-          title: Content
           type: string
+          title: Content
+          description: The message text, the tool call as text, or the tool output.
         tool:
           anyOf:
-          - maxLength: 64
-            type: string
+          - type: string
+            maxLength: 64
           - type: 'null'
-          default: null
-          description: Harness-native tool name for `toolcall` / `toolresult` turns.
           title: Tool
+          description: Harness-native tool name for `toolcall` / `toolresult` turns.
         call_id:
           anyOf:
-          - maxLength: 128
-            type: string
+          - type: string
+            maxLength: 128
           - type: 'null'
-          default: null
+          title: Call Id
           description: Ties a `toolcall` to its `toolresult`. The same identifier the harness
             puts into its `Idempotency-Key`.
-          title: Call Id
+      type: object
       required:
       - role
       - author
       - content
       title: Turn
-      type: object
+      description: One turn of the dialogue that preceded the proposed action.
     TurnRole:
-      description: What kind of dialogue turn this is.
+      type: string
       enum:
       - human
       - assistant
       - toolcall
       - toolresult
       title: TurnRole
-      type: string
+      description: What kind of dialogue turn this is.
     ValidationError:
       properties:
         loc:
