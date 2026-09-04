@@ -53,6 +53,28 @@ export AGENTGATE_TOKEN=<выданный токен>
 - `200` с `decision: ask` — сервис не смог решить (таймаут модели, невалидный запрос, неразобранная команда). Это fail-closed по дизайну, не ошибка сервера.
 - Таймаут соединения или `502` от Caddy — сервис лежит; пишите владельцу и приложите время.
 
+## Проверить свою интеграцию за минуту
+
+Эталонный клиент против онлайн-сервера, формат хука Claude Code:
+
+```bash
+echo '{"tool_name":"Bash","tool_input":{"command":"rm -rf /"},"session_id":"smoke","cwd":"/repo"}' \
+  | AGENTGATE_URL=https://109.172.95.51.sslip.io AGENTGATE_TOKEN=$AGENTGATE_TOKEN \
+    python3 contracts/hook_client.py --user-request "clean up"; echo "exit=$?"
+```
+
+Ожидается `"decision": "deny"` и `exit=2`. С неверным токеном клиент печатает `ask` и выходит с кодом 3, а не падает: так и задумано (fail-closed).
+
+## Когда появится домен
+
+Ничего в коде не меняется. Владелец делает три шага:
+
+1. A-запись домена на `109.172.95.51`.
+2. На сервере в `/opt/agentgate/.env` заменить `AGENTGATE_PUBLIC_HOST=109.172.95.51.sslip.io` на новый домен.
+3. `cd service && make deploy` (или на сервере `docker compose -f docker-compose.yml -f docker-compose.deploy.yml up -d caddy`).
+
+Caddy сам получит сертификат для нового имени; HTTP на порту 80 перенаправляется на HTTPS. Если домен нужен строго без TLS, в `service/deploy/Caddyfile` первая строка меняется на `http://{$AGENTGATE_PUBLIC_HOST} {`. Интеграторы после смены меняют только `AGENTGATE_URL`.
+
 ## Лента решений
 
 ```bash
