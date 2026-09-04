@@ -10,7 +10,8 @@ is final.
 from agentgate.domain.verdict import Verdict
 from agentgate.normalize.model import NormalizedAction
 from agentgate.profiles.schema import Profile
-from agentgate.rules.hard_deny.shared import wrapper_chain_unresolved
+from agentgate.rules.hard_deny.shared import EFFECTIVE_WRAPPERS
+from agentgate.shell.wrappers import chain_unresolved
 
 
 class WrapperUnresolvedRule:
@@ -19,7 +20,7 @@ class WrapperUnresolvedRule:
 
     def evaluate(self, action: NormalizedAction, profile: Profile) -> Verdict | None:
         for command in action.commands:
-            why = wrapper_chain_unresolved(command.argv)
+            why = chain_unresolved(command.argv, EFFECTIVE_WRAPPERS)
             if why is None:
                 continue
             head = " ".join(command.argv[:4])

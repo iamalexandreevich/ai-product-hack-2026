@@ -7,6 +7,7 @@ rsync/sftp.
 """
 
 import re
+from collections.abc import Sequence
 from urllib.parse import urlsplit
 
 _SCP_LIKE = re.compile(r"^(?:[\w.-]+@)?([\w.-]+):(?!//)")
@@ -14,7 +15,7 @@ _USER_HOST = re.compile(r"^[\w.-]+@([\w.-]+)$")
 _REMOTE_CMDS = {"ssh", "scp", "rsync", "sftp"}
 
 
-def extract_domains(argv: list[str]) -> list[str]:
+def extract_domains(argv: Sequence[str]) -> list[str]:
     found: list[str] = []
     cmd = argv[0] if argv else ""
     for token in argv:
