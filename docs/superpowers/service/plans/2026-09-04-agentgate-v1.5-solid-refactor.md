@@ -2722,6 +2722,25 @@ Expected: 7 passed.
 
 `_Context` теряет поля `profile` и `profile_hash`, получает `policy`. `context.profile_hash` → `context.policy.profile_hash`.
 
+**Инвариант, который нельзя потерять при переписывании `_resolve` (регресс, найденный ревью задачи 2).**
+Ранний отказ `api.unknown-model` означает, что профиль **разрешён успешно** и не устроила только модель, —
+значит в записанном решении обязан стоять настоящий `profile_hash` этого профиля, а не пустая строка.
+До рефакторинга так и было (`pipeline.py` передавал `base_profile.profile_hash()`); образец кода в задаче 2
+ошибочно передавал `""` для обеих веток раннего отказа, и это чинится отдельным коммитом.
+Правильная форма в `decide()` — не терять хэш там, где профиль есть:
+
+```python
+        resolved = await self._resolve(request, profile_id)
+        if isinstance(resolved, Verdict):
+            profile = self._profiles.get(profile_id)
+            profile_hash = profile.profile_hash() if profile is not None else ""
+            return self._finish(decision_id, request, resolved, timings, profile_id, profile_hash)
+```
+
+Для `api.unknown-profile` хэш пуст по существу — профиля нет. Для `api.unknown-model` он настоящий.
+Регрессионный тест обязателен: `test_unknown_model_still_records_the_profile_hash`.
+
+
 `SessionStateStore.get_or_create` уже принимает `workspace` и возвращает существующее состояние без изменения этого поля — значит workspace первого запроса сохраняется автоматически. Проверить это отдельным тестом (он уже написан в шаге 1: `test_first_request_of_a_session_fixes_the_workspace`).
 
 `Policy.bind` на каждый запрос всё ещё делает `os.path.expanduser` по путям профиля. Это дешевле, чем `detect_workspace` с обходом файловой системы, который теперь вызывается только при создании сессии. Если `tests/rules/test_latency.py` покажет регрессию — кэшировать `Policy` в `SessionState`; пока не усложнять (гайд 1.2).
