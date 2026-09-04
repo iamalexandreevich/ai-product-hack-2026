@@ -321,3 +321,8 @@ def test_shallow_nesting_within_bound_still_works():
     a = normalize_shell(raw, CWD)
     assert not a.flags.unparseable
     assert "echo" in a.executables()
+
+
+def test_heredoc_body_parsed_as_code_for_every_shell_the_rules_know():
+    a = normalize_shell("ksh <<EOF\nrm -rf /etc\nEOF\n", CWD)
+    assert "rm" in a.executables()

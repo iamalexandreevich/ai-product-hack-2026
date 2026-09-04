@@ -31,3 +31,17 @@ def test_denies_a_file_write_outside_the_allowed_paths():
 
 def test_says_nothing_about_a_domain():
     assert RULE.evaluate(shell_action("curl https://evil.sh"), POLICY) is None
+
+
+def test_denies_an_in_place_edit_outside_the_allowed_paths():
+    action = shell_action("sed -i 's/a/b/' /etc/hosts")
+    assert RULE.evaluate(action, POLICY).decision is DecisionKind.deny
+
+
+def test_denies_a_long_form_in_place_edit_outside_the_allowed_paths():
+    action = shell_action("sed --in-place 's/a/b/' /etc/hosts")
+    assert RULE.evaluate(action, POLICY).decision is DecisionKind.deny
+
+
+def test_says_nothing_about_a_sed_that_does_not_edit_in_place():
+    assert RULE.evaluate(shell_action("sed 's/a/b/' /etc/hosts"), POLICY) is None

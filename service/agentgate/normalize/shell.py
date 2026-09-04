@@ -27,7 +27,13 @@ from agentgate.api.schemas import Tool
 from agentgate.normalize.domains import extract_domains
 from agentgate.normalize.model import Flags, NormalizedAction, Redirect, SimpleCommand
 from agentgate.normalize.paths import looks_like_path, looks_unresolved, resolve_path
-from agentgate.shell.commands import CommandSpec, PathArguments, spec_for
+from agentgate.shell.commands import (
+    CommandSpec,
+    PathArguments,
+    Role,
+    commands_with_role,
+    spec_for,
+)
 from agentgate.shell.wrappers import resolve_effective_argv
 
 log = logging.getLogger(__name__)
@@ -39,7 +45,7 @@ _BRACE_EXPANSION = re.compile(r"\{[^{}]*,[^{}]*\}")
 # argv[0] values (matched by basename, so "/bin/bash" counts too) for
 # which a heredoc/here-string body is executable code, not inert data —
 # see _is_shell_exe.
-_SHELL_NAMES = {"sh", "bash", "zsh", "dash"}
+_SHELL_NAMES = commands_with_role(Role.SHELL)
 
 # Bound on our OWN recursive descent into heredoc/here-string bodies and
 # command/process substitutions. Each heredoc level forces a fresh bashlex.parse() call on a body that
