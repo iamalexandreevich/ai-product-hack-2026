@@ -9,8 +9,8 @@ Test DB: agentgate-pg on localhost:5433, AGENTGATE_TEST_DB_URL=postgresql+asyncp
 |---|---|---|---|---|---|
 | 1 Verdict | a878160 | 449eb8d | sonnet DONE | APPROVED, 0 crit / 0 imp | **done** |
 | 2 Decision + writer | 449eb8d | bab29cc | sonnet DONE | NEEDS FIXES, 2 important | fix queued |
-| 3 RuleChain | bab29cc | | opus running | | implementing |
-| 4 shell/ + ParsedArgv | | | | | pending |
+| 3 RuleChain | bab29cc | cb5da99 | opus DONE_W_CONCERNS | APPROVED, 1 important | fix queued |
+| 4 shell/ + ParsedArgv | f9be1cb | | opus running | | implementing |
 | 5 Policy | | | | | pending |
 | 6 protocols + bootstrap | | | | | pending |
 | 7 CommandSpec | | | | | pending |
@@ -90,3 +90,26 @@ UNRESOLVED: /healthz returns {"status":"degraded","db":false} — gate cannot re
 "Event loop is closed" in _terminate_graceful_close. Containers are Up; the earlier exit 137 was NOT a
 crash (OOMKilled=false, db exited 0 alongside) — someone ran `docker compose down` 3h earlier.
 Open question for later: how to version server code from a monorepo carrying three separate tracks.
+
+- Task 3 review: APPROVED. Reviewer traced all 38 constants/helpers of the deleted 930-line file to
+  their new homes (none dropped) and probed 17 branches the 174 table cases do not cover — all match.
+  Endorsed the implementer's deviation from the brief's shared.py list: "I would have flagged the
+  brief's list had it been followed" (14 of ~20 names had one client). shared.py is 110 lines and
+  genuinely shared. Best observation: the old module's single long "unresolved expansion" essay became
+  three rule-specific halves, each stating only its own rule's invariant — a decomposition, not a move.
+
+- QUEUED FIX (apply after task 4, before task 7 touches these rules):
+  IMPORTANT. WrapperUnresolvedRule's "runs after all six" was STRUCTURAL when it was a tail block
+  inside check_hard_deny; as list element 7 it is a line anyone can move, and moving it to the head
+  leaves all 574 tests green while turning `rm -rf / && env -S 'x'` from hard-deny.destructive into
+  ask/ambiguous.wrapper-opaque — a hard deny replaced by an ask, which CLAUDE.md forbids outright.
+  No case in the suite is a mixed action, so nothing notices. Fix: add ONE case to DENY_CASES:
+  ("rm -rf / && env -S 'x'", "hard-deny.destructive"). Adding a case does not violate the
+  byte-identical constraint — that forbids CHANGING an expectation, not strengthening the table.
+  Minor, also queued: document `id` vs a verdict's narrower `rule_id` in rules/base.py (three rules
+  differ); restore the dropped `flags.has_heredoc` reasoning into docs/reports/task-5-hard-deny.md;
+  strip ~35 process-comment lines from the moved test files (deferred, not out of scope).
+
+- DONE now (safe, docs only): spec 5.2 rewritten to describe the RuleChain of objects instead of a
+  list of functions taking SessionState; module map and packages slot repointed from stage1/ to
+  rules/. Commit 2db2830.

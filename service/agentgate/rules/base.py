@@ -8,6 +8,12 @@ safety.
 
 `hard` on the rule declares the strength of the denials it produces:
 hard-deny is final and no later step may replace it.
+
+`id` names the rule; the `rule_id` on a verdict may be narrower, naming
+which of the rule's cases fired -- AllowlistRule reports
+`allowlist.readonly` or `allowlist.prefix`, WrapperUnresolvedRule
+reports `ambiguous.wrapper-depth` or `ambiguous.wrapper-opaque`. Match
+on `rule_id` to identify an outcome, on `id` to identify a rule.
 """
 
 from collections.abc import Sequence
