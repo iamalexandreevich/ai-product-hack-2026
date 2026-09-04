@@ -1,0 +1,3 @@
+{$AGENTGATE_PUBLIC_HOST} {
+	reverse_proxy gate:8400
+}

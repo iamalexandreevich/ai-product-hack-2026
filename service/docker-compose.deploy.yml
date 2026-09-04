@@ -1,0 +1,16 @@
+# Server-only overlay: `docker compose -f docker-compose.yml -f docker-compose.deploy.yml`.
+# Adds Caddy as the TLS terminator in front of `gate`. Local development
+# uses docker-compose.yml alone and never starts Caddy.
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on: [gate]
+    environment:
+      AGENTGATE_PUBLIC_HOST: ${AGENTGATE_PUBLIC_HOST:?set AGENTGATE_PUBLIC_HOST in .env (the public DNS name Caddy serves)}
+    ports: ["80:80", "443:443"]
+    volumes:
+      - "./deploy/Caddyfile:/etc/caddy/Caddyfile:ro"
+      - "caddydata:/data"
+volumes:
+  caddydata: {}

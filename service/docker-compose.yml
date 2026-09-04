@@ -6,7 +6,7 @@ services:
       POSTGRES_USER: agentgate
       POSTGRES_PASSWORD: agentgate
       POSTGRES_DB: agentgate
-    ports: ["5433:5432"]
+    ports: ["127.0.0.1:5433:5432"]
     volumes:
       - "pgdata:/var/lib/postgresql/data"
       - "./scripts/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql:ro"
@@ -16,7 +16,10 @@ services:
       timeout: 2s
       retries: 20
   gate:
-    build: .
+    build:
+      context: .
+      args:
+        GIT_SHA: ${GIT_SHA:-}
     restart: unless-stopped
     depends_on:
       db:
