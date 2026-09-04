@@ -29,7 +29,7 @@ services:
       AGENTGATE_TOKEN: ${AGENTGATE_TOKEN:?set AGENTGATE_TOKEN before docker compose up}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       OPENROUTER_MODEL_NAME: ${OPENROUTER_MODEL_NAME:-}
-    ports: ["8400:8400"]
+    ports: ["127.0.0.1:8400:8400"]
     volumes: ["gatedata:/data"]
 volumes:
   pgdata: {}
