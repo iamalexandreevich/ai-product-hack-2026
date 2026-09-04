@@ -20,7 +20,7 @@
 - Modify: `service/agentgate/api/app.py` (функция `healthz`)
 - Test: `service/tests/test_config.py`, `service/tests/api/test_app.py`
 
-- [ ] **Step 1: Failing test для нормализации в Settings**
+- [x] **Step 1: Failing test для нормализации в Settings**
 
 В конец `tests/test_config.py`:
 
@@ -42,12 +42,12 @@ def test_git_sha_is_read_from_env(monkeypatch):
     assert Settings().git_sha == "abc123"
 ```
 
-- [ ] **Step 2: Убедиться, что падает**
+- [x] **Step 2: Убедиться, что падает**
 
 Run: `uv run pytest tests/test_config.py -q -k git_sha`
 Expected: 3 failed, `AttributeError: 'Settings' object has no attribute 'git_sha'`.
 
-- [ ] **Step 3: Реализация в Settings**
+- [x] **Step 3: Реализация в Settings**
 
 В `agentgate/config.py` после `api_key_cache_ttl_seconds: float = 45.0` добавить:
 
@@ -63,12 +63,12 @@ Expected: 3 failed, `AttributeError: 'Settings' object has no attribute 'git_sha
         return value or None
 ```
 
-- [ ] **Step 4: Тесты Settings зелёные**
+- [x] **Step 4: Тесты Settings зелёные**
 
 Run: `uv run pytest tests/test_config.py -q`
 Expected: all passed.
 
-- [ ] **Step 5: Failing test для `/healthz`**
+- [x] **Step 5: Failing test для `/healthz`**
 
 В `tests/api/test_app.py` расширить `build()`: добавить параметр `git_sha=None` и передать его в `Settings(...)`:
 
@@ -94,12 +94,12 @@ async def test_healthz_git_sha_is_null_when_unset(tmp_path):
     assert "git_sha" in r.json() and r.json()["git_sha"] is None
 ```
 
-- [ ] **Step 6: Убедиться, что падает**
+- [x] **Step 6: Убедиться, что падает**
 
 Run: `uv run pytest tests/api/test_app.py -q -k git_sha`
 Expected: 2 failed (`KeyError: 'git_sha'`).
 
-- [ ] **Step 7: Реализация в Health и app**
+- [x] **Step 7: Реализация в Health и app**
 
 `agentgate/api/responses.py`, в `Health` после поля `llm`:
 
@@ -118,12 +118,12 @@ Expected: 2 failed (`KeyError: 'git_sha'`).
         return Health(status="ok" if db_ok else "degraded", db=db_ok, llm=None, git_sha=settings.git_sha)
 ```
 
-- [ ] **Step 8: Зелёные тесты API**
+- [x] **Step 8: Зелёные тесты API**
 
 Run: `uv run pytest tests/api/test_app.py tests/test_config.py -q`
 Expected: all passed.
 
-- [ ] **Step 9: Перегенерировать контракты, проверить их тест**
+- [x] **Step 9: Перегенерировать контракты, проверить их тест**
 
 Run:
 ```
@@ -133,7 +133,7 @@ git -C .. diff --stat contracts/
 ```
 Expected: тест зелёный, в диффе только `contracts/openapi.yaml` с новым полем `git_sha` в схеме `Health`.
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 cd .. && git commit --only service/agentgate/config.py service/agentgate/api/responses.py service/agentgate/api/app.py service/tests/test_config.py service/tests/api/test_app.py contracts/openapi.yaml -m "feat(service): /healthz reports the commit the image was built from
@@ -151,7 +151,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - Create: `service/docker-compose.deploy.yml`
 - Create: `service/deploy/Caddyfile`
 
-- [ ] **Step 1: Dockerfile принимает GIT_SHA**
+- [x] **Step 1: Dockerfile принимает GIT_SHA**
 
 После строки `ENV AGENTGATE_BIND=...` добавить:
 
@@ -160,7 +160,7 @@ ARG GIT_SHA=
 ENV AGENTGATE_GIT_SHA=$GIT_SHA
 ```
 
-- [ ] **Step 2: compose: build-arg и Postgres только на loopback**
+- [x] **Step 2: compose: build-arg и Postgres только на loopback**
 
 В `docker-compose.yml` заменить `ports: ["5433:5432"]` на `ports: ["127.0.0.1:5433:5432"]`, а `build: .` на:
 
@@ -171,7 +171,7 @@ ENV AGENTGATE_GIT_SHA=$GIT_SHA
         GIT_SHA: ${GIT_SHA:-}
 ```
 
-- [ ] **Step 3: Оверлей для сервера**
+- [x] **Step 3: Оверлей для сервера**
 
 `service/docker-compose.deploy.yml`:
 
@@ -194,7 +194,7 @@ volumes:
   caddydata: {}
 ```
 
-- [ ] **Step 4: Caddyfile**
+- [x] **Step 4: Caddyfile**
 
 `service/deploy/Caddyfile`:
 
@@ -204,7 +204,7 @@ volumes:
 }
 ```
 
-- [ ] **Step 5: Проверить конфигурацию локально**
+- [x] **Step 5: Проверить конфигурацию локально**
 
 Run:
 ```
@@ -215,7 +215,7 @@ Expected: строки с `GIT_SHA: deadbeef`, `host_ip: 127.0.0.1` / `5433`, `A
 Run: `AGENTGATE_TOKEN=x docker compose config >/dev/null && echo base-ok`
 Expected: `base-ok` (базовый compose без оверлея не требует `AGENTGATE_PUBLIC_HOST`).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 cd .. && git commit --only service/Dockerfile service/docker-compose.yml service/docker-compose.deploy.yml service/deploy/Caddyfile -m "feat(deploy): Caddy in front of gate, Postgres on loopback, GIT_SHA into the image
@@ -230,7 +230,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 **Files:**
 - Modify: `service/Makefile`
 
-- [ ] **Step 1: Переменная COMPOSE и GIT_SHA**
+- [x] **Step 1: Переменная COMPOSE и GIT_SHA**
 
 После `HEALTHZ_PORT ?= 8400` добавить:
 
@@ -241,7 +241,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 COMPOSE := docker compose -f docker-compose.yml -f docker-compose.deploy.yml
 ```
 
-- [ ] **Step 2: rsync по .gitignore**
+- [x] **Step 2: rsync по .gitignore**
 
 Заменить блок `rsync -az --delete ... ./ $(DEPLOY_HOST):$(DEPLOY_DIR)/` на:
 
@@ -263,7 +263,7 @@ COMPOSE := docker compose -f docker-compose.yml -f docker-compose.deploy.yml
 #      and `--delete` would remove the rollback pointer.
 ```
 
-- [ ] **Step 3: GIT_SHA и COMPOSE в deploy**
+- [x] **Step 3: GIT_SHA и COMPOSE в deploy**
 
 Заменить ssh-блок сборки на:
 
@@ -275,7 +275,7 @@ COMPOSE := docker compose -f docker-compose.yml -f docker-compose.deploy.yml
 		$(COMPOSE) exec -T gate uv run alembic upgrade head'
 ```
 
-- [ ] **Step 4: Внешняя проверка по HTTPS**
+- [x] **Step 4: Внешняя проверка по HTTPS**
 
 Внутри ветки `echo "==> deploy OK"` заменить на:
 
@@ -285,11 +285,11 @@ COMPOSE := docker compose -f docker-compose.yml -f docker-compose.deploy.yml
 		curl -fsS "https://$$PUBLIC_HOST/healthz" && echo && echo "==> https://$$PUBLIC_HOST is up"; \
 ```
 
-- [ ] **Step 5: logs, ps, rollback через COMPOSE**
+- [x] **Step 5: logs, ps, rollback через COMPOSE**
 
 Во всех трёх целях `docker compose` → `$(COMPOSE)`.
 
-- [ ] **Step 6: Синтаксис и dry run**
+- [x] **Step 6: Синтаксис и dry run**
 
 Run: `make -n deploy | head -30`
 Expected: команды печатаются без ошибок make, в них видны `--filter=':- .gitignore'` и `GIT_SHA=<40 hex>`.
@@ -297,7 +297,7 @@ Expected: команды печатаются без ошибок make, в ни�
 Run: `rsync -azn --delete --filter=':- .gitignore' --exclude='.env' --exclude='.previous_gate_image' -v ./ agentgate:/opt/agentgate/ | grep -E "^\.env|previous_gate|\.venv|__pycache__|\.pytest_cache|deleting" | head`
 Expected: строк `.env`, `.previous_gate_image`, `.venv`, кэшей нет; строки `deleting docker-compose.yml.bak` и `deleting agentgate/pipeline.py` есть (старый код уезжает).
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 cd .. && git commit --only service/Makefile -m "feat(deploy): rsync by .gitignore, GIT_SHA into the build, HTTPS check after deploy
@@ -311,7 +311,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 **Files:** нет изменений в репозитории.
 
-- [ ] **Step 1: Переименовать ключ в локальном .env, не читая его**
+- [x] **Step 1: Переименовать ключ в локальном .env, не читая его**
 
 Run:
 ```
@@ -319,7 +319,7 @@ sed -i '' 's/^TOKEN=/AGENTGATE_TOKEN=/' .env && grep -c '^AGENTGATE_TOKEN=' .env
 ```
 Expected: `1` затем `0` (второй grep завершится кодом 1, это нормально).
 
-- [ ] **Step 2: Публичное имя в серверный .env**
+- [x] **Step 2: Публичное имя в серверный .env**
 
 Run:
 ```
@@ -327,7 +327,7 @@ ssh agentgate 'grep -q "^AGENTGATE_PUBLIC_HOST=" /opt/agentgate/.env || echo "AG
 ```
 Expected: `1`.
 
-- [ ] **Step 3: Удалить лишний ключ на сервере**
+- [x] **Step 3: Удалить лишний ключ на сервере**
 
 Run:
 ```
@@ -335,7 +335,7 @@ ssh agentgate 'sed -i "/agentgate-deploy@/d" /root/.ssh/authorized_keys; grep -c
 ```
 Expected: `0` (grep вернёт код 1).
 
-- [ ] **Step 4: Удалить локальную пару и проверить вход**
+- [x] **Step 4: Удалить локальную пару и проверить вход**
 
 Run:
 ```
@@ -352,7 +352,7 @@ Expected: `ssh-ok`.
 - Modify: `docs/superpowers/service/specs/deploy.md` (раздел «Состояние»)
 - Modify: `CLAUDE.md` (корень)
 
-- [ ] **Step 1: docs/connect.md**
+- [x] **Step 1: docs/connect.md**
 
 ```markdown
 # Подключение к общему серверу AgentGate
@@ -417,7 +417,7 @@ curl -fsS "https://109.172.95.51.sslip.io/v1/decisions?limit=20" -H "authorizati
 ```
 ```
 
-- [ ] **Step 2: deploy.md — короткий раздел вверху раздела «Состояние на 4 сентября 2026»**
+- [x] **Step 2: deploy.md — короткий раздел вверху раздела «Состояние на 4 сентября 2026»**
 
 Добавить перед «### Исправление к предыдущей редакции этого раздела»:
 
@@ -427,7 +427,7 @@ curl -fsS "https://109.172.95.51.sslip.io/v1/decisions?limit=20" -H "authorizati
 Решения и результат — `2026-09-04-deploy-public-endpoint-design.md`, отчёт — `docs/reports/task-14-deploy.md`. Коротко: `main` на сервере, `https://109.172.95.51.sslip.io` через Caddy, Postgres только на loopback, `git_sha` в `/healthz`, rsync по `.gitignore`. Из таблицы версионирования ниже выбран первый вариант. Страница для интеграторов — `docs/connect.md`.
 ```
 
-- [ ] **Step 3: CLAUDE.md корня**
+- [x] **Step 3: CLAUDE.md корня**
 
 В первом абзаце после ссылки на `deploy.md` добавить: `Деплой v1.5 за HTTPS и подключение команды: docs/superpowers/service/specs/2026-09-04-deploy-public-endpoint-design.md, страница интегратора — docs/connect.md.`
 
@@ -438,7 +438,7 @@ curl -fsS "https://109.172.95.51.sslip.io/v1/decisions?limit=20" -H "authorizati
 - **Имя `*.sslip.io` не в Public Suffix List**: недельный лимит Let's Encrypt общий на всех его пользователей; Caddy сам падает на ZeroSSL. Если и он откажет — купить домен, A-запись на сервер, поменять `AGENTGATE_PUBLIC_HOST` в серверном `.env`.
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git commit --only docs/connect.md docs/superpowers/service/specs/deploy.md CLAUDE.md -m "docs: how to connect to the shared server, deploy state for 4 September
@@ -450,17 +450,17 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ### Task 6: Деплой и приёмка
 
-- [ ] **Step 1: Полный прогон тестов и чистое дерево**
+- [x] **Step 1: Полный прогон тестов и чистое дерево**
 
 Run: `uv run pytest -q && git status --porcelain -- .`
 Expected: тесты зелёные (тесты с базой пропущены без `AGENTGATE_TEST_DB_URL`), вывод `git status` пустой.
 
-- [ ] **Step 2: Деплой**
+- [x] **Step 2: Деплой**
 
 Run: `make deploy 2>&1 | tail -25`
 Expected: заканчивается строками `==> deploy OK on the server...`, JSON `/healthz` и `==> https://109.172.95.51.sslip.io is up`. Первый запрос по HTTPS может ждать выпуска сертификата до минуты; если `curl` упал по TLS — повторить через 30 секунд вручную, прежде чем считать деплой неуспешным.
 
-- [ ] **Step 3: Приёмка из спеки, раздел 6**
+- [x] **Step 3: Приёмка из спеки, раздел 6**
 
 Run:
 ```
@@ -473,7 +473,7 @@ Expected: `git_sha` равен HEAD; `pg closed`; 8400 отвечает; `.previ
 
 Пункт 2 (decide по HTTPS с токеном) выполняет владелец с его токеном, либо агент при наличии `AGENTGATE_TOKEN` в окружении — команды в `docs/connect.md`.
 
-- [ ] **Step 4: Отчёт**
+- [x] **Step 4: Отчёт**
 
 Создать `docs/reports/task-14-deploy.md` по правилу проекта: что построено, доказательства TDD (падавшие и прошедшие тесты), находки (Postgres наружу, старый код), решения владельца, что отложено (8400, ротация паролей, ключи). Commit:
 
