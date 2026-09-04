@@ -12,8 +12,11 @@ hard-deny is final and no later step may replace it.
 `id` names the rule; the `rule_id` on a verdict may be narrower, naming
 which of the rule's cases fired -- AllowlistRule reports
 `allowlist.readonly` or `allowlist.prefix`, WrapperUnresolvedRule
-reports `ambiguous.wrapper-depth` or `ambiguous.wrapper-opaque`. Match
-on `rule_id` to identify an outcome, on `id` to identify a rule.
+reports `ambiguous.wrapper-depth` or `ambiguous.wrapper-opaque`. The two
+can even disagree about family: GitForceRule is `hard-deny.git-force`
+with `hard = True`, yet emits `ambiguous.git-force` when it recognizes a
+force push whose target it cannot pin down. Match on `rule_id` to
+identify an outcome, on `id` to identify a rule.
 """
 
 from collections.abc import Sequence

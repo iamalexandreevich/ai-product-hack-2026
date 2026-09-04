@@ -35,7 +35,7 @@ class ParsedArgv:
         argv: Sequence[str],
         value_flags: frozenset[str] = frozenset(),
         *,
-        double_dash_ends_options: bool = True,
+        double_dash_ends_options: bool = False,
     ) -> "ParsedArgv":
         if not argv:
             return cls("", (), ())
