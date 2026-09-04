@@ -139,6 +139,16 @@ async def test_unknown_profile_and_model_are_ask():
     assert by_model.verdict.decision is DecisionKind.ask and by_model.verdict.rule_id == "api.unknown-model"
 
 
+async def test_unknown_model_still_records_the_profile_hash():
+    decision = await gate(FakeLLM()).decide(decide_request("npm install a", model="zzz"))
+    assert decision.profile_hash == profile().profile_hash()
+
+
+async def test_unknown_profile_records_no_profile_hash():
+    decision = await gate(FakeLLM()).decide(decide_request("ls", profile_id="nope"))
+    assert decision.profile_hash == ""
+
+
 async def test_model_override_is_used():
     seen = {}
 

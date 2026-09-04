@@ -93,8 +93,8 @@ def decide_request(raw: str, session_id: str | None = "s1", **overrides) -> Deci
 
 class FakeLLM:
     """An httpx MockTransport handler standing in for the OpenAI-compatible
-    endpoint. Replaced by a Classifier fake in task 6 -- until the protocol
-    exists, the transport is the only seam.
+    endpoint. Until a Classifier protocol exists, the transport is the only
+    seam available to fake the model.
     """
 
     def __init__(self, decision: str = "A", reason: str = "r", suggest: str = "s", status: int = 200) -> None:

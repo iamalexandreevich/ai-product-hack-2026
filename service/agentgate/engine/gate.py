@@ -76,7 +76,12 @@ class Gate:
 
         resolved = await self._resolve(request, profile_id)
         if isinstance(resolved, Verdict):
-            return self._finish(decision_id, request, resolved, timings, profile_id, "")
+            # An unknown model refuses a profile that resolved fine, so the
+            # recorded decision keeps that profile's hash; an unknown profile
+            # has none to keep.
+            profile = self._profiles.get(profile_id)
+            profile_hash = profile.profile_hash() if profile is not None else ""
+            return self._finish(decision_id, request, resolved, timings, profile_id, profile_hash)
 
         action = normalize(request)
         cache_key = allow_cache_key(
