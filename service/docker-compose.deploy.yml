@@ -8,6 +8,7 @@ services:
     depends_on: [gate]
     environment:
       AGENTGATE_PUBLIC_HOST: ${AGENTGATE_PUBLIC_HOST:?set AGENTGATE_PUBLIC_HOST in .env (the public DNS name Caddy serves)}
+      AGENTGATE_PUBLIC_ALIASES: ${AGENTGATE_PUBLIC_ALIASES:-}
     ports: ["80:80", "443:443"]
     volumes:
       - "./deploy/Caddyfile:/etc/caddy/Caddyfile:ro"
