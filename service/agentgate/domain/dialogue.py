@@ -50,4 +50,40 @@ class Dialogue:
         return None
 
     def fit(self, budget: History) -> "Dialogue":
-        raise NotImplementedError
+        """The part of this dialogue that fits the prompt budget.
+
+        Each turn is first capped by its role's limit; then the oldest turns
+        are dropped whole until the total content fits `budget_chars`. The
+        newest turn is never dropped: if it alone exceeds the budget, it
+        stays and the budget is simply exhausted.
+        """
+        kept = [_cap(turn, budget.cap_for(turn.role.value)) for turn in self.turns]
+        omitted = 0
+        while len(kept) > 1 and _content_chars(kept) > budget.budget_chars:
+            kept.pop(0)
+            omitted += 1
+        return Dialogue(tuple(kept), omitted)
+
+
+def _content_chars(turns: list[Turn]) -> int:
+    return sum(len(turn.content) for turn in turns)
+
+
+def _cap(turn: Turn, limit: int) -> Turn:
+    if len(turn.content) <= limit:
+        return turn
+    if turn.role is TurnRole.human:
+        return turn.model_copy(update={"content": turn.content[-limit:]})
+    return turn.model_copy(update={"content": _head_and_tail(turn.content, limit)})
+
+
+def _head_and_tail(content: str, limit: int) -> str:
+    # The marker length is bounded using the whole content length, so the
+    # final marker (which reports fewer omitted characters, hence no more
+    # digits) can never push the result over the limit.
+    marker_room = len(OMITTED_MARKER.format(n=len(content)))
+    keep = max(limit - marker_room, 0)
+    head, tail = keep // 2, keep - keep // 2
+    omitted = len(content) - keep
+    marker = OMITTED_MARKER.format(n=omitted)
+    return content[:head] + marker + (content[len(content) - tail:] if tail else "")
