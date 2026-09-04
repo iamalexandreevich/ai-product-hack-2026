@@ -1,0 +1,13 @@
+{
+  "name": "@agentgate/adapters",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Gate integration for open-source coding agents: harness plugins, patch and installer.",
+  "type": "module",
+  "engines": { "node": ">=22.6" },
+  "scripts": {
+    "test": "node --test packages/*/test/*.test.ts",
+    "guard": "node packages/mock-guard/src/server.ts",
+    "llm": "node recon/mock-llm.mjs"
+  }
+}

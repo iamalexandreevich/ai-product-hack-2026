@@ -1,0 +1,25 @@
+# Пример таблицы цен для расчёта стоимости запроса.
+#
+# Бенчмарк НИКОГДА не придумывает стоимость. Она появляется в результатах только если:
+#   1) сервис сам вернул cost в ответе (в контракте v1 такого поля нет), либо
+#   2) сервис вернул количество токенов И здесь есть цена для этой модели.
+# Иначе в результате cost = null и заполнено cost_unavailable_reason.
+#
+# Ключ — имя конфигурации модели из профиля AgentGate (то, что приходит в поле `model`
+# ответа /v1/decide), либо конкретный id модели, если он разрешён через GET /v1/profiles/{id}.
+# Цены — за 1 000 000 токенов. Значения ниже заведомо фиктивные: подставьте реальные
+# из счёта провайдера, иначе не подключайте таблицу вообще.
+#
+# Использование:
+#   python cli.py benchmark --path attacks/cases --pricing-table pricing.yaml
+#   BENCHMARK_PRICING_TABLE=pricing.yaml python cli.py benchmark --path attacks/cases
+
+currency: USD
+
+models:
+  sonnet:
+    input_per_1m: 0.0
+    output_per_1m: 0.0
+  qwen-4b:
+    input_per_1m: 0.0
+    output_per_1m: 0.0

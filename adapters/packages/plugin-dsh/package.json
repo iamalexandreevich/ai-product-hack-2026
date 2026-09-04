@@ -1,0 +1,8 @@
+{
+  "name": "@agentgate/dsh-gate",
+  "version": "0.1.0",
+  "description": "AgentGate plugin for DeepSeek Harness: gates tool calls and filters tool results.",
+  "type": "module",
+  "main": "src/index.js",
+  "private": true
+}
