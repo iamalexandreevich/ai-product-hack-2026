@@ -41,12 +41,16 @@ async def test_postgres_writer_inserts_the_decision_row():
     assert len(decisions.inserted) == 1
 
 
-async def test_postgres_writer_leaves_the_session_row_to_the_state_store():
-    # The session row is written during the decision, by the state store, which
-    # is what satisfies the decisions -> sessions FK by the time this runs.
+async def test_postgres_writer_upserts_the_session_row():
     sessions, decisions = FakeSessionRecords(), FakeDecisionRepo()
     await PostgresDecisionWriter(decisions, sessions, 86400).write(decision(state=session_state()))
-    assert sessions.upserts == []
+    assert sessions.upserts == ["s1"]
+
+
+async def test_postgres_writer_writes_no_session_row_for_a_sessionless_call():
+    sessions, decisions = FakeSessionRecords(), FakeDecisionRepo()
+    await PostgresDecisionWriter(decisions, sessions, 86400).write(decision(state=None))
+    assert sessions.upserts == [] and len(decisions.inserted) == 1
 
 
 async def test_postgres_writer_caches_an_allow():
@@ -98,12 +102,15 @@ async def test_composite_logs_the_failure_it_swallowed(caplog):
 
 
 class OrderRecordingRepos:
-    """Both repos sharing one order log, so 'decision row before cache row'
-    (the FK requirement) is asserted as an observable fact, not as a call count.
+    """Both repos sharing one order log, so the FK ordering is asserted as an
+    observable sequence rather than as a call count.
     """
 
     def __init__(self) -> None:
         self.order: list[str] = []
+
+    async def upsert(self, state) -> None:
+        self.order.append("session")
 
     async def cache_put(self, session_id, action_hash, decision_id, expires_at) -> None:
         self.order.append("cache")
@@ -112,9 +119,10 @@ class OrderRecordingRepos:
         self.order.append("decision")
 
 
-async def test_postgres_writer_writes_the_decision_before_the_cache_row():
+async def test_postgres_writer_writes_the_rows_in_foreign_key_order():
+    # decisions.session_id -> sessions.id, allow_cache.decision_id -> decisions.id.
     repos = OrderRecordingRepos()
     await PostgresDecisionWriter(repos, repos, 86400).write(
         decision(state=session_state(), cache_key="k" * 64)
     )
-    assert repos.order == ["decision", "cache"]
+    assert repos.order == ["session", "decision", "cache"]

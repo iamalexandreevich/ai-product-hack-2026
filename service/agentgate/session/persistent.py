@@ -1,44 +1,52 @@
-"""In-memory session state, written through to Postgres and restored from it.
+"""In-memory session state that can restore itself from Postgres.
 
 The spec keeps counters and the allow cache in memory behind
-SessionStateStore, writes them through, and restores them at startup. That
-was three pieces of glue in two modules; it is one implementation of the
-protocol here, which is also what makes a Redis store a single new class.
+SessionStateStore and restores them at startup. That restore used to be
+glue in the process entrypoint; it is a method on the store here, which is
+what makes another backing store a single new class.
 
-Two boundaries this store deliberately does not cross:
+Nothing here writes to Postgres. Every persisted row a decision produces --
+the session row, the decision row, the allow-cache row -- is written after
+the response is sent, in one place, by
+agentgate.store.writer.PostgresDecisionWriter. Two reasons it has to be
+that way:
 
-- The allow-cache row is NOT written through. `allow_cache.decision_id`
-  references `decisions.id`, and this store is called while the decision is
-  still being made -- its row reaches Postgres only after the response is
-  sent. Persisting the cache entry belongs with the decision it points at,
-  and lives in agentgate.store.writer.PostgresDecisionWriter.
-- A repository failure never reaches the caller. The session row is
-  bookkeeping; an answer the engine has already reached must not turn into
-  `ask` because Postgres is down, so `save` logs and continues, exactly as
-  the post-response writers do.
+- The gate sits in front of every tool call an agent makes, and v1's
+  constraints put database writes after the response for that reason. A
+  round-trip awaited inside `save` would be paid by every decision.
+- Ordering. `decisions.session_id` references `sessions.id` and
+  `allow_cache.decision_id` references `decisions.id`, so the three writes
+  have one correct order and it is cheaper to keep than to reconstruct
+  across two modules.
 """
 
-import logging
 from datetime import datetime, timezone
 from typing import Protocol
 
 from agentgate.domain.session import SessionState, SessionStateStore
 
-log = logging.getLogger(__name__)
-
 
 class SessionRecords(Protocol):
-    """The persisted half of a session: what this store reads and writes."""
+    """The persisted half of a session: what this store reads."""
 
     async def load_all(self) -> list[SessionState]: ...
 
     async def cache_load_valid(self) -> list[tuple[str, str, str, datetime]]: ...
 
-    async def upsert(self, state: SessionState) -> None: ...
+
+class PreloadableSessionStateStore(SessionStateStore, Protocol):
+    """A store that can be seeded with state it did not create.
+
+    Restoring means putting rows that already exist into a store that has
+    not seen them, which is not something every store can do -- so it is a
+    requirement of the inner store, stated here rather than assumed.
+    """
+
+    def preload(self, states: list[SessionState]) -> None: ...
 
 
 class PersistentSessionStateStore:
-    def __init__(self, inner: SessionStateStore, sessions: SessionRecords) -> None:
+    def __init__(self, inner: PreloadableSessionStateStore, sessions: SessionRecords) -> None:
         self._inner = inner
         self._sessions = sessions
 
@@ -58,10 +66,6 @@ class PersistentSessionStateStore:
 
     async def save(self, state: SessionState) -> None:
         await self._inner.save(state)
-        try:
-            await self._sessions.upsert(state)
-        except Exception:  # noqa: BLE001 - bookkeeping must not change the decision
-            log.exception("failed to persist session %s", state.session_id)
 
     async def cache_get(self, session_id: str, key: str) -> str | None:
         return await self._inner.cache_get(session_id, key)

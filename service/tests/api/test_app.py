@@ -286,11 +286,21 @@ async def test_session_write_failure_does_not_change_the_response(tmp_path):
     assert r.status_code == 200 and r.json()["decision"] == "allow"
 
 
+async def test_session_write_failure_still_answers_the_caller(tmp_path):
+    app, _, _, _ = build(tmp_path, sessions_broken=True)
+    r = await call(app, "POST", "/v1/decide", json=body())
+    assert r.status_code == 200 and r.json()["decision"] == "allow"
+
+
 async def test_session_write_failure_is_logged(tmp_path, caplog):
+    # The session row is the first of three the writer puts down, so its
+    # failure takes the decision row with it -- a decision missing from the
+    # feed is better than one whose foreign key was never satisfied. What
+    # must not happen is silence.
     app, _, _, _ = build(tmp_path, sessions_broken=True)
     with caplog.at_level(logging.ERROR):
         await call(app, "POST", "/v1/decide", json=body())
-    assert "s1" in caplog.text
+    assert "PostgresDecisionWriter" in caplog.text
 
 
 # --- The foreign keys hold against the real database ------------------------

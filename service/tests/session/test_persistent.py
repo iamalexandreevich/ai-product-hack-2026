@@ -30,15 +30,17 @@ async def test_get_or_create_returns_the_restored_state():
     assert (await persistent.get_or_create("s1", "t", "default", "/w")).deny_total == 5
 
 
-async def test_save_writes_through_to_the_repository():
+async def test_save_does_not_touch_the_repository():
+    # The gate runs in front of every tool call, so nothing here awaits a
+    # database round-trip; the session row is written after the response by
+    # PostgresDecisionWriter, together with the rows whose FKs depend on it.
     sessions = FakeSessionRecords()
     await store(sessions).save(state("s1"))
-    assert sessions.upserts == ["s1"]
+    assert sessions.upserts == []
 
 
-async def test_save_keeps_the_state_readable_when_the_repository_fails():
-    sessions = FakeSessionRecords(upsert_error=RuntimeError("db down"))
-    persistent = store(sessions)
+async def test_save_keeps_the_state_readable():
+    persistent = store(FakeSessionRecords())
     await persistent.save(state("s1", deny_total=2))
     assert (await persistent.get_or_create("s1", "t", "default", "/w")).deny_total == 2
 

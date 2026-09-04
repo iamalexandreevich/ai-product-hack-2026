@@ -4,11 +4,17 @@ One protocol, three implementations. `write` never raises: a decision the
 caller already has must not be undone by a storage failure, and one sink
 failing must not stop the others.
 
-The session row is not written here -- the session state store writes it
-during the decision, which is what satisfies the `decisions.session_id`
-foreign key by the time this runs. What is left of the FK ordering lives
-here: `allow_cache.decision_id` references `decisions.id`, so the cache row
-follows the decision row.
+All three rows a decision produces are written here, and the foreign keys
+fix their order: `decisions.session_id` references `sessions.id` and
+`allow_cache.decision_id` references `decisions.id`, so it is session row,
+then decision row, then cache row. Keeping the order in one place is the
+point -- split across modules it has to be reconstructed by whoever reads
+it next.
+
+The session state store deliberately does not write its own row. The gate
+runs in front of every tool call an agent makes, so a database round-trip
+awaited during the decision would be paid by all of them; v1's constraints
+put persistence after the response for that reason.
 """
 
 import logging
@@ -41,6 +47,8 @@ class PostgresDecisionWriter:
         self._cache_ttl_seconds = cache_ttl_seconds
 
     async def write(self, decision: Decision) -> None:
+        if decision.state is not None:
+            await self._sessions.upsert(decision.state)
         await self._decisions.insert(decision)
         if self._should_cache(decision):
             expires_at = datetime.now(timezone.utc) + timedelta(seconds=self._cache_ttl_seconds)
