@@ -29,6 +29,11 @@ DEPLOY_HOST ?= agentgate
 DEPLOY_DIR ?= /opt/agentgate
 HEALTHZ_PORT ?= 8400
 
+# Server-side compose invocation: the base file plus the server-only
+# overlay (Caddy). Every remote target goes through this so nobody runs
+# `docker compose` on the server with only half the stack.
+COMPOSE := docker compose -f docker-compose.yml -f docker-compose.deploy.yml
+
 .PHONY: deploy logs ps rollback check-clean
 
 # Refuse to ship a dirty working tree: `make deploy` deploys committed
@@ -43,7 +48,11 @@ check-clean:
 
 # make deploy:
 #   1. check-clean (above)
-#   2. rsync the committed service/ tree to the server
+#   2. rsync the committed service/ tree to the server. Exclusions come
+#      from .gitignore (one list, not three); two stay explicit: `.env`
+#      because the server's secrets must survive even if someone edits
+#      .gitignore, and `.previous_gate_image` because it is not ignored
+#      and `--delete` would remove the rollback pointer.
 #   3. docker compose up -d --build on the server (builds from the
 #      synced source, no local build/push/registry involved)
 #   4. apply migrations inside the running `gate` container
@@ -54,22 +63,21 @@ check-clean:
 deploy: check-clean
 	@echo "==> syncing service/ to $(DEPLOY_HOST):$(DEPLOY_DIR)"
 	rsync -az --delete \
-		--exclude='.venv/' \
+		--filter=':- .gitignore' \
 		--exclude='.env' \
-		--exclude='logs/' \
-		--exclude='__pycache__/' \
-		--exclude='.pytest_cache/' \
 		--exclude='.previous_gate_image' \
 		./ $(DEPLOY_HOST):$(DEPLOY_DIR)/
 	@echo "==> building and starting containers on $(DEPLOY_HOST)"
 	ssh $(DEPLOY_HOST) 'set -e; cd $(DEPLOY_DIR) && \
-		PREV_IMAGE=$$(docker compose images -q gate 2>/dev/null || true); \
+		PREV_IMAGE=$$($(COMPOSE) images -q gate 2>/dev/null || true); \
 		if [ -n "$$PREV_IMAGE" ]; then echo "$$PREV_IMAGE" > .previous_gate_image; fi; \
-		docker compose up -d --build && \
-		docker compose exec -T gate uv run alembic upgrade head'
+		GIT_SHA=$(shell git rev-parse HEAD) $(COMPOSE) up -d --build && \
+		$(COMPOSE) exec -T gate uv run alembic upgrade head'
 	@echo "==> health check (polling /healthz up to 30s)"
 	@if ssh $(DEPLOY_HOST) 'for i in $$(seq 1 30); do curl -fsS http://localhost:$(HEALTHZ_PORT)/healthz >/dev/null 2>&1 && exit 0; sleep 1; done; exit 1'; then \
-		echo "==> deploy OK"; \
+		echo "==> deploy OK on the server; checking from here over HTTPS"; \
+		PUBLIC_HOST=$$(ssh $(DEPLOY_HOST) "sed -n 's/^AGENTGATE_PUBLIC_HOST=//p' $(DEPLOY_DIR)/.env"); \
+		curl -fsS "https://$$PUBLIC_HOST/healthz" && echo && echo "==> https://$$PUBLIC_HOST is up"; \
 	else \
 		echo "error: /healthz did not come up within 30s -- deploy considered FAILED." >&2; \
 		echo "       inspect with 'make logs' / 'make ps'; consider 'make rollback'." >&2; \
@@ -78,11 +86,11 @@ deploy: check-clean
 
 # Tail logs from the server.
 logs:
-	ssh $(DEPLOY_HOST) 'cd $(DEPLOY_DIR) && docker compose logs -f'
+	ssh $(DEPLOY_HOST) 'cd $(DEPLOY_DIR) && $(COMPOSE) logs -f'
 
 # Container status on the server.
 ps:
-	ssh $(DEPLOY_HOST) 'cd $(DEPLOY_DIR) && docker compose ps'
+	ssh $(DEPLOY_HOST) 'cd $(DEPLOY_DIR) && $(COMPOSE) ps'
 
 # Best-effort rollback to the image that was running before the last
 # `make deploy`. `deploy` records that image's id in
@@ -102,8 +110,8 @@ rollback:
 			exit 1; \
 		fi; \
 		PREV=$$(cat .previous_gate_image); \
-		TARGET=$$(docker compose config --images gate); \
+		TARGET=$$($(COMPOSE) config --images gate); \
 		docker tag "$$PREV" "$$TARGET" && \
-		docker compose up -d --no-build gate'
+		$(COMPOSE) up -d --no-build gate'
 	@echo "==> rollback applied, checking health"
 	ssh $(DEPLOY_HOST) 'curl -fsS http://localhost:$(HEALTHZ_PORT)/healthz'
