@@ -1,6 +1,6 @@
 """Stage 1, hard-deny rules.
 
-Hard-deny is the layer that can never be overridden: a Stage1Decision
+Hard-deny is the layer that can never be overridden: a Verdict
 with hard=True is final — it is not replaced by an `ask` escalation and
 no later stage (LLM stage 2, chain-of-actions heuristics) can turn it
 into anything else. See service/CLAUDE.md: "Hard-deny не переопределяется
@@ -84,12 +84,12 @@ import fnmatch
 import os
 import re
 
-from agentgate.api.schemas import DecisionKind, Tool
+from agentgate.api.schemas import Tool
+from agentgate.domain.verdict import Verdict
 from agentgate.normalize.model import NormalizedAction, SimpleCommand
 from agentgate.normalize.paths import is_within, looks_like_path, looks_unresolved, matches_any, resolve_path
 from agentgate.normalize.shell import _ENV_ASSIGNMENT, _WRAPPER_CMDS, _WRAPPER_VALUE_FLAGS, resolve_effective_argv
 from agentgate.profiles.schema import Profile
-from agentgate.stage1.types import Stage1Decision
 
 SECRET_PATTERNS = [
     ".env*", "*.pem", "id_rsa*", "id_ed25519*", "*.key", "*.p12",
@@ -207,21 +207,6 @@ def _consumed_a_possible_command(argv: list[str]) -> bool:
         if tok in value_flags:
             return True
     return False
-
-
-def _deny(rule: str, reason: str, suggest: str = "") -> Stage1Decision:
-    return Stage1Decision(DecisionKind.deny, f"hard-deny.{rule}", reason, suggest, hard=True)
-
-
-def _ask(rule: str, reason: str, suggest: str = "") -> Stage1Decision:
-    """An ask (hard=False) outcome: a rule recognizes the shape of
-    something that WOULD be dangerous if we could pin down its target,
-    but cannot determine that target from the command line alone. See
-    the module docstring's "Three outcomes, not two". Namespaced
-    "ambiguous.*" rather than "hard-deny.*" so a caller can never
-    mistake one for the other by rule_id alone.
-    """
-    return Stage1Decision(DecisionKind.ask, f"ambiguous.{rule}", reason, suggest, hard=False)
 
 
 def _is_secret(path: str, profile: Profile) -> bool:
@@ -562,7 +547,7 @@ def _consumes_piped_stdin(argv: list[str]) -> bool:
     return False
 
 
-def _rule_exfil(action: NormalizedAction, profile: Profile) -> Stage1Decision | None:
+def _rule_exfil(action: NormalizedAction, profile: Profile) -> Verdict | None:
     for cmds in _by_pipeline(action).values():
         upstream_secret: str | None = None
         for c in cmds:
@@ -579,15 +564,18 @@ def _rule_exfil(action: NormalizedAction, profile: Profile) -> Stage1Decision | 
                     # its stdin as the thing it sends.
                     candidate = upstream_secret
                 if candidate:
-                    return _deny("exfil", f"network command '{exe}' sends secret file {candidate}",
-                                 "Never send secret files over the network; ask the user if credentials are needed")
+                    return Verdict.deny(
+                        "hard-deny.exfil", f"network command '{exe}' sends secret file {candidate}",
+                        "Never send secret files over the network; ask the user if credentials are needed",
+                        hard=True,
+                    )
             for p in _read_role_paths(c, action.cwd):
                 if _is_secret(p, profile):
                     upstream_secret = p
     return None
 
 
-def _rule_pipe_exec(action: NormalizedAction, profile: Profile) -> Stage1Decision | None:
+def _rule_pipe_exec(action: NormalizedAction, profile: Profile) -> Verdict | None:
     for cmds in _by_pipeline(action).values():
         downloaded = False
         for c in cmds:
@@ -596,15 +584,21 @@ def _rule_pipe_exec(action: NormalizedAction, profile: Profile) -> Stage1Decisio
             if exe in DOWNLOADERS:
                 downloaded = True
             elif downloaded and exe in INTERPRETERS:
-                return _deny("pipe-exec", f"downloaded content piped into '{exe}'",
-                             "Download to a file inside the workspace, inspect it, then run it explicitly")
+                return Verdict.deny(
+                    "hard-deny.pipe-exec", f"downloaded content piped into '{exe}'",
+                    "Download to a file inside the workspace, inspect it, then run it explicitly",
+                    hard=True,
+                )
     if action.flags.has_subst:
         effs = [_effective(c.argv) for c in action.commands]
         has_shell_c = any(ea and ea[0] in SHELLS and "-c" in ea for ea in effs)
         has_dl = any(ea and ea[0] in DOWNLOADERS for ea in effs)
         if has_shell_c and has_dl:
-            return _deny("pipe-exec", "shell -c with command substitution that downloads content",
-                         "Download to a file inside the workspace, inspect it, then run it explicitly")
+            return Verdict.deny(
+                "hard-deny.pipe-exec", "shell -c with command substitution that downloads content",
+                "Download to a file inside the workspace, inspect it, then run it explicitly",
+                hard=True,
+            )
     return None
 
 
@@ -639,7 +633,7 @@ def _find_has_narrowing_predicate(rest: list[str]) -> bool:
     return False
 
 
-def _rule_destructive(action: NormalizedAction, profile: Profile) -> Stage1Decision | None:
+def _rule_destructive(action: NormalizedAction, profile: Profile) -> Verdict | None:
     allowed = profile.resolved_allowed_paths()
     ws = os.path.normpath(profile.workspace) if profile.workspace else None
     for c in action.commands:
@@ -694,12 +688,15 @@ def _rule_destructive(action: NormalizedAction, profile: Profile) -> Stage1Decis
             outside = not is_within(t, allowed)
             equals_ws = (deny_on_ws_equal or deny_on_ws_equal_unnarrowed) and ws is not None and os.path.normpath(t) == ws
             if outside or equals_ws:
-                return _deny("destructive", f"'{exe}' targets {t} outside or equal to the workspace",
-                             "Delete only build artifacts inside the workspace")
+                return Verdict.deny(
+                    "hard-deny.destructive", f"'{exe}' targets {t} outside or equal to the workspace",
+                    "Delete only build artifacts inside the workspace",
+                    hard=True,
+                )
     return None
 
 
-def _rule_protected_write(action: NormalizedAction, profile: Profile) -> Stage1Decision | None:
+def _rule_protected_write(action: NormalizedAction, profile: Profile) -> Verdict | None:
     protected = profile.resolved_protected_paths()
     ws = profile.workspace
     candidates: list[str] = []
@@ -728,12 +725,15 @@ def _rule_protected_write(action: NormalizedAction, profile: Profile) -> Stage1D
             candidates += [resolve_path(a, action.cwd) for a in args[1:]]
     for p in candidates:
         if matches_any(p, protected, ws):
-            return _deny("protected-write", f"write to protected path {p}",
-                         "Protected files are changed only by the user")
+            return Verdict.deny(
+                "hard-deny.protected-write", f"write to protected path {p}",
+                "Protected files are changed only by the user",
+                hard=True,
+            )
     return None
 
 
-def _rule_privilege(action: NormalizedAction, profile: Profile) -> Stage1Decision | None:
+def _rule_privilege(action: NormalizedAction, profile: Profile) -> Verdict | None:
     allowed = profile.resolved_allowed_paths()
     for c in action.commands:
         argv = _effective(c.argv)
@@ -741,20 +741,25 @@ def _rule_privilege(action: NormalizedAction, profile: Profile) -> Stage1Decisio
             continue
         exe = argv[0]
         if exe in ("sudo", "su", "doas"):
-            return _deny("privilege", f"'{exe}' is not allowed", "Ask the user to run privileged commands")
+            return Verdict.deny(
+                "hard-deny.privilege", f"'{exe}' is not allowed", "Ask the user to run privileged commands", hard=True
+            )
         if exe in FIREWALL:
-            return _deny("privilege", f"firewall change via '{exe}'", "Ask the user")
+            return Verdict.deny("hard-deny.privilege", f"firewall change via '{exe}'", "Ask the user", hard=True)
         if exe == "chmod":
             modes = [a for a in argv[1:] if not a.startswith("-")]
             if modes and (modes[0] in ("777", "0777", "a+rwx") or "o+w" in modes[0] or "a+w" in modes[0]):
-                return _deny("privilege", f"chmod {modes[0]} makes files world-writable", "Use the minimal mode needed")
+                return Verdict.deny(
+                    "hard-deny.privilege", f"chmod {modes[0]} makes files world-writable",
+                    "Use the minimal mode needed", hard=True,
+                )
         if exe == "chown":
             for a in argv[2:]:
                 if a.startswith("-"):
                     continue
                 p = resolve_path(a, action.cwd)
                 if not is_within(p, allowed):
-                    return _deny("privilege", f"chown outside workspace: {p}", "")
+                    return Verdict.deny("hard-deny.privilege", f"chown outside workspace: {p}", "", hard=True)
     return None
 
 
@@ -810,7 +815,7 @@ def _normalize_branch_ref(ref: str) -> str:
     return branch
 
 
-def _rule_git_force(action: NormalizedAction, profile: Profile) -> Stage1Decision | None:
+def _rule_git_force(action: NormalizedAction, profile: Profile) -> Verdict | None:
     # A determinable protected branch anywhere in the action is a
     # certainty and outranks any ambiguity found elsewhere in it, so an
     # ask is held back until every command has been scanned rather than
@@ -818,7 +823,7 @@ def _rule_git_force(action: NormalizedAction, profile: Profile) -> Stage1Decisio
     # `git push --force origin main HEAD` would be softened to ask by the
     # HEAD standing next to a ref we can positively identify as
     # protected).
-    pending_ask: Stage1Decision | None = None
+    pending_ask: Verdict | None = None
     for c in action.commands:
         push_argv = _git_push_argv(_effective(c.argv))
         if push_argv is None:
@@ -849,8 +854,8 @@ def _rule_git_force(action: NormalizedAction, profile: Profile) -> Stage1Decisio
                     # 3). A "HEAD:branch" form is NOT ambiguous: the
                     # destination is what gets overwritten, and it is
                     # spelled out, so it falls through to the match below.
-                    pending_ask = pending_ask or _ask(
-                        "git-force",
+                    pending_ask = pending_ask or Verdict.ask(
+                        "ambiguous.git-force",
                         f"force push of '{bare}' — the branch it currently points at is repo state, "
                         "not something the command line states",
                         "Name the target branch explicitly, e.g. `git push --force origin <branch>`",
@@ -858,7 +863,10 @@ def _rule_git_force(action: NormalizedAction, profile: Profile) -> Stage1Decisio
                     continue
                 branch = _normalize_branch_ref(ref)
                 if any(fnmatch.fnmatchcase(branch, pat) for pat in profile.protected_branches):
-                    return _deny("git-force", f"force push to protected branch {branch}", "Push to a feature branch")
+                    return Verdict.deny(
+                        "hard-deny.git-force", f"force push to protected branch {branch}",
+                        "Push to a feature branch", hard=True,
+                    )
             continue
         if flag_force:
             # --force with fewer than two positionals: either no
@@ -877,8 +885,8 @@ def _rule_git_force(action: NormalizedAction, profile: Profile) -> Stage1Decisio
             # round 1 hard-deny here and this fixer's own round 1
             # widening of it, which the reviewer found blocked a routine
             # rebase-and-force workflow with no matching safety gain).
-            pending_ask = pending_ask or _ask(
-                "git-force",
+            pending_ask = pending_ask or Verdict.ask(
+                "ambiguous.git-force",
                 "force push with no identifiable refspec — cannot determine whether the current branch is protected",
                 "Specify the target branch explicitly, e.g. `git push --force origin <branch>`",
             )
@@ -888,7 +896,7 @@ def _rule_git_force(action: NormalizedAction, profile: Profile) -> Stage1Decisio
 RULES = [_rule_exfil, _rule_pipe_exec, _rule_destructive, _rule_protected_write, _rule_privilege, _rule_git_force]
 
 
-def check_hard_deny(action: NormalizedAction, profile: Profile) -> Stage1Decision | None:
+def check_hard_deny(action: NormalizedAction, profile: Profile) -> Verdict | None:
     """Run the six hard-deny rules in order; the first non-None result
     wins. As a fallback (after all six find nothing to say), also check
     whether any command's wrapper chain could not be resolved to a real
@@ -906,14 +914,14 @@ def check_hard_deny(action: NormalizedAction, profile: Profile) -> Stage1Decisio
     for c in action.commands:
         why = _wrapper_chain_unresolved(c.argv)
         if why == "depth":
-            return _ask(
-                "wrapper-depth",
+            return Verdict.ask(
+                "ambiguous.wrapper-depth",
                 f"command wraps its target through more layers than can be safely resolved: {' '.join(c.argv[:4])} ...",
                 "Run the command directly, without stacking wrapper commands",
             )
         if why == "opaque":
-            return _ask(
-                "wrapper-opaque",
+            return Verdict.ask(
+                "ambiguous.wrapper-opaque",
                 f"wrapper consumed its entire command into an option value, leaving nothing to inspect: "
                 f"{' '.join(c.argv[:4])}",
                 "Write the command directly, without passing it as a string to the wrapper "

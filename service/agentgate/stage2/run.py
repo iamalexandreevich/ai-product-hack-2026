@@ -1,4 +1,4 @@
-"""Wires prompt building + LLMClient.classify into a fail-closed Stage2Result.
+"""Wires prompt building + LLMClient.classify into a fail-closed Verdict.
 
 Every Stage2Error, and every other exception the client did not
 anticipate, resolves to DecisionKind.ask — never allow, never deny.
@@ -15,25 +15,18 @@ rather than trusting the model to notice `unparseable=true` in the
 flags line, is what makes that unreachable.
 """
 
-from dataclasses import dataclass
+import logging
 
 from agentgate.api.schemas import DecisionKind
+from agentgate.domain.verdict import Verdict
 from agentgate.normalize.model import NormalizedAction
 from agentgate.profiles.schema import Profile
 from agentgate.stage2.client import LLMClient, Stage2Error
 from agentgate.stage2.prompt import build_system_prompt, build_user_message
 
+log = logging.getLogger(__name__)
+
 _MAP = {"A": DecisionKind.allow, "D": DecisionKind.deny, "U": DecisionKind.ask}
-
-
-@dataclass
-class Stage2Result:
-    decision: DecisionKind
-    reason: str
-    suggest: str
-    model: str
-    raw_response: dict | None
-    error: str | None
 
 
 async def run_stage2(
@@ -43,15 +36,13 @@ async def run_stage2(
     model_name: str,
     client: LLMClient,
     stage1_note: str,
-) -> Stage2Result:
+) -> Verdict:
     if action.flags.unparseable:
-        return Stage2Result(
-            DecisionKind.ask,
-            "action could not be structurally parsed and was never verified",
-            "",
-            model_name,
-            None,
-            None,
+        return Verdict(
+            decision=DecisionKind.ask,
+            stage=2,
+            reason="action could not be structurally parsed and was never verified",
+            model=model_name,
         )
 
     system = build_system_prompt(profile)
@@ -59,18 +50,26 @@ async def run_stage2(
     try:
         out, raw = await client.classify(system, user)
     except Stage2Error as exc:
-        return Stage2Result(DecisionKind.ask, f"classifier unavailable: {exc.kind}", "", model_name, None, exc.kind)
+        return _unavailable(model_name, exc.kind, f"classifier unavailable: {exc.kind}")
     except Exception as exc:  # noqa: BLE001 - fail closed on anything, not just Stage2Error
-        return Stage2Result(
-            DecisionKind.ask,
-            f"classifier unavailable: unexpected ({type(exc).__name__})",
-            "",
-            model_name,
-            None,
-            "unexpected",
+        log.warning("classifier raised an unexpected error", exc_info=True)
+        return _unavailable(
+            model_name, "unexpected", f"classifier unavailable: unexpected ({type(exc).__name__})"
         )
 
     decision = _MAP[out.decision]
-    reason = "" if decision is DecisionKind.allow else out.reason
-    suggest = "" if decision is DecisionKind.allow else out.suggest
-    return Stage2Result(decision, reason, suggest, model_name, raw, None)
+    allowed = decision is DecisionKind.allow
+    return Verdict(
+        decision=decision,
+        stage=2,
+        reason="" if allowed else out.reason,
+        suggest="" if allowed else out.suggest,
+        model=model_name,
+        raw_response=raw,
+    )
+
+
+def _unavailable(model_name: str, error: str, reason: str) -> Verdict:
+    return Verdict(
+        decision=DecisionKind.ask, stage=2, reason=reason, model=model_name, error=error
+    )

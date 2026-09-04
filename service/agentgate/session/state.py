@@ -29,6 +29,14 @@ class SessionState:
             self.deny_consecutive = 0
         self.recent.append(decision.value)
 
+    def reset_after_escalation(self) -> None:
+        """Start counting afresh once a human has been asked.
+
+        Without this the very next call would escalate again immediately.
+        """
+        self.deny_consecutive = 0
+        self.recent.clear()
+
 
 class SessionStateStore(Protocol):
     async def get_or_create(

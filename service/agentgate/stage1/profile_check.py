@@ -19,12 +19,12 @@ text reaches the stage-2 LLM prompt as `stage1_note` and must be
 escaped there like any other attacker-influenced content.
 """
 
-from agentgate.api.schemas import DecisionKind, Tool
+from agentgate.api.schemas import Tool
+from agentgate.domain.verdict import Verdict
 from agentgate.normalize.model import NormalizedAction
 from agentgate.normalize.paths import is_within
 from agentgate.profiles.schema import NetworkMode, Profile
 from agentgate.stage1.argv_paths import command_argv_paths
-from agentgate.stage1.types import Stage1Decision
 
 MUTATING = {"rm", "mv", "cp", "mkdir", "rmdir", "touch", "chmod", "chown", "tee", "install", "ln", "truncate", "dd", "shred"}
 
@@ -50,19 +50,18 @@ def _mutating_targets(action: NormalizedAction) -> list[str]:
     return out
 
 
-def check_profile(action: NormalizedAction, profile: Profile) -> Stage1Decision | None:
+def check_profile(action: NormalizedAction, profile: Profile) -> Verdict | None:
     allowed = profile.resolved_allowed_paths()
     for p in _mutating_targets(action):
         if not is_within(p, allowed):
-            return Stage1Decision(DecisionKind.deny, "profile.path", f"write outside allowed paths: {p}",
-                                  "Work inside the workspace")
+            return Verdict.deny("profile.path", f"write outside allowed paths: {p}", "Work inside the workspace")
     if action.domains and profile.network.mode is not NetworkMode.open:
         allowed_domains = {d.lower() for d in profile.network.allowed_domains}
         for d in action.domains:
             if d in allowed_domains or any(d.endswith("." + a) for a in allowed_domains):
                 continue
             if profile.network.mode is NetworkMode.ask:
-                return Stage1Decision(DecisionKind.ask, "profile.domain", f"domain {d} is not in the allowlist", "")
-            return Stage1Decision(DecisionKind.deny, "profile.domain", f"domain {d} is not in the allowlist",
-                                  "Use an allowed registry or ask the user to extend the allowlist")
+                return Verdict.ask("profile.domain", f"domain {d} is not in the allowlist")
+            return Verdict.deny("profile.domain", f"domain {d} is not in the allowlist",
+                                "Use an allowed registry or ask the user to extend the allowlist")
     return None

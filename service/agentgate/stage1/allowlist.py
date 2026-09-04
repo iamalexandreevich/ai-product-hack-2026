@@ -36,12 +36,12 @@ targets — one implementation, so the two checks cannot drift into two
 different opinions of what path a command touches.
 """
 
-from agentgate.api.schemas import DecisionKind, Tool
+from agentgate.api.schemas import Tool
+from agentgate.domain.verdict import Verdict
 from agentgate.normalize.model import NormalizedAction, SimpleCommand
 from agentgate.normalize.paths import is_within, matches_any
 from agentgate.profiles.schema import Profile
 from agentgate.stage1.argv_paths import command_argv_paths
-from agentgate.stage1.types import Stage1Decision
 
 READONLY = {"ls", "cat", "head", "tail", "wc", "grep", "rg", "pwd", "which", "stat", "du", "file", "tree", "sort", "uniq", "cut", "tr", "less", "more", "diff"}
 GIT_READONLY = {"status", "diff", "log", "show", "branch", "rev-parse", "remote", "blame"}
@@ -68,18 +68,18 @@ def _matches_prefix(cmd: SimpleCommand, prefixes: list[list[str]]) -> bool:
     return any(cmd.argv[: len(p)] == p for p in prefixes if p)
 
 
-def check_allowlist(action: NormalizedAction, profile: Profile) -> Stage1Decision | None:
+def check_allowlist(action: NormalizedAction, profile: Profile) -> Verdict | None:
     allowed = profile.resolved_allowed_paths()
     protected = profile.resolved_protected_paths()
     if action.tool is Tool.file_read:
         if action.paths and all(
             is_within(p, allowed) and not matches_any(p, protected, profile.workspace) for p in action.paths
         ):
-            return Stage1Decision(DecisionKind.allow, "allowlist.file_read", "")
+            return Verdict.allow("allowlist.file_read")
         return None
     if action.tool is Tool.file_write:
         if action.paths and all(is_within(p, allowed) and not matches_any(p, protected, profile.workspace) for p in action.paths):
-            return Stage1Decision(DecisionKind.allow, "allowlist.file_write", "")
+            return Verdict.allow("allowlist.file_write")
         return None
     if action.tool is not Tool.shell or not action.commands or action.flags.unparseable:
         return None
@@ -101,7 +101,7 @@ def check_allowlist(action: NormalizedAction, profile: Profile) -> Stage1Decisio
         # rather than deny.
         return None
     if all(_matches_prefix(c, profile.safe_prefixes) for c in action.commands):
-        return Stage1Decision(DecisionKind.allow, "allowlist.prefix", "")
+        return Verdict.allow("allowlist.prefix")
     if all(_is_readonly(c) or _matches_prefix(c, profile.safe_prefixes) for c in action.commands):
-        return Stage1Decision(DecisionKind.allow, "allowlist.readonly", "")
+        return Verdict.allow("allowlist.readonly")
     return None

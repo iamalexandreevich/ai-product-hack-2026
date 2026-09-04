@@ -23,21 +23,21 @@ responsibility -- see agentgate.store.repo.DecisionRepo/SessionRepo
 docstrings for the FK constraints that ordering exists to satisfy.
 
 The `[STAGE1]` line handed to the stage-2 prompt is one of two fixed
-strings, never Stage1Decision.reason/suggest: those interpolate
+strings, never Verdict.reason/suggest: those interpolate
 action-derived text (a path, a domain, ...) and letting attacker-reachable
 text onto that line would forge a fake prompt section (see
 agentgate.stage2.prompt's docstring and the task 7 review that closed this).
 """
 
 import logging
-import time
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 
 import httpx
 from ulid import ULID
 
-from agentgate.api.schemas import DecideRequest, DecideResponse, DecisionKind, LatencyMs
+from agentgate.api.schemas import DecideRequest, DecideResponse, DecisionKind
+from agentgate.engine.timings import Timings
 from agentgate.normalize import normalize
 from agentgate.normalize.model import NormalizedAction
 from agentgate.profiles.loader import with_workspace
@@ -54,7 +54,7 @@ log = logging.getLogger(__name__)
 
 Persist = Callable[[DecisionRecord, SessionState | None], Awaitable[None]]
 
-# Fixed vocabulary for the [STAGE1] prompt line -- never Stage1Decision.reason
+# Fixed vocabulary for the [STAGE1] prompt line -- never Verdict.reason
 # or .suggest, which interpolate action-derived text (see module docstring).
 _NOTE_PASSED = "passed: no hard-deny match, not in allowlist"
 _NOTE_SKIPPED = "skipped: command unparseable"
@@ -78,19 +78,19 @@ class Gate:
         self._cache_ttl = cache_ttl_seconds
 
     async def decide(self, req: DecideRequest) -> tuple[DecideResponse, DecisionRecord, SessionState | None]:
-        t0 = time.perf_counter()
+        timings = Timings()
         decision_id = str(ULID())
         profile_id = req.profile_id or self._default_profile
         base_profile = self._profiles.get(profile_id)
         if base_profile is None:
             return await self._finish_early(
-                req, decision_id, t0, profile_id, "", "api.unknown-profile", f"unknown profile '{profile_id}'"
+                req, decision_id, timings, profile_id, "", "api.unknown-profile", f"unknown profile '{profile_id}'"
             )
         try:
             model_name, model_cfg = base_profile.models.model_config_for(req.model)
         except KeyError:
             return await self._finish_early(
-                req, decision_id, t0, profile_id, base_profile.profile_hash(),
+                req, decision_id, timings, profile_id, base_profile.profile_hash(),
                 "api.unknown-model", f"unknown model '{req.model}'",
             )
 
@@ -106,72 +106,64 @@ class Gate:
         if state is not None:
             cached_id = await self._states.cache_get(state.session_id, cache_key)
             if cached_id is not None:
-                total = _ms(t0)
+                latency = timings.finish()
                 resp = DecideResponse(
                     decision=DecisionKind.allow, stage=0, rule_id="cache", model=None,
-                    latency_ms=LatencyMs(stage1=None, stage2=None, total=total), cached=True,
+                    latency_ms=latency.to_schema(), cached=True,
                     decision_id=decision_id,
                 )
-                rec = self._record(req, decision_id, action, profile_id, profile_hash, resp, None, None, None, total, cache_key=cache_key)
+                rec = self._record(
+                    req, decision_id, action, profile_id, profile_hash, resp, None, None, None,
+                    latency.total_ms, cache_key=cache_key,
+                )
                 await self._do_persist(rec, None)
                 return resp, rec, state
 
-        t1 = time.perf_counter()
-        s1 = None if action.flags.unparseable else run_stage1(action, profile)
-        stage1_ms = _ms(t1)
-
-        decision, reason, suggest, stage, rule_id, model_used, raw_resp, error, stage2_ms, hard = (
-            None, "", "", 1, None, None, None, None, None, False,
-        )
-        if s1 is not None:
-            decision, reason, suggest, rule_id, hard = s1.decision, s1.reason, s1.suggest, s1.rule_id, s1.hard
-        else:
+        with timings.stage(1):
+            verdict = None if action.flags.unparseable else run_stage1(action, profile)
+        if verdict is None:
             note = _NOTE_SKIPPED if action.flags.unparseable else _NOTE_PASSED
-            t2 = time.perf_counter()
-            client = LLMClient(model_name, model_cfg, self._http)
-            s2 = await run_stage2(action, req.user_request, profile, model_name, client, note)
-            stage2_ms = _ms(t2)
-            decision, reason, suggest, stage, model_used, raw_resp, error = (
-                s2.decision, s2.reason, s2.suggest, 2, s2.model, s2.raw_response, s2.error,
-            )
+            with timings.stage(2):
+                client = LLMClient(model_name, model_cfg, self._http)
+                verdict = await run_stage2(action, req.user_request, profile, model_name, client, note)
 
-        if state is not None and not hard and decision is not DecisionKind.ask and should_escalate(state, profile.escalation):
-            n = state.deny_consecutive
-            decision, rule_id = DecisionKind.ask, "escalation"
-            reason = f"agent hit the policy {n} times; a human should review the task"
-            suggest = ""
-            # The human has been asked: start counting afresh, otherwise the
-            # very next call would escalate again immediately.
-            state.deny_consecutive = 0
-            state.recent.clear()
+        if state is not None and not verdict.hard and verdict.decision is not DecisionKind.ask \
+                and should_escalate(state, profile.escalation):
+            verdict = verdict.escalated(state.deny_consecutive)
+            state.reset_after_escalation()
 
         if state is not None:
-            state.record(decision)
+            state.record(verdict.decision)
             await self._states.save(state)
-            if decision is DecisionKind.allow:
+            if verdict.decision is DecisionKind.allow:
                 await self._states.cache_put(state.session_id, cache_key, decision_id, self._cache_ttl)
 
-        total = _ms(t0)
+        latency = timings.finish()
         resp = DecideResponse(
-            decision=decision, reason=reason, suggest=suggest, stage=stage, rule_id=rule_id,
-            model=model_used, latency_ms=LatencyMs(stage1=stage1_ms, stage2=stage2_ms, total=total),
+            decision=verdict.decision, reason=verdict.reason, suggest=verdict.suggest, stage=verdict.stage,
+            rule_id=verdict.rule_id, model=verdict.model, latency_ms=latency.to_schema(),
             cached=False, decision_id=decision_id,
         )
-        rec = self._record(req, decision_id, action, profile_id, profile_hash, resp, raw_resp, error, stage1_ms, total, stage2_ms, cache_key=cache_key)
+        rec = self._record(
+            req, decision_id, action, profile_id, profile_hash, resp, verdict.raw_response, verdict.error,
+            latency.stage1_ms, latency.total_ms, latency.stage2_ms, cache_key=cache_key,
+        )
         await self._do_persist(rec, state)
         return resp, rec, state
 
     async def _finish_early(
-        self, req: DecideRequest, decision_id: str, t0: float, profile_id: str, profile_hash: str,
+        self, req: DecideRequest, decision_id: str, timings: Timings, profile_id: str, profile_hash: str,
         rule_id: str, reason: str,
     ) -> tuple[DecideResponse, DecisionRecord, None]:
-        total = _ms(t0)
+        latency = timings.finish()
         resp = DecideResponse(
             decision=DecisionKind.ask, reason=reason, stage=0, rule_id=rule_id, model=None,
-            latency_ms=LatencyMs(stage1=None, stage2=None, total=total), decision_id=decision_id,
+            latency_ms=latency.to_schema(), decision_id=decision_id,
         )
         action = normalize(req)
-        rec = self._record(req, decision_id, action, profile_id, profile_hash, resp, None, rule_id, None, total)
+        rec = self._record(
+            req, decision_id, action, profile_id, profile_hash, resp, None, rule_id, None, latency.total_ms
+        )
         await self._do_persist(rec, None)
         return resp, rec, None
 
@@ -198,7 +190,3 @@ class Gate:
             await self._persist(rec, state)
         except Exception:  # noqa: BLE001 - a persistence failure must not affect the decision already returned
             log.exception("persist failed for decision %s", rec.id)
-
-
-def _ms(t0: float) -> int:
-    return int((time.perf_counter() - t0) * 1000)
