@@ -1,4 +1,4 @@
-# Задача 16: workspace определяется один раз на сессию, а не на каждый запрос
+# Задача 19: workspace определяется один раз на сессию, а не на каждый запрос
 
 Ветка: `fix/detect-workspace-per-request` от `b07be40`. Находка ревью: профилирование `Gate.decide` показало `agentgate/profiles/loader.py::detect_workspace` ~32 мс на решение (800 вызовов `posix.stat` на 200 решений). Функция вызывается внутри `Gate._resolve` — до окна, которое замеряет тест латентности ступени 1, поэтому `tests/rules/test_latency.py` её не видел.
 

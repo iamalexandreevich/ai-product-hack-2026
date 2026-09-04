@@ -73,7 +73,7 @@
 | `agentgate/bootstrap.py` | изменить | сборка и восстановление `ReplayStore` |
 | `contracts/hook_client.py` | изменить | `protocol: 1` в теле |
 | `contracts/README.md`, `service/README.md`, `service/CLAUDE.md`, `CLAUDE.md` | изменить | документация |
-| `docs/reports/task-15-v2-dialogue-context.md` | создать | отчёт |
+| `docs/reports/task-18-v2-dialogue-context.md` | создать | отчёт |
 | `tests/factories.py` | изменить | `FakeClassifier.classify(case)`, `turn()`, `dialogue()`, `FakeReplayRecords` |
 | `tests/…` | зеркально | по задаче |
 
@@ -2353,7 +2353,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 **Files:**
 - Modify: `contracts/hook_client.py`, `contracts/README.md`, `service/README.md`, `service/CLAUDE.md`, `CLAUDE.md`
 - Modify: `docs/superpowers/service/specs/context-versions-roadmap.md` (статус v2)
-- Create: `docs/reports/task-15-v2-dialogue-context.md`
+- Create: `docs/reports/task-18-v2-dialogue-context.md`
 - Test: `service/tests/test_hook_client.py`
 
 - [ ] **Step 1: Падающий тест клиента**
@@ -2436,7 +2436,7 @@ replay = replay_store or PersistentReplayStore(RedisReplayStore(...), decisions,
 
 `docs/superpowers/service/specs/context-versions-roadmap.md`: в таблице статус v2 — `**реализовано**`, v1 — `реализовано`.
 
-- [ ] **Step 5: Отчёт `docs/reports/task-15-v2-dialogue-context.md`**
+- [ ] **Step 5: Отчёт `docs/reports/task-18-v2-dialogue-context.md`**
 
 Написать по образцу `docs/reports/task-v1.5-solid-refactor.md`, разделы: что построено (по задачам 1–13 с именами файлов), доказательства TDD (для каждой задачи — имя падавшего теста и текст ошибки до реализации), находки ревью и как закрыты, принятые решения (перечислить таблицу §2 спеки и решение «повтор в API-слое над `DecisionRecord`»), что отложено (§11 спеки). Заполнять по факту исполнения, не переписывать из плана.
 
@@ -2449,7 +2449,7 @@ cd service && uv run python scripts/export_contracts.py && uv run python scripts
 Expected: diff пуст, PASS.
 
 ```bash
-git commit --only contracts/hook_client.py contracts/README.md service/tests/test_hook_client.py service/README.md service/CLAUDE.md CLAUDE.md docs/superpowers/service/specs/context-versions-roadmap.md docs/reports/task-15-v2-dialogue-context.md -m "docs: v2 in the contract README, the module maps and the task report; hook client speaks protocol 1
+git commit --only contracts/hook_client.py contracts/README.md service/tests/test_hook_client.py service/README.md service/CLAUDE.md CLAUDE.md docs/superpowers/service/specs/context-versions-roadmap.md docs/reports/task-18-v2-dialogue-context.md -m "docs: v2 in the contract README, the module maps and the task report; hook client speaks protocol 1
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
