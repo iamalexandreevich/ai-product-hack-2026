@@ -214,6 +214,7 @@ paths:
                       total: 1
                     cached: false
                     decision_id: 01J8QZ4T7K3M9V2B5N6P0R1S2T
+                    protocol: 1
                 deny_unknown_package:
                   summary: deny — HTTP 200, with reason and suggest
                   description: Answer to the `deny_unknown_package` request. Note the status
@@ -233,6 +234,7 @@ paths:
                       total: 86
                     cached: false
                     decision_id: 01J8QZ4V2C8H4E7A1D3F5G7J9K
+                    protocol: 1
                 ask_uncertain_db_cleanup:
                   summary: ask — the classifier was not confident
                   description: Answer to the `ask_uncertain_db_cleanup` request. `ask` means
@@ -253,6 +255,7 @@ paths:
                       total: 613
                     cached: false
                     decision_id: 01J8QZ50B4N7Q9W2X4Y6Z8A0C2
+                    protocol: 1
                 fail_closed_invalid_request:
                   summary: ask — fail-closed on a request the models rejected
                   description: 'There is no request example for this one: it is what an invalid
@@ -275,6 +278,7 @@ paths:
                       total: 0
                     cached: false
                     decision_id: 01J8QZ51D6P0S2U4W6Y8A0C2E4
+                    protocol: 1
         '401':
           description: |
             Missing or invalid bearer token. This is the only status the service returns
@@ -582,9 +586,10 @@ components:
         history:
           description: The dialogue that preceded this action, oldest turn first; the last
             turn is the one immediately before the proposed action. At most 200 turns and
-            131072 bytes of UTF-8 JSON, over which the request is refused fail-closed as `ask`
-            with HTTP 200. Rendered into the stage-2 prompt after per-role truncation; never
-            seen by stage 1. Empty for a v1 client, which changes nothing.
+            131072 bytes of UTF-8 text summed over `content`, `tool` and `call_id`, over which
+            the request is refused fail-closed as `ask` with HTTP 200. Rendered into the stage-2
+            prompt after per-role truncation; never seen by stage 1. Empty for a v1 client,
+            which changes nothing.
           items:
             $ref: '#/components/schemas/Turn'
           title: History

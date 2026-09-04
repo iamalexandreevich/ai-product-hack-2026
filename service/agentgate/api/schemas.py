@@ -201,7 +201,8 @@ class DecideRequest(BaseModel):
         description=(
             f"The dialogue that preceded this action, oldest turn first; the last "
             f"turn is the one immediately before the proposed action. At most "
-            f"{HISTORY_MAX_TURNS} turns and {HISTORY_MAX_BYTES} bytes of UTF-8 JSON, "
+            f"{HISTORY_MAX_TURNS} turns and {HISTORY_MAX_BYTES} bytes of UTF-8 text "
+            f"summed over `content`, `tool` and `call_id`, "
             f"over which the request is refused fail-closed as `ask` with HTTP 200. "
             f"Rendered into the stage-2 prompt after per-role truncation; never seen "
             f"by stage 1. Empty for a v1 client, which changes nothing."
@@ -242,8 +243,13 @@ class DecideRequest(BaseModel):
     def _history_size(cls, v: list[Turn]) -> list[Turn]:
         if len(v) > HISTORY_MAX_TURNS:
             raise ValueError(f"history exceeds {HISTORY_MAX_TURNS} turns")
-        encoded = json.dumps([turn.model_dump(mode="json") for turn in v], ensure_ascii=False)
-        if len(encoded.encode("utf-8")) > HISTORY_MAX_BYTES:
+        size = sum(
+            len(turn.content.encode("utf-8"))
+            + len((turn.tool or "").encode("utf-8"))
+            + len((turn.call_id or "").encode("utf-8"))
+            for turn in v
+        )
+        if size > HISTORY_MAX_BYTES:
             raise ValueError(f"history exceeds {HISTORY_MAX_BYTES} bytes")
         return v
 

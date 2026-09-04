@@ -86,7 +86,13 @@ class History(BaseModel):
     per_turn_chars: PerTurnChars = Field(default_factory=PerTurnChars)
 
     def cap_for(self, role: str) -> int:
-        return getattr(self.per_turn_chars, role)
+        caps = self.per_turn_chars
+        return {
+            "human": caps.human,
+            "assistant": caps.assistant,
+            "toolcall": caps.toolcall,
+            "toolresult": caps.toolresult,
+        }[role]
 
 
 class Profile(BaseModel):

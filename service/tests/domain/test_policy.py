@@ -3,7 +3,7 @@ import dataclasses
 import pytest
 
 from agentgate.domain.policy import Policy
-from tests.factories import profile
+from tests.factories import policy, profile
 
 
 def test_bind_expands_the_workspace_placeholder():
@@ -43,6 +43,4 @@ def test_network_is_reachable_without_reaching_into_the_profile():
 
 
 def test_policy_exposes_the_profile_history_budget():
-    from tests.factories import policy
-
     assert policy(history={"budget_chars": 42}).history.budget_chars == 42

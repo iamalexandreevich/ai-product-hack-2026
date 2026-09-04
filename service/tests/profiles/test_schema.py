@@ -1,7 +1,8 @@
 import pytest
+from pydantic import ValidationError
 
-from agentgate.profiles.schema import DenyWindow, History, NetworkMode, Profile
-from tests.factories import minimal_profile_data
+from agentgate.profiles.schema import DenyWindow, History, NetworkMode, PerTurnChars, Profile
+from tests.factories import minimal_profile_data, profile
 
 
 def test_minimal_profile_defaults():
@@ -59,8 +60,6 @@ def test_history_budget_has_the_spec_defaults():
 
 
 def test_history_budget_is_read_from_the_profile_and_enters_the_hash():
-    from tests.factories import profile
-
     plain = profile()
     tuned = profile(history={"budget_chars": 100, "per_turn_chars": {"toolresult": 10}})
     assert tuned.history.budget_chars == 100 and tuned.history.cap_for("toolresult") == 10
@@ -69,8 +68,16 @@ def test_history_budget_is_read_from_the_profile_and_enters_the_hash():
 
 
 def test_history_budget_rejects_zero():
-    from pydantic import ValidationError
-    from tests.factories import profile
-
     with pytest.raises(ValidationError):
         profile(history={"budget_chars": 0})
+
+
+def test_per_turn_caps_cover_exactly_the_turn_roles():
+    from agentgate.api.schemas import TurnRole
+
+    assert {role.value for role in TurnRole} == set(PerTurnChars.model_fields)
+
+
+def test_cap_for_rejects_an_unknown_role():
+    with pytest.raises(KeyError):
+        History().cap_for("wizard")

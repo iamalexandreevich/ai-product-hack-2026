@@ -86,6 +86,7 @@ RESPONSE_EXAMPLES: dict[str, dict[str, Any]] = {
             "latency_ms": {"stage1": 1, "stage2": None, "total": 1},
             "cached": False,
             "decision_id": "01J8QZ4T7K3M9V2B5N6P0R1S2T",
+            "protocol": 1,
         },
     },
     "deny_unknown_package": {
@@ -108,6 +109,7 @@ RESPONSE_EXAMPLES: dict[str, dict[str, Any]] = {
             "latency_ms": {"stage1": 1, "stage2": 84, "total": 86},
             "cached": False,
             "decision_id": "01J8QZ4V2C8H4E7A1D3F5G7J9K",
+            "protocol": 1,
         },
     },
     "ask_uncertain_db_cleanup": {
@@ -133,6 +135,7 @@ RESPONSE_EXAMPLES: dict[str, dict[str, Any]] = {
             "latency_ms": {"stage1": 2, "stage2": 611, "total": 613},
             "cached": False,
             "decision_id": "01J8QZ50B4N7Q9W2X4Y6Z8A0C2",
+            "protocol": 1,
         },
     },
     "fail_closed_invalid_request": {
@@ -158,6 +161,7 @@ RESPONSE_EXAMPLES: dict[str, dict[str, Any]] = {
             "latency_ms": {"stage1": None, "stage2": None, "total": 0},
             "cached": False,
             "decision_id": "01J8QZ51D6P0S2U4W6Y8A0C2E4",
+            "protocol": 1,
         },
     },
 }

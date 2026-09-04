@@ -4,14 +4,20 @@ import pytest
 from pydantic import ValidationError
 
 from agentgate.api.schemas import (
+    HISTORY_MAX_BYTES,
+    HISTORY_MAX_TURNS,
     METADATA_MAX_BYTES,
+    PROTOCOL,
     RAW_MAX_BYTES,
     USER_REQUEST_MAX_CHARS,
+    Author,
     DecideRequest,
     DecideResponse,
     DecisionKind,
     LatencyMs,
     Tool,
+    Turn,
+    TurnRole,
 )
 
 
@@ -173,15 +179,6 @@ def test_response_roundtrip():
 
 # --- v2: history, protocol -------------------------------------------------
 
-from agentgate.api.schemas import (  # noqa: E402 - grouped with the block it serves
-    HISTORY_MAX_BYTES,
-    HISTORY_MAX_TURNS,
-    PROTOCOL,
-    Author,
-    Turn,
-    TurnRole,
-)
-
 
 def _turn(**over) -> dict:
     base = dict(role="human", author="human", content="fix the build")
@@ -224,11 +221,23 @@ def test_history_at_turn_limit_is_accepted():
 
 
 def test_history_over_byte_limit_is_rejected():
-    # Cyrillic is two bytes per character: half the byte limit in characters is
-    # already over it, which is the point of counting bytes.
-    big = _turn(content="ж" * (HISTORY_MAX_BYTES // 2))
+    # Cyrillic is two bytes per character: half the byte limit in characters,
+    # plus one more character, is one byte over the limit.
+    big = _turn(content="ж" * (HISTORY_MAX_BYTES // 2 + 1))
     with pytest.raises(ValidationError, match=f"exceeds {HISTORY_MAX_BYTES} bytes"):
         _req(history=[big])
+
+
+def test_history_at_byte_limit_is_accepted():
+    exact = _turn(content="ж" * (HISTORY_MAX_BYTES // 2))
+    assert len(_req(history=[exact]).history) == 1
+
+
+def test_tool_and_call_id_count_toward_the_byte_limit():
+    almost = _turn(content="x" * (HISTORY_MAX_BYTES - 4), tool="abcd")
+    assert len(_req(history=[almost]).history) == 1
+    with pytest.raises(ValidationError, match="exceeds"):
+        _req(history=[_turn(content="x" * (HISTORY_MAX_BYTES - 4), tool="abcd", call_id="e")])
 
 
 def test_turn_tool_and_call_id_lengths_are_capped():
