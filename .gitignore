@@ -2,3 +2,18 @@
 .claude
 .superpowers
 __pycache__/
+
+# --- adapters (Направление 1) ---
+node_modules/
+
+# машинно-зависимый: build/build.sh пишет туда локальные пути и sha свежего билда
+adapters/build/manifest.json
+
+# вендоренная копия @agentgate/gate-core внутри Codex-плагина;
+# генерируется packages/plugin-codex/sync-core.sh, не должна разъезжаться с packages/core/src
+adapters/packages/plugin-codex/marketplace/plugins/gate/vendor/
+
+# бэкапы, которые делает инсталлер
+*.bak
+
+.DS_Store

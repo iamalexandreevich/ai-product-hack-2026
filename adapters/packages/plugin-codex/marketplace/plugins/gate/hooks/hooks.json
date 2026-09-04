@@ -1,0 +1,8 @@
+{
+  "description": "AgentGate: gate tool calls and filter tool results.",
+  "hooks": {
+    "PreToolUse":        [ { "matcher": "*", "hooks": [ { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/pre.mjs\"",  "timeout": 15 } ] } ],
+    "PermissionRequest": [ { "matcher": "*", "hooks": [ { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/perm.mjs\"", "timeout": 15 } ] } ],
+    "PostToolUse":       [ { "matcher": "*", "hooks": [ { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/post.mjs\"", "timeout": 15 } ] } ]
+  }
+}

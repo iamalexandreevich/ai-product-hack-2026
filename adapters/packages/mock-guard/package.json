@@ -1,0 +1,7 @@
+{
+  "name": "@agentgate/mock-guard",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/server.ts",
+  "exports": { ".": "./src/server.ts" }
+}
