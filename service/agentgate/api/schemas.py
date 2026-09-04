@@ -12,11 +12,16 @@ import json
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 USER_REQUEST_MAX_CHARS = 2048
 RAW_MAX_BYTES = 32768
 METADATA_MAX_BYTES = 16384
+PROTOCOL = 1
+HISTORY_MAX_TURNS = 200
+HISTORY_MAX_BYTES = 131072
+TURN_TOOL_MAX_CHARS = 64
+TURN_CALL_ID_MAX_CHARS = 128
 
 
 class Tool(str, Enum):
@@ -35,6 +40,55 @@ class DecisionKind(str, Enum):
     allow = "allow"
     deny = "deny"
     ask = "ask"
+
+
+class TurnRole(str, Enum):
+    """What kind of dialogue turn this is."""
+
+    human = "human"
+    assistant = "assistant"
+    toolcall = "toolcall"
+    toolresult = "toolresult"
+
+
+class Author(str, Enum):
+    """Who produced a turn. A `human`-role turn authored by an `agent` is a
+    parent model's message to a subagent, not the user's intent."""
+
+    human = "human"
+    agent = "agent"
+    system = "system"
+
+
+class Turn(BaseModel):
+    """One turn of the dialogue that preceded the proposed action."""
+
+    model_config = ConfigDict(frozen=True)
+
+    role: TurnRole = Field(description="Kind of turn: `human`, `assistant`, `toolcall` or `toolresult`.")
+    author: Author = Field(
+        description=(
+            "Who produced the turn. Only `human` marks the user's own words; a "
+            "`human`-role turn with `author: agent` is text a parent model wrote "
+            "for a subagent and is not treated as the user's intent."
+        )
+    )
+    content: str = Field(
+        description="The message text, the tool call as text, or the tool output."
+    )
+    tool: str | None = Field(
+        default=None,
+        max_length=TURN_TOOL_MAX_CHARS,
+        description="Harness-native tool name for `toolcall` / `toolresult` turns.",
+    )
+    call_id: str | None = Field(
+        default=None,
+        max_length=TURN_CALL_ID_MAX_CHARS,
+        description=(
+            "Ties a `toolcall` to its `toolresult`. The same identifier the "
+            "harness puts into its `Idempotency-Key`."
+        ),
+    )
 
 
 class McpArgs(BaseModel):
@@ -135,6 +189,24 @@ class DecideRequest(BaseModel):
             f"UTF-8 JSON."
         ),
     )
+    protocol: int = Field(
+        default=PROTOCOL,
+        description=(
+            f"Protocol version the client speaks. This service speaks `{PROTOCOL}`; any "
+            f"other value is refused fail-closed as `ask` with HTTP 200."
+        ),
+    )
+    history: list[Turn] = Field(
+        default_factory=list,
+        description=(
+            f"The dialogue that preceded this action, oldest turn first; the last "
+            f"turn is the one immediately before the proposed action. At most "
+            f"{HISTORY_MAX_TURNS} turns and {HISTORY_MAX_BYTES} bytes of UTF-8 JSON, "
+            f"over which the request is refused fail-closed as `ask` with HTTP 200. "
+            f"Rendered into the stage-2 prompt after per-role truncation; never seen "
+            f"by stage 1. Empty for a v1 client, which changes nothing."
+        ),
+    )
 
     @field_validator("raw")
     @classmethod
@@ -156,6 +228,23 @@ class DecideRequest(BaseModel):
         size = len(json.dumps(v, ensure_ascii=False).encode("utf-8"))
         if size > METADATA_MAX_BYTES:
             raise ValueError(f"metadata exceeds {METADATA_MAX_BYTES} bytes")
+        return v
+
+    @field_validator("protocol")
+    @classmethod
+    def _supported_protocol(cls, v: int) -> int:
+        if v != PROTOCOL:
+            raise ValueError(f"unsupported protocol {v}; this service speaks protocol {PROTOCOL}")
+        return v
+
+    @field_validator("history")
+    @classmethod
+    def _history_size(cls, v: list[Turn]) -> list[Turn]:
+        if len(v) > HISTORY_MAX_TURNS:
+            raise ValueError(f"history exceeds {HISTORY_MAX_TURNS} turns")
+        encoded = json.dumps([turn.model_dump(mode="json") for turn in v], ensure_ascii=False)
+        if len(encoded.encode("utf-8")) > HISTORY_MAX_BYTES:
+            raise ValueError(f"history exceeds {HISTORY_MAX_BYTES} bytes")
         return v
 
     @model_validator(mode="after")
@@ -228,4 +317,8 @@ class DecideResponse(BaseModel):
             "ULID of the stored decision. Stable identifier for the record in the "
             "database and in the JSONL log."
         )
+    )
+    protocol: int = Field(
+        default=PROTOCOL,
+        description=f"Protocol version of this response. Always `{PROTOCOL}` in this release.",
     )
