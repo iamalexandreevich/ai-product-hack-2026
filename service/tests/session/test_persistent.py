@@ -27,7 +27,7 @@ def store(sessions: FakeSessionRecords) -> PersistentSessionStateStore:
 async def test_get_or_create_returns_the_restored_state():
     persistent = store(FakeSessionRecords(states=[state("s1", deny_total=5)]))
     await persistent.restore()
-    assert (await persistent.get_or_create("s1", "t", "default", "/w")).deny_total == 5
+    assert (await persistent.get_or_create("s1", "t", "default", lambda: "/w")).deny_total == 5
 
 
 async def test_save_does_not_touch_the_repository():
@@ -42,7 +42,7 @@ async def test_save_does_not_touch_the_repository():
 async def test_save_keeps_the_state_readable():
     persistent = store(FakeSessionRecords())
     await persistent.save(state("s1", deny_total=2))
-    assert (await persistent.get_or_create("s1", "t", "default", "/w")).deny_total == 2
+    assert (await persistent.get_or_create("s1", "t", "default", lambda: "/w")).deny_total == 2
 
 
 async def test_restore_reloads_the_valid_allow_cache():

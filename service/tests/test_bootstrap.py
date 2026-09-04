@@ -99,7 +99,7 @@ async def _seed(session_factory) -> tuple[SessionState, str]:
 async def test_build_service_restores_the_persisted_session(session_factory, tmp_path):
     seeded, _ = await _seed(session_factory)
     service = await build_service(settings_for(tmp_path))
-    restored = await service.state_store.get_or_create("s1", "t", "default", "/w")
+    restored = await service.state_store.get_or_create("s1", "t", "default", lambda: "/w")
     assert restored.deny_total == seeded.deny_total
     assert restored.decisions_total == seeded.decisions_total
 

@@ -119,10 +119,12 @@ class Gate:
         if request.session_id:
             state = await self._states.get_or_create(
                 request.session_id, request.harness, profile_id,
-                detect_workspace(request.args.cwd),
+                lambda: detect_workspace(request.args.cwd),
             )
         # A session keeps the workspace its first request established: a later
         # `cwd` must not be able to widen the allowed paths under the agent.
+        # Hence the detector goes to the store unevaluated: it walks the
+        # filesystem, and past a session's first request the walk is waste.
         workspace = state.workspace if state is not None else detect_workspace(request.args.cwd)
         return _Context(
             policy=Policy.bind(profile, workspace), profile_id=profile_id,

@@ -7,6 +7,7 @@ to it.
 """
 
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -46,8 +47,16 @@ class SessionState:
 
 class SessionStateStore(Protocol):
     async def get_or_create(
-        self, session_id: str, harness: str, profile_id: str, workspace: str
-    ) -> SessionState: ...
+        self, session_id: str, harness: str, profile_id: str, workspace: Callable[[], str]
+    ) -> SessionState:
+        """The session's state, created with ``workspace()`` if it did not exist.
+
+        The workspace arrives unevaluated because producing it walks the
+        filesystem, while a session's workspace is fixed by its first
+        request: on every later call the value would be computed only to be
+        discarded. An implementation calls it on the creating path only.
+        """
+        ...
 
     async def save(self, state: SessionState) -> None: ...
 
