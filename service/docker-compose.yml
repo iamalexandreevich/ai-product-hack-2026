@@ -1,6 +1,7 @@
 services:
   db:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: agentgate
       POSTGRES_PASSWORD: agentgate
@@ -16,6 +17,7 @@ services:
       retries: 20
   gate:
     build: .
+    restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
