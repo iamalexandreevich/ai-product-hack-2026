@@ -31,6 +31,10 @@ DEPLOY_DIR ?= /opt/agentgate
 # docker-compose.deploy.yml bind-mounts it into Caddy.
 SITE_DIR ?= /opt/openmagi-site
 HEALTHZ_PORT ?= 8400
+# The only branch that ships. `make deploy` refuses any other checkout so a
+# feature branch cannot reach the server by accident (it happened once);
+# override knowingly with DEPLOY_BRANCH=<branch>.
+DEPLOY_BRANCH ?= main
 
 # Server-side compose invocation: the base file plus the server-only
 # overlay (Caddy). Every remote target goes through this so nobody runs
@@ -39,11 +43,16 @@ COMPOSE := docker compose -f docker-compose.yml -f docker-compose.deploy.yml
 
 .PHONY: deploy logs ps rollback check-clean
 
-# Refuse to ship a dirty working tree: `make deploy` deploys committed
-# code only. Scoped to `service/` and `../frontend/`, since that is
+# Refuse to ship anything but a clean checkout of $(DEPLOY_BRANCH):
+# `make deploy` deploys committed code from the release branch only. Scoped to `service/` and `../frontend/`, since that is
 # exactly what gets rsynced below -- uncommitted changes elsewhere in
 # the repo do not block a deploy.
 check-clean:
+	@branch=$$(git rev-parse --abbrev-ref HEAD); \
+	if [ "$$branch" != "$(DEPLOY_BRANCH)" ]; then \
+		echo "error: on branch '$$branch' -- deploys ship '$(DEPLOY_BRANCH)' only. Check it out first (or set DEPLOY_BRANCH=$$branch knowingly)." >&2; \
+		exit 1; \
+	fi
 	@if [ -n "$$(git status --porcelain -- . ../frontend)" ]; then \
 		echo "error: service/ or frontend/ has uncommitted changes -- refusing to deploy a dirty tree. Commit or stash first." >&2; \
 		exit 1; \
