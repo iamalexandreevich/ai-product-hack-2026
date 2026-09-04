@@ -29,21 +29,78 @@ git config user.name AgentGate
 echo "→ applying gate patches"
 PATCHDIR="$HERE/patches/$HARNESS"
 [ -d "$PATCHDIR" ] || { echo "✗ no patches for $HARNESS (expected $PATCHDIR)"; exit 1; }
-git am "$PATCHDIR"/*.patch
+# GATE_SKIP_PATCH builds the untouched release, for A/B-ing whether a problem
+# belongs to the patch or to the way we build.
+if [ "${GATE_SKIP_PATCH:-}" = "1" ]; then
+  echo "→ SKIPPING patches (GATE_SKIP_PATCH=1)"
+else
+  git am "$PATCHDIR"/*.patch
+fi
 
-echo "→ bun install"
+# The bun runtime is compiled into the binary, so a build made with a different
+# bun is a different program: it passes the smoke tests, runs headless and even
+# renders under tmux, and then never paints its TUI in a real terminal. The
+# upstream check is deliberately relaxed to a caret range and lets that through,
+# so pin it here against what the repo itself declares.
+BUN_BIN="${GATE_BUN:-$(command -v bun || true)}"
+[ -n "$BUN_BIN" ] || { echo "✗ bun not found; install it or set GATE_BUN"; exit 1; }
+BUN_HAVE="$("$BUN_BIN" --version)"
+BUN_WANT="$(node -p "(require('./package.json').packageManager||'').replace(/^bun@/,'')" 2>/dev/null || true)"
+
+if [ -n "$BUN_WANT" ] && [ "$BUN_WANT" != "$BUN_HAVE" ]; then
+  cat >&2 <<MSG
+✗ bun version mismatch
+    this release pins: bun@$BUN_WANT   (package.json → packageManager)
+    you are building with: bun $BUN_HAVE   ($BUN_BIN)
+
+  bun compiles its runtime into the binary. Building with another version yields
+  a program that passes every smoke test, works headless and under tmux — and
+  never draws its TUI in a real terminal. That is not a hypothetical.
+
+  Fix:
+    npm i bun@$BUN_WANT --prefix /tmp/gate-bun
+    GATE_BUN=/tmp/gate-bun/node_modules/.bin/bun $0 $HARNESS $REPO $TAG
+MSG
+  exit 1
+fi
+[ -n "$BUN_WANT" ] || echo "  (repo pins no bun version; building with $BUN_HAVE)"
+
+# Everything from here uses the pinned bun — the lockfile must be resolved by
+# the same version that compiles the binary.
+STUB="$WORK/stub-bin"
+mkdir -p "$STUB"
+ln -sf "$BUN_BIN" "$STUB/bun"
+printf '#!/bin/sh\nexit 0\n' > "$STUB/gh"
+chmod +x "$STUB/gh"
+export PATH="$STUB:$PATH"
+
+echo "→ bun install (bun $BUN_HAVE)"
 bun install
 
 echo "→ building ($PLATFORM)"
 cd packages/opencode
-bun run script/build.ts --single --skip-embed-web-ui
+# The version and release mode come from the environment, not from the git tag.
+# Without them the build stamps itself 0.0.0--<date>, keeps sourcemaps, and picks a
+# different data directory — i.e. it behaves unlike the release it is patching.
+VERSION="${TAG#v}"
+PREFIX="$(echo "$HARNESS" | tr '[:lower:]' '[:upper:]')"
+echo "→ building as $PREFIX version $VERSION (release mode)"
+# Release mode drops sourcemaps and stamps BUILD_KIND=release, but it also makes
+# the upstream script publish a GitHub release at the end; `gh` is stubbed above
+# so that step succeeds locally without touching anything remote.
+env "${PREFIX}_VERSION=$VERSION" "${PREFIX}_RELEASE=true" \
+  bun run script/build.ts --single
 
 BIN="$(find dist -type f -name "$HARNESS" -o -type f -name "${HARNESS}-*" 2>/dev/null | grep -v '\.' | head -1)"
 [ -z "$BIN" ] && BIN="$(find dist -type f -perm -u+x | head -1)"
 [ -z "$BIN" ] && { echo "✗ no binary produced"; exit 1; }
 
+# The binary is not alone: the release ships tree-sitter wasm and worker scripts
+# beside it and loads them by relative path. Copying just the executable produces
+# an install that starts but misbehaves, so take the whole directory.
 mkdir -p "$OUT"
-cp "$BIN" "$OUT/$HARNESS"
+cp -R "$(dirname "$BIN")"/. "$OUT/"
+mv "$OUT/$(basename "$BIN")" "$OUT/$HARNESS" 2>/dev/null || cp "$BIN" "$OUT/$HARNESS"
 chmod +x "$OUT/$HARNESS"
 SHA="$(shasum -a 256 "$OUT/$HARNESS" | cut -d' ' -f1)"
 echo "✓ $OUT/$HARNESS"

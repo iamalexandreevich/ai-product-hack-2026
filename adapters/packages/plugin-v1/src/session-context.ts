@@ -6,10 +6,13 @@
  * parent model, not by a person. Walking to the root session keeps a human
  * request as the intent instead of the model's own words.
  */
+import { History, type Turn } from "../../core/src/index.ts"
+
 export type SessionLookup = (sessionId: string) => Promise<{ parentID?: string | null } | null>
 
 export class SessionContext {
   private readonly humanRequest = new Map<string, string>()
+  readonly history = new History()
   private readonly parentOf = new Map<string, string | null>()
   private readonly lookup: SessionLookup
 
@@ -18,8 +21,23 @@ export class SessionContext {
   }
 
   /** Called from `chat.message`, which only fires for real human input. */
-  recordHumanMessage(sessionId: string, text: string): void {
-    if (text.trim()) this.humanRequest.set(sessionId, text.trim())
+  recordHumanMessage(sessionId: string, text: string, key?: string): void {
+    if (!sessionId || !text.trim()) return
+    this.humanRequest.set(sessionId, text.trim())
+    // Provisionally a human; corrected to `agent` below if this turns out to be
+    // a subagent, where the parent model writes the "user" message.
+    this.history.record(sessionId, { role: "human", author: "human", content: text.trim() }, key)
+  }
+
+  /**
+   * The turns to send with a decision. A subagent's history is its own — the
+   * parent's intent already reaches the guard through `user_request`, which
+   * walks to the root session, so replaying the parent here would only
+   * duplicate it.
+   */
+  async historyFor(sessionId: string): Promise<Turn[]> {
+    if (await this.isSubagent(sessionId)) this.history.attributeTo(sessionId, "agent")
+    return this.history.forRequest(sessionId)
   }
 
   async userRequestFor(sessionId: string): Promise<string> {

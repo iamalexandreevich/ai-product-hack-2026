@@ -20,6 +20,8 @@ export type GateConfig = {
   inspectTimeoutMs: number
   onUnavailable: OnUnavailable
   statePath: string
+  /** Deterministic ruleset shipped with every decision; the user may edit it. */
+  rulesPath: string
   logPath: string
 }
 
@@ -32,6 +34,7 @@ const DEFAULTS: GateConfig = {
   inspectTimeoutMs: 15_000,
   onUnavailable: "allow",
   statePath: path.join(os.homedir(), ".config", "gate", "state.json"),
+  rulesPath: path.join(os.homedir(), ".config", "gate", "rules.json"),
   logPath: path.join(os.homedir(), ".local", "share", "gate", "gate.log"),
 }
 
@@ -57,6 +60,7 @@ export function loadConfig(options: Partial<GateConfig> = {}, env = process.env)
     model: env.AGENTGATE_MODEL,
     inspectPath: env.GATE_INSPECT_PATH,
     statePath: env.GATE_STATE_PATH,
+    rulesPath: env.GATE_RULES_PATH,
     logPath: env.GATE_LOG_PATH,
   })
 

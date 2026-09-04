@@ -10,13 +10,25 @@ import fs from "node:fs"
 import path from "node:path"
 import { findBuild, loadManifest, type BuildEntry } from "./manifest.ts"
 
+/** Everything the build directory holds except the binary itself and sourcemaps. */
+function copySiblings(fromDir: string, toDir: string, binaryName: string): void {
+  for (const name of fs.readdirSync(fromDir)) {
+    if (name === binaryName || name.endsWith(".map")) continue
+    fs.cpSync(path.join(fromDir, name), path.join(toDir, name), { recursive: true, force: true })
+  }
+}
+
 function sha256(file: string): string {
   return createHash("sha256").update(fs.readFileSync(file)).digest("hex")
 }
 
 async function download(entry: BuildEntry, dest: string): Promise<void> {
   if (entry.url.startsWith("file://")) {
-    fs.copyFileSync(entry.url.slice("file://".length), dest)
+    const source = entry.url.slice("file://".length)
+    fs.copyFileSync(source, dest)
+    // The release ships tree-sitter wasm and worker scripts beside the binary and
+    // loads them by relative path; a lone executable starts but misbehaves.
+    copySiblings(path.dirname(source), path.dirname(dest), path.basename(source))
     return
   }
   const res = await fetch(entry.url)

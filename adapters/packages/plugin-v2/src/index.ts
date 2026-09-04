@@ -28,6 +28,8 @@ import {
   readMode,
   resolveIn,
   resolveOut,
+  readRules,
+  History,
 } from "../../core/src/index.ts"
 import type { GateConfig, Mode } from "../../core/src/index.ts"
 
@@ -57,6 +59,7 @@ export default {
     const inspectCache = new InspectCache()
     const harness = { name: "opencode2", version: "2.0", patched: false }
     const mode = (): Mode => readMode(config.statePath)
+    const history = new History()
     const cwd = ctx.app?.path?.cwd ?? ctx.app?.directory ?? process.cwd()
 
     log("gate plugin loaded (opencode2)", { url: config.url, cwd })
@@ -66,6 +69,7 @@ export default {
       if (current === "off") return
       const action = mapToolCall(e.tool, (e.input as any) ?? {}, cwd)
       const callId = String(e.id ?? "unknown")
+      history.recordToolCall(e.sessionID, e.tool, callId, action.raw)
 
       let decided
       if (current === "auto") {
@@ -73,10 +77,14 @@ export default {
           harness,
           sessionId: e.sessionID ?? null,
           callId,
+          // 2.0 gives the plugin no message hook, so intent is whatever the
+          // service can recover: it falls back to the last human turn we sent.
           userRequest: "",
+          history: history.forRequest(e.sessionID),
           mode: current,
           profileId: config.profileId,
           model: config.model,
+          rules: readRules(config.rulesPath),
           agentId: e.agent,
         })
         const result = await guard.decide(body, idempotencyKey(harness.name, e.sessionID, callId, "out"))
@@ -103,6 +111,7 @@ export default {
       const isError = e.status === "error"
       const text = isError ? String(e.error?.message ?? e.error ?? "") : resultText(e.result)
       if (!text) return
+      history.recordToolResult(e.sessionID, e.tool, callId, text)
 
       const cached = inspectCache.get(text)
       const result = cached
@@ -110,7 +119,10 @@ export default {
         : await guard.inspect(
             buildInspectRequest(
               action,
-              { harness, sessionId: e.sessionID ?? null, callId, userRequest: "", mode: current },
+              {
+                harness, sessionId: e.sessionID ?? null, callId, userRequest: "",
+                history: history.forRequest(e.sessionID), mode: current,
+              },
               { status: isError ? "error" : "completed", output: text },
             ),
             idempotencyKey(harness.name, e.sessionID, callId, "in"),

@@ -108,6 +108,12 @@ export function resolveIn(
     return { action: "pass", source: "guard" }
   }
 
+  // The service answered, but has no inspect route: it does not do PostToolUse
+  // yet. Withholding every tool result would break the agent over a feature the
+  // guard never claimed to have, so the result passes through untouched.
+  if (result.failure.kind === "not_implemented") {
+    return { action: "pass", source: "unavailable" }
+  }
   if (result.failure.kind === "unreachable" && onUnavailable === "allow") {
     return { action: "pass", source: "unavailable" }
   }

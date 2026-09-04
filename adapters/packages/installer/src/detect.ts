@@ -11,7 +11,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 
-export type HarnessId = "opencode" | "kilo" | "opencode2" | "pi"
+export type HarnessId = "opencode" | "kilo" | "opencode2" | "pi" | "codex" | "dsh"
 
 export type Detected = {
   id: HarnessId
@@ -22,6 +22,12 @@ export type Detected = {
   tuiConfigFile: string
   /** Env prefix the wrapper must use: OPENCODE_* vs KILO_*. */
   envPrefix: "OPENCODE" | "KILO"
+  /**
+   * Harnesses that keep everything in one directory can be gated by pointing
+   * that directory elsewhere: the gated copy gets our plugin, the user's own
+   * install is never touched. Names the env var that relocates it.
+   */
+  homeEnvVar?: "CODEX_HOME" | "PI_CODING_AGENT_DIR"
 }
 
 const HOME = os.homedir()
@@ -112,7 +118,41 @@ export function detectAll(env = process.env): Detected[] {
       configDir: dir,
       configFile: path.join(dir, "settings.json"),
       tuiConfigFile: path.join(dir, "keybindings.json"),
-      envPrefix: "OPENCODE", // unused for pi; wrapper/overlay not used
+      envPrefix: "OPENCODE", // unused for pi; the wrapper relocates the whole dir
+      homeEnvVar: "PI_CODING_AGENT_DIR",
+    })
+  }
+
+  const codexBin = which("codex")
+  if (codexBin) {
+    // Codex loads hooks only from an installed plugin, and plugins live under
+    // CODEX_HOME. Relocating that is what keeps the user's own codex clean.
+    const dir = env.CODEX_HOME ?? path.join(HOME, ".codex")
+    found.push({
+      id: "codex",
+      binary: codexBin,
+      version: version("codex"),
+      configDir: dir,
+      configFile: path.join(dir, "config.toml"),
+      tuiConfigFile: path.join(dir, "config.toml"),
+      envPrefix: "OPENCODE", // unused
+      homeEnvVar: "CODEX_HOME",
+    })
+  }
+
+  const dshBin = which("dsh")
+  if (dshBin) {
+    // dsh composes its runtime from a named profile, so gating is a profile of
+    // its own; the user's profiles stay as they were.
+    const dir = path.join(HOME, ".dsh", "profiles")
+    found.push({
+      id: "dsh",
+      binary: dshBin,
+      version: version("dsh"),
+      configDir: dir,
+      configFile: path.join(dir, "gate", "cordis.patch.yml"),
+      tuiConfigFile: path.join(dir, "gate", "cordis.patch.yml"),
+      envPrefix: "OPENCODE", // unused
     })
   }
 
