@@ -63,7 +63,9 @@ service/
   agentgate/
     api/         # роуты /v1/*, pydantic-схемы запроса/ответа
     normalize/   # bashlex AST, пути, домены → NormalizedAction
-    stage1/      # hard_deny.py, profile_check.py, allowlist.py, packages.py (заглушка), chain.py
+    rules/       # base.py (Rule, RuleChain), chain.py (STAGE1), unparseable.py,
+                 # hard_deny/ (одно правило — один модуль), profile_paths.py,
+                 # profile_domains.py, allowlist.py, packages.py (заглушка)
     stage2/      # OpenAI-совместимый клиент, промпт, structured output, fallback-парсер
     profiles/    # загрузка и валидация YAML
     session/     # счётчики эскалации, кэш allow, интерфейс хранилища счётчиков
@@ -181,7 +183,7 @@ HTTP 401 только на отсутствие или неверный токе
 
 ### 5.2. Ступень 1 — детерминированная
 
-Цепочка проверок; каждая — функция `(NormalizedAction, Profile, SessionState) -> Decision | None`. `None` означает «пропускаю дальше». Порядок:
+Цепочка правил (`RuleChain`); каждое — объект с `id`, `hard` и методом `evaluate(NormalizedAction, Profile) -> Verdict | None`. `None` означает «пропускаю дальше»; первый не-`None` побеждает. Порядок:
 
 1. **Hard-deny** (`rule_id: hard-deny.*`), не переопределяется ничем:
    - `exfil`: сетевая команда, где в аргументах, stdin или редиректе есть пути к секретам (`.env*`, `*.pem`, `id_rsa*`, `~/.ssh/**`, `~/.aws/**`, `~/.kube/**`, `*.key`, `*.p12`);
@@ -192,7 +194,7 @@ HTTP 401 только на отсутствие или неверный токе
    - `git-force`: `git push --force`/`-f` в ветки из `protected_branches`.
 2. **Профиль** (`rule_id: profile.*`): пути вне `allowed_paths` → `deny`; домены вне `allowed_domains` → `deny` при `network.mode: allowlist|off`, `ask` при `ask`, пропуск при `open`.
 3. **Safe-allowlist** (`rule_id: allowlist.*`) → `allow`: read-only команды (`ls`, `cat`, `head`, `tail`, `wc`, `grep`, `rg`, `find` без `-delete`/`-exec`, `git status|diff|log|show|branch`, `pwd`, `echo` без редиректов, `which`, `env` без аргументов); `file_read` внутри `allowed_paths`; `file_write` внутри `allowed_paths` вне `protected_paths`; префиксы из `safe_prefixes`. Составная команда (пайп, `&&`, `;`) проходит allowlist только если проходит каждая часть, и в ней нет `eval`, подстановок и редиректов в файлы.
-4. **Пакеты** (`packages.py`): заглушка, всегда `None`. Интерфейс тот же, чтобы модуль slopsquatting встал сюда без изменений цепочки.
+4. **Пакеты** (`rules/packages.py`, `PackagesRule`): заглушка, всегда `None`. Интерфейс тот же, чтобы модуль slopsquatting встал сюда одной строкой в `STAGE1`, без изменений цепочки.
 5. Всё остальное → ступень 2.
 
 Правила из roadmap (Test → Protect, секция `rules:` профиля) встанут между 1 и 2 как элементы того же типа.
