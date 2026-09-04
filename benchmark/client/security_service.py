@@ -161,6 +161,20 @@ def extract_usage_and_cost(
     return usage, cost, CostSource.COMPUTED_FROM_TOKENS, None
 
 
+def extract_currency(payload: dict[str, Any], config: ServiceConfig) -> str | None:
+    """Currency of a service-reported price, when the service names one.
+
+    Kept separate from :func:`extract_usage_and_cost` so that the price and its unit are
+    never merged into one guessed value: a price with no currency stays a price with no
+    currency rather than being assumed to be USD.
+    """
+    for path in config.currency_paths:
+        value = json_path(payload, path)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
 def normalize_response(
     payload: Any,
     *,
@@ -213,6 +227,11 @@ def normalize_response(
     usage, cost, cost_source, cost_reason = extract_usage_and_cost(
         payload, config, model_names=(model,)
     )
+    currency: str | None = None
+    if cost is not None:
+        currency = extract_currency(payload, config) or (
+            config.pricing.currency if cost_source is CostSource.COMPUTED_FROM_TOKENS else None
+        )
 
     if model is not None:
         model_source = ModelSource.SERVICE_REPORTED
@@ -238,6 +257,7 @@ def normalize_response(
         latency_total_ms=_as_float(latency.get("total")),
         usage=usage,
         cost=cost,
+        cost_currency=currency,
         cost_source=cost_source,
         cost_unavailable_reason=cost_reason,
         components_activated=components,

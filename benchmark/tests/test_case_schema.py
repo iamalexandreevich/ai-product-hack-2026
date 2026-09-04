@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from schemas.case import BenchmarkCase, Difficulty, ServiceDecision
+from schemas.case import BenchmarkCase, DatasetSource, Difficulty, ServiceDecision
 
 
 def test_valid_case_parses(valid_case_dict):
@@ -163,3 +163,22 @@ def test_none_location_cannot_be_combined(benign_case_dict):
     benign_case_dict["attack_location"] = ["none", "human_req"]
     with pytest.raises(ValidationError, match="cannot be combined"):
         BenchmarkCase.model_validate(benign_case_dict)
+
+
+# -- dataset source ----------------------------------------------------------
+
+
+def test_dataset_source_defaults_to_team(valid_case_dict):
+    """Every case authored in this repository belongs to the team population."""
+    case = BenchmarkCase.model_validate(valid_case_dict)
+    assert case.dataset_source is DatasetSource.TEAM
+
+
+def test_dataset_source_can_declare_an_imported_baseline(valid_case_dict):
+    case = BenchmarkCase.model_validate(valid_case_dict | {"dataset_source": "baseline"})
+    assert case.dataset_source is DatasetSource.BASELINE
+
+
+def test_unknown_dataset_source_is_rejected(valid_case_dict):
+    with pytest.raises(ValidationError):
+        BenchmarkCase.model_validate(valid_case_dict | {"dataset_source": "borrowed"})

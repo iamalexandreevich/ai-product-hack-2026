@@ -4,6 +4,12 @@ Three tables, as required by the benchmark spec: ``benchmark_cases``,
 ``benchmark_runs``, ``benchmark_results``. Every result row keeps the six required
 dimensions in dedicated columns *and* the complete result document in ``result_json``,
 so a report can be regenerated from the database without loss.
+
+The dedicated columns exist so that the metrics can be grouped in SQL without unpacking
+JSON: ``attack_category``, ``difficulty``, ``dataset_source`` and ``stage`` are the four
+dimensions the aggregate metrics group by. Re-running the same case inside the same run
+refreshes every measured column, not just the score, so a column never disagrees with
+``result_json``.
 """
 
 from __future__ import annotations
@@ -25,6 +31,7 @@ CREATE TABLE IF NOT EXISTS benchmark_cases (
     difficulty      TEXT NOT NULL,
     attack_name     TEXT NOT NULL,
     is_benign       INTEGER NOT NULL DEFAULT 0,
+    dataset_source  TEXT NOT NULL DEFAULT 'team',
     case_definition TEXT NOT NULL,
     updated_at      TEXT NOT NULL
 );
@@ -46,12 +53,14 @@ CREATE TABLE IF NOT EXISTS benchmark_results (
     attack_category          TEXT NOT NULL,
     difficulty               TEXT NOT NULL,
     is_benign                INTEGER NOT NULL DEFAULT 0,
+    dataset_source           TEXT NOT NULL DEFAULT 'team',
     execution_time_ms        REAL NOT NULL,
     service_latency_total_ms REAL,
     input_tokens             INTEGER,
     output_tokens            INTEGER,
     total_tokens             INTEGER,
     cost                     REAL,
+    cost_currency            TEXT,
     cost_source              TEXT NOT NULL,
     cost_unavailable_reason  TEXT,
     components_activated     TEXT NOT NULL,
@@ -83,6 +92,16 @@ CREATE INDEX IF NOT EXISTS idx_results_category ON benchmark_results (attack_cat
 CREATE INDEX IF NOT EXISTS idx_results_difficulty ON benchmark_results (difficulty, score);
 """
 
+# Columns added after the first release. A database created by an older version is
+# migrated in place: the metrics that group by these columns must work on runs that were
+# already stored. ``result_json`` is the source of truth either way, so an old row keeps
+# the default until it is written again.
+MIGRATIONS: tuple[tuple[str, str, str], ...] = (
+    ("benchmark_cases", "dataset_source", "TEXT NOT NULL DEFAULT 'team'"),
+    ("benchmark_results", "dataset_source", "TEXT NOT NULL DEFAULT 'team'"),
+    ("benchmark_results", "cost_currency", "TEXT"),
+)
+
 
 class BenchmarkStore:
     """Thin synchronous wrapper around a SQLite database file."""
@@ -95,7 +114,26 @@ class BenchmarkStore:
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.executescript(SCHEMA)
+        self._migrate()
         self._conn.commit()
+
+    def _migrate(self) -> None:
+        """Add columns introduced after a database was first created.
+
+        The index over ``dataset_source`` is created here rather than in ``SCHEMA``: on a
+        database written before the column existed, ``SCHEMA`` runs first and would fail
+        on an index over a column that is only added below.
+        """
+        for table, column, definition in MIGRATIONS:
+            existing = {
+                row["name"] for row in self._conn.execute(f"PRAGMA table_info({table})").fetchall()
+            }
+            if column not in existing:
+                self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+        self._conn.executescript(
+            "CREATE INDEX IF NOT EXISTS idx_results_source "
+            "ON benchmark_results (dataset_source, score);"
+        )
 
     def __enter__(self) -> Self:
         return self
@@ -117,6 +155,7 @@ class BenchmarkStore:
                 case.difficulty.value,
                 case.attack_name,
                 int(case.is_benign),
+                case.dataset_source.value,
                 case.model_dump_json(),
                 now,
             )
@@ -125,13 +164,15 @@ class BenchmarkStore:
         self._conn.executemany(
             """
             INSERT INTO benchmark_cases
-                (case_id, category, difficulty, attack_name, is_benign, case_definition, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+                (case_id, category, difficulty, attack_name, is_benign, dataset_source,
+                 case_definition, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (case_id) DO UPDATE SET
                 category = excluded.category,
                 difficulty = excluded.difficulty,
                 attack_name = excluded.attack_name,
                 is_benign = excluded.is_benign,
+                dataset_source = excluded.dataset_source,
                 case_definition = excluded.case_definition,
                 updated_at = excluded.updated_at
             """,
@@ -208,10 +249,10 @@ class BenchmarkStore:
         self._conn.execute(
             """
             INSERT INTO benchmark_results (
-                run_id, case_id, ts, attack_category, difficulty, is_benign,
+                run_id, case_id, ts, attack_category, difficulty, is_benign, dataset_source,
                 execution_time_ms, service_latency_total_ms,
                 input_tokens, output_tokens, total_tokens,
-                cost, cost_source, cost_unavailable_reason,
+                cost, cost_currency, cost_source, cost_unavailable_reason,
                 components_activated, components_source,
                 service_result_type, raw_response, stage, rule_id, cached,
                 expected_result_type, score, score_explanation,
@@ -219,10 +260,10 @@ class BenchmarkStore:
                 model, provider, model_version, model_source,
                 error, contract_violation, result_json
             ) VALUES (
-                ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?,
                 ?, ?,
                 ?, ?, ?,
-                ?, ?, ?,
+                ?, ?, ?, ?,
                 ?, ?,
                 ?, ?, ?, ?, ?,
                 ?, ?, ?,
@@ -232,9 +273,33 @@ class BenchmarkStore:
             )
             ON CONFLICT (run_id, case_id) DO UPDATE SET
                 ts = excluded.ts,
+                dataset_source = excluded.dataset_source,
                 execution_time_ms = excluded.execution_time_ms,
+                service_latency_total_ms = excluded.service_latency_total_ms,
+                input_tokens = excluded.input_tokens,
+                output_tokens = excluded.output_tokens,
+                total_tokens = excluded.total_tokens,
+                cost = excluded.cost,
+                cost_currency = excluded.cost_currency,
+                cost_source = excluded.cost_source,
+                cost_unavailable_reason = excluded.cost_unavailable_reason,
+                components_activated = excluded.components_activated,
+                components_source = excluded.components_source,
                 service_result_type = excluded.service_result_type,
+                raw_response = excluded.raw_response,
+                stage = excluded.stage,
+                rule_id = excluded.rule_id,
+                cached = excluded.cached,
                 score = excluded.score,
+                score_explanation = excluded.score_explanation,
+                detected = excluded.detected,
+                detection_correct = excluded.detection_correct,
+                model = excluded.model,
+                provider = excluded.provider,
+                model_version = excluded.model_version,
+                model_source = excluded.model_source,
+                error = excluded.error,
+                contract_violation = excluded.contract_violation,
                 result_json = excluded.result_json
             """,
             (
@@ -244,12 +309,14 @@ class BenchmarkStore:
                 result.attack_category,
                 result.difficulty.value,
                 int(result.is_benign),
+                result.dataset_source.value,
                 result.execution_time_ms,
                 result.service_latency_total_ms,
                 result.input_tokens,
                 result.output_tokens,
                 result.total_tokens,
                 result.cost,
+                result.cost_currency,
                 result.cost_source.value,
                 result.cost_unavailable_reason,
                 json.dumps(result.components_activated, ensure_ascii=False),

@@ -6,7 +6,7 @@ import copy
 import sqlite3
 
 from runner.recorder import Recorder
-from schemas.case import BenchmarkCase
+from schemas.case import BenchmarkCase, DatasetSource
 from schemas.result import (
     BenchmarkResult,
     ComponentsSource,
@@ -158,3 +158,110 @@ def test_recorder_survives_storage_failure(tmp_path):
     with Recorder(store=store) as recorder:
         recorder.record(_result())
     assert len(recorder.results) == 1
+
+
+# -- dataset source and the columns the metrics group by ---------------------
+
+
+def test_dataset_source_is_stored_and_read_back(tmp_path):
+    path = tmp_path / "bench.sqlite3"
+    baseline = _result("BASE_001")
+    baseline.dataset_source = DatasetSource.BASELINE
+    with BenchmarkStore(path) as store:
+        store.start_run("run-1", RunConfig(service_url="u"), total_cases=2)
+        store.insert_result(_result("TEAM_001"))
+        store.insert_result(baseline)
+        restored = {r.case_id: r.dataset_source for r in store.load_results("run-1")}
+
+    assert restored == {
+        "TEAM_001": DatasetSource.TEAM,
+        "BASE_001": DatasetSource.BASELINE,
+    }
+    with sqlite3.connect(path) as conn:
+        rows = dict(
+            conn.execute("SELECT case_id, dataset_source FROM benchmark_results").fetchall()
+        )
+    assert rows == {"TEAM_001": "team", "BASE_001": "baseline"}
+
+
+def test_dataset_source_of_a_case_is_stored(tmp_path):
+    payload = copy.deepcopy(VALID_CASE)
+    payload["dataset_source"] = "baseline"
+    with BenchmarkStore(tmp_path / "bench.sqlite3") as store:
+        store.upsert_cases([BenchmarkCase.model_validate(payload)])
+        row = store._conn.execute(
+            "SELECT dataset_source FROM benchmark_cases WHERE case_id = ?", (payload["id"],)
+        ).fetchone()
+    assert row["dataset_source"] == "baseline"
+
+
+def test_an_older_database_is_migrated_in_place(tmp_path):
+    """A database written before these columns existed keeps working."""
+    path = tmp_path / "old.sqlite3"
+    with sqlite3.connect(path) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE benchmark_cases (
+                case_id TEXT PRIMARY KEY, category TEXT NOT NULL, difficulty TEXT NOT NULL,
+                attack_name TEXT NOT NULL, is_benign INTEGER NOT NULL DEFAULT 0,
+                case_definition TEXT NOT NULL, updated_at TEXT NOT NULL);
+            CREATE TABLE benchmark_runs (
+                run_id TEXT PRIMARY KEY, started_at TEXT NOT NULL, finished_at TEXT,
+                service_version TEXT, configuration TEXT NOT NULL, total_cases INTEGER,
+                status TEXT NOT NULL DEFAULT 'running');
+            CREATE TABLE benchmark_results (
+                run_id TEXT NOT NULL, case_id TEXT NOT NULL, ts TEXT NOT NULL,
+                attack_category TEXT NOT NULL, difficulty TEXT NOT NULL,
+                is_benign INTEGER NOT NULL DEFAULT 0, execution_time_ms REAL NOT NULL,
+                service_latency_total_ms REAL, input_tokens INTEGER, output_tokens INTEGER,
+                total_tokens INTEGER, cost REAL, cost_source TEXT NOT NULL,
+                cost_unavailable_reason TEXT, components_activated TEXT NOT NULL,
+                components_source TEXT NOT NULL, service_result_type TEXT NOT NULL,
+                raw_response TEXT NOT NULL, stage INTEGER, rule_id TEXT, cached INTEGER,
+                expected_result_type TEXT NOT NULL, score INTEGER NOT NULL,
+                score_explanation TEXT NOT NULL, expected_detection INTEGER NOT NULL,
+                detected INTEGER, detection_correct INTEGER, model TEXT, provider TEXT,
+                model_version TEXT, model_source TEXT NOT NULL, error TEXT,
+                contract_violation TEXT, result_json TEXT NOT NULL,
+                PRIMARY KEY (run_id, case_id));
+            """
+        )
+
+    with BenchmarkStore(path) as store:
+        store.start_run("run-1", RunConfig(service_url="u"), total_cases=1)
+        store.insert_result(_result("SAMPLE_001"))
+        assert store.load_results("run-1")[0].dataset_source is DatasetSource.TEAM
+
+    with sqlite3.connect(path) as conn:
+        columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(benchmark_results)").fetchall()
+        }
+    assert {"dataset_source", "cost_currency"} <= columns
+
+
+def test_rewriting_a_result_refreshes_every_measured_column(tmp_path):
+    """A re-run of the same case must not leave stale columns behind ``result_json``."""
+    with BenchmarkStore(tmp_path / "bench.sqlite3") as store:
+        store.start_run("run-1", RunConfig(service_url="u"), total_cases=1)
+        store.insert_result(_result("SAMPLE_001"))
+
+        updated = _result("SAMPLE_001", score=0)
+        updated.stage = 2
+        updated.cost = 0.0004
+        updated.cost_currency = "USD"
+        updated.cost_source = CostSource.SERVICE_REPORTED
+        updated.service_latency_total_ms = 91.0
+        updated.rule_id = None
+        store.insert_result(updated)
+
+        row = store._conn.execute(
+            "SELECT stage, cost, cost_currency, cost_source, service_latency_total_ms, rule_id "
+            "FROM benchmark_results WHERE case_id = 'SAMPLE_001'"
+        ).fetchone()
+
+    assert row["stage"] == 2
+    assert row["cost"] == 0.0004
+    assert row["cost_currency"] == "USD"
+    assert row["cost_source"] == "service_reported"
+    assert row["service_latency_total_ms"] == 91.0
+    assert row["rule_id"] is None
