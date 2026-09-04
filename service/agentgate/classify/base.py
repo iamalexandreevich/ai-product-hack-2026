@@ -34,6 +34,8 @@ class ReviewCase:
         policy: Policy, stage1_note: str,
     ) -> "ReviewCase":
         intent = user_request or dialogue.last_human_request() or ""
+        # user_request is already capped by the schema; the slice is for the
+        # fallback taken from the dialogue.
         return cls(
             action=action, intent=intent[-USER_REQUEST_MAX_CHARS:], dialogue=dialogue.fit(policy.history),
             policy=policy, stage1_note=stage1_note,

@@ -815,6 +815,12 @@ components:
           title: History
           description: Dialogue turns the stage-2 model saw, after truncation to the profile
             budget. Empty when stage 2 did not run.
+        history_omitted:
+          type: integer
+          title: History Omitted
+          description: Turns dropped from the dialogue before it reached the model; part of
+            the [HISTORY] header the model saw.
+          default: 0
         history_digest:
           type: string
           title: History Digest

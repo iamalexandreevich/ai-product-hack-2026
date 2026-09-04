@@ -49,7 +49,15 @@ class PostgresDecisionWriter:
     async def write(self, decision: Decision) -> None:
         if decision.state is not None:
             await self._sessions.upsert(decision.state)
-        await self._decisions.insert(decision)
+        inserted = await self._decisions.insert(decision)
+        if inserted is False:
+            # Only an explicit False means "skipped" -- a fake repo whose
+            # insert has no return value is falsy (None) but did insert.
+            log.warning(
+                "decision %s not stored: idempotency key %s already has a row",
+                decision.id, decision.idempotency_key,
+            )
+            return
         if self._should_cache(decision):
             expires_at = datetime.now(timezone.utc) + timedelta(seconds=self._cache_ttl_seconds)
             await self._sessions.cache_put(

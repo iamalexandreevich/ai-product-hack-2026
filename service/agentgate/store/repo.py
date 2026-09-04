@@ -33,11 +33,15 @@ class DecisionRepo:
     def __init__(self, session_factory: async_sessionmaker) -> None:
         self._sf = session_factory
 
-    async def insert(self, decision: Decision) -> None:
-        """Insert one decision.
+    async def insert(self, decision: Decision) -> bool:
+        """Insert one decision; ``False`` when a row with this idempotency
+        key already existed and nothing was inserted.
 
         A row whose ``idempotency_key`` is already present is silently not
-        inserted: two concurrent repeats of one call must leave one row.
+        inserted: two concurrent repeats of one call must leave one row --
+        the caller (``PostgresDecisionWriter``) uses the return value to
+        skip the allow-cache row it would otherwise write next, since that
+        row's foreign key requires this insert to have actually landed.
         Raises ``sqlalchemy.exc.IntegrityError`` if the decision's session id
         is not ``None`` and does not reference an existing session (see class
         docstring for the required call ordering), or if its id collides
@@ -52,15 +56,25 @@ class DecisionRepo:
             index_where=table.c.idempotency_key.isnot(None),
         )
         async with self._sf() as s:
-            await s.execute(stmt)
+            result = await s.execute(stmt)
             await s.commit()
+        return result.rowcount == 1
 
-    async def load_replayable(self, newer_than: datetime) -> list[DecisionRecord]:
-        """Decisions that carried an ``Idempotency-Key`` and are recent enough to replay."""
+    async def load_replayable(self, newer_than: datetime, limit: int = 100_000) -> list[DecisionRecord]:
+        """Decisions that carried an ``Idempotency-Key`` and are recent enough to replay.
+
+        Ordered newest first and capped at ``limit`` (clamped the same way
+        ``list`` clamps its own limit): a populated table could otherwise
+        materialize every keyed row of the whole window at once, and
+        newest-first keeps the freshest keys when the window has more of
+        them than the cap.
+        """
+        limit = max(1, min(limit, 1_000_000))
         stmt = (
             select(DecisionRow)
             .where(DecisionRow.idempotency_key.isnot(None), DecisionRow.ts > newer_than)
-            .order_by(DecisionRow.id)
+            .order_by(DecisionRow.ts.desc())
+            .limit(limit)
         )
         async with self._sf() as s:
             rows = (await s.execute(stmt)).scalars().all()

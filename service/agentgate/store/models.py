@@ -58,6 +58,7 @@ class DecisionRow(Base):
     protocol: Mapped[int] = mapped_column(Integer, default=1)
     idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
     history: Mapped[list] = mapped_column(JSONB, default=list)
+    history_omitted: Mapped[int] = mapped_column(Integer, default=0)
     history_digest: Mapped[str] = mapped_column(String(64), default="")
 
     __table_args__ = (

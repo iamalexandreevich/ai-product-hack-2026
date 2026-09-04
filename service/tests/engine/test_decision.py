@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 from agentgate.api.schemas import PROTOCOL, DecisionKind
+from agentgate.domain.dialogue import Dialogue
 from agentgate.domain.verdict import Verdict
 from agentgate.engine.decision import Decision
 from agentgate.engine.timings import Latency
@@ -69,9 +70,23 @@ def test_record_history_is_empty_when_stage_two_did_not_run():
     assert decision(dialogue=None).to_record().history == []
 
 
-def test_record_to_response_and_decision_to_response_agree():
-    d = decision(cached=True)
-    assert d.to_record().to_response() == d.to_response()
+def test_record_history_omitted_is_the_dialogues_omitted_count():
+    seen = Dialogue(turns=(turn(content="x"),), omitted=3)
+    record = decision(dialogue=seen).to_record()
+    assert record.history_omitted == 3
+
+
+def test_record_history_omitted_is_zero_when_stage_two_did_not_run():
+    assert decision(dialogue=None).to_record().history_omitted == 0
+
+
+def test_response_is_built_from_the_verdict_and_the_latency():
+    d = decision(verdict=Verdict.deny("hard-deny.exfil", "leak", "use env", stage=1, hard=True), cached=False)
+    response = d.to_response()
+    assert (response.decision, response.rule_id, response.reason, response.suggest) == (
+        DecisionKind.deny, "hard-deny.exfil", "leak", "use env",
+    )
+    assert (response.stage, response.latency_ms.stage1, response.latency_ms.total, response.decision_id) == (1, 1, 3, "01J0")
 
 
 def test_response_carries_the_protocol():

@@ -143,8 +143,8 @@ class Gate:
             verdict = self._rules.evaluate(action, context.policy)
         if verdict is not None:
             return verdict, None
-        case = ReviewCase.build(action, request.user_request, dialogue, context.policy, STAGE1_PASSED)
         with timings.stage(2):
+            case = ReviewCase.build(action, request.user_request, dialogue, context.policy, STAGE1_PASSED)
             return await context.classifier.classify(case), case.dialogue
 
     def _escalate(self, state: SessionState | None, policy: Policy, verdict: Verdict) -> Verdict:

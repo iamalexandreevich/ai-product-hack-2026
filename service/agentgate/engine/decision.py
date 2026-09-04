@@ -85,6 +85,13 @@ class DecisionRecord(BaseModel):
             "budget. Empty when stage 2 did not run."
         ),
     )
+    history_omitted: int = Field(
+        default=0,
+        description=(
+            "Turns dropped from the dialogue before it reached the model; part of "
+            "the [HISTORY] header the model saw."
+        ),
+    )
     history_digest: str = Field(
         default="",
         description="sha256 of the full history the request carried, before truncation.",
@@ -159,6 +166,7 @@ class Decision:
             metadata=self.request.metadata,
             protocol=self.request.protocol,
             history=list(self.dialogue.turns) if self.dialogue is not None else [],
+            history_omitted=self.dialogue.omitted if self.dialogue is not None else 0,
             history_digest=self.history_digest,
             idempotency_key=self.idempotency_key,
         )
