@@ -15,9 +15,10 @@ from agentgate.domain.verdict import Verdict
 from agentgate.normalize.model import NormalizedAction
 from agentgate.normalize.paths import is_within, resolve_path
 from agentgate.rules.hard_deny.shared import effective_argv
+from agentgate.shell.commands import Role, commands_with_role
 
-_ESCALATORS = ("sudo", "su", "doas")
-_FIREWALL = {"iptables", "ip6tables", "nft", "ufw", "pfctl", "firewall-cmd"}
+_ESCALATORS = commands_with_role(Role.ESCALATOR)
+_FIREWALL = commands_with_role(Role.FIREWALL)
 _WORLD_WRITABLE_MODES = ("777", "0777", "a+rwx")
 
 

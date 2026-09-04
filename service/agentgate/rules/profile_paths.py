@@ -15,9 +15,10 @@ from agentgate.domain.policy import Policy
 from agentgate.domain.verdict import Verdict
 from agentgate.normalize.model import NormalizedAction
 from agentgate.normalize.paths import is_within
-from agentgate.rules.argv_paths import command_argv_paths
+from agentgate.shell.commands import Role, commands_with_role
+from agentgate.shell.paths import PathRole, command_paths
 
-_MUTATING = {"rm", "mv", "cp", "mkdir", "rmdir", "touch", "chmod", "chown", "tee", "install", "ln", "truncate", "dd", "shred"}
+_MUTATING = commands_with_role(Role.MUTATING)
 
 
 class ProfilePathRule:
@@ -37,13 +38,13 @@ def _mutating_targets(action: NormalizedAction) -> list[str]:
     targets: list[str] = []
     for command in action.commands:
         exe = command.argv[0]
-        argv_paths = command_argv_paths(command, action.cwd)
+        referenced = command_paths(command.argv, action.cwd, PathRole.ANY)
         if exe in _MUTATING:
-            targets += argv_paths
+            targets += referenced
         elif exe == "sed" and any(a.startswith("-i") for a in command.argv[1:]):
             # sed's first non-flag argument is the substitution script, not
-            # a target. command_argv_paths already dropped the flags.
-            targets += argv_paths[1:]
+            # a target. The ANY role already dropped the flags.
+            targets += referenced[1:]
         for redirect in command.redirects:
             if redirect.op.endswith((">", ">>")) and not redirect.target.startswith("/dev/"):
                 targets.append(redirect.target)

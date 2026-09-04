@@ -11,8 +11,9 @@ from agentgate.api.schemas import Tool
 from agentgate.domain.policy import Policy
 from agentgate.domain.verdict import Verdict
 from agentgate.normalize.model import NormalizedAction, SimpleCommand
-from agentgate.normalize.paths import matches_any, resolve_path
-from agentgate.rules.hard_deny.shared import LAST_ARG_WRITE_COMMANDS, effective_argv
+from agentgate.normalize.paths import matches_any
+from agentgate.rules.hard_deny.shared import effective_argv
+from agentgate.shell.paths import PathRole, command_paths
 
 
 class ProtectedWriteRule:
@@ -39,17 +40,8 @@ def _write_targets(action: NormalizedAction) -> list[str]:
 
 
 def _command_write_targets(command: SimpleCommand, argv: list[str], cwd: str) -> list[str]:
-    exe = argv[0]
     # Any output-direction redirect op: ">", ">>", the clobber form ">|",
     # "&>"/"2>" duplications onto a file. Matched by substring rather than
     # a suffix test so ">|" (bash's noclobber override) is not missed.
-    targets = [r.target for r in command.redirects if ">" in r.op]
-    args = [a for a in argv[1:] if not a.startswith("-")]
-    if exe in LAST_ARG_WRITE_COMMANDS and len(args) >= 2:
-        targets.append(resolve_path(args[-1], cwd))
-    elif exe == "tee":
-        targets += [resolve_path(a, cwd) for a in args]
-    elif exe == "sed" and any(a.startswith(("-i", "--in-place")) for a in argv[1:]):
-        # sed's first non-flag argument is the substitution script, not a file.
-        targets += [resolve_path(a, cwd) for a in args[1:]]
-    return targets
+    redirected = [r.target for r in command.redirects if ">" in r.op]
+    return redirected + list(command_paths(argv, cwd, PathRole.WRITE))

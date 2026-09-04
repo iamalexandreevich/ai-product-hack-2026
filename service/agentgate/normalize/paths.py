@@ -95,11 +95,12 @@ def looks_unresolved(token: str) -> bool:
 def looks_like_path(token: str) -> bool:
     """Heuristic: does this argv token look like a filesystem path?
 
-    Used for arguments of commands not in PATH_COMMANDS, where we cannot
-    assume every non-flag token is a path. Deliberately excludes URLs and
-    flag-like tokens (leading ``-``). A bare, slash-free token is still
-    treated as a path if its name is a known-sensitive basename (e.g.
-    ``.env``, ``id_rsa``) — see agentgate.shell.secrets.
+    Used for arguments of a command whose arguments are not declared
+    paths, where we cannot assume every non-flag token is a path.
+    Deliberately excludes URLs and flag-like tokens (leading ``-``). A
+    bare, slash-free token is still treated as a path if its name is a
+    known-sensitive basename (e.g. ``.env``, ``id_rsa``) — see
+    agentgate.shell.secrets.
     """
     if not token or token.startswith("-") or _URL_MARK in token:
         return False

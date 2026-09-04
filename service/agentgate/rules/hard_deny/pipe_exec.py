@@ -9,9 +9,10 @@ from agentgate.domain.policy import Policy
 from agentgate.domain.verdict import Verdict
 from agentgate.normalize.model import NormalizedAction
 from agentgate.rules.hard_deny.shared import DOWNLOADERS, by_pipeline, effective_argv
+from agentgate.shell.commands import Role, commands_with_role
 
-_SHELLS = {"sh", "bash", "zsh", "dash", "ksh"}
-_INTERPRETERS = _SHELLS | {"python", "python3", "node", "perl", "ruby"}
+_SHELLS = commands_with_role(Role.SHELL)
+_INTERPRETERS = commands_with_role(Role.INTERPRETER)
 
 _SUGGEST = "Download to a file inside the workspace, inspect it, then run it explicitly"
 

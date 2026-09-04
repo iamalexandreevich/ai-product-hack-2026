@@ -9,13 +9,13 @@ the answer lives here rather than privately inside either of them.
 import os
 import re
 
+from agentgate.shell.commands import Role, commands_with_role, spec_for
+
 # Commands that run their remaining argv as a command without being a
 # shell themselves. All of them exec what follows with stdin passed
 # through unchanged, so `nice bash <<EOF` reaches the shell's stdin
 # exactly as `env bash <<EOF` does.
-WRAPPER_COMMANDS: frozenset[str] = frozenset(
-    {"env", "command", "nohup", "timeout", "sudo", "doas", "nice", "setsid", "stdbuf"}
-)
+WRAPPER_COMMANDS: frozenset[str] = commands_with_role(Role.WRAPPER)
 
 # env's OWN primary syntax is "env [OPTIONS] [NAME=VALUE]... COMMAND
 # [ARG]...", not just flags -- `env FOO=bar rm -rf /` is standard env
@@ -24,27 +24,6 @@ WRAPPER_COMMANDS: frozenset[str] = frozenset(
 # word). Skipping these is what keeps `env FOO=bar <anything>` from
 # resolving to "FOO=bar" as the effective command.
 ENV_ASSIGNMENT: re.Pattern = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
-
-# Wrapper options whose value is a SEPARATE argv token, per wrapper.
-# Without these the leading-flag skip stops on the option's own value:
-# `nice -n 10 rm -rf /` resolves to ["10", "rm", "-rf", "/"] and every
-# rule then sees an effective command named "10". Only options whose
-# argument is MANDATORY belong here -- an optional-argument option
-# (xargs -i/-l/-e, env -i) must not consume the following token, which
-# may be the wrapped command itself. Attached forms ("-n10",
-# "--signal=KILL") carry their value inside the token and are already
-# handled by the plain flag skip.
-WRAPPER_VALUE_FLAGS: dict[str, frozenset[str]] = {
-    "env": frozenset({"-u", "--unset", "-C", "--chdir", "-S", "--split-string"}),
-    "nice": frozenset({"-n", "--adjustment"}),
-    "stdbuf": frozenset({"-i", "--input", "-o", "--output", "-e", "--error"}),
-    "timeout": frozenset({"-s", "--signal", "-k", "--kill-after"}),
-    "xargs": frozenset({"-n", "--max-args", "-P", "--max-procs", "-I", "-d", "--delimiter",
-                        "-a", "--arg-file", "-E", "-s", "--max-chars", "-L", "--max-lines"}),
-    "sudo": frozenset({"-u", "--user", "-g", "--group", "-p", "--prompt", "-C", "--close-from",
-                       "-h", "--host", "-r", "--role", "-t", "--type", "-U", "--other-user"}),
-    "doas": frozenset({"-u", "-C", "-a"}),
-}
 
 # "timeout [OPTIONS] DURATION COMMAND [ARG]..." carries one required
 # positional between the wrapper's flags and the wrapped command, unlike
@@ -88,7 +67,11 @@ def resolve_effective_argv(
         if not tokens or os.path.basename(tokens[0]) not in wrapper_commands:
             break
         name = os.path.basename(tokens[0])
-        value_flags = WRAPPER_VALUE_FLAGS.get(name, frozenset())
+        # Without the wrapper's own value-taking options, the leading-flag
+        # skip stops on an option's value: `nice -n 10 rm -rf /` would
+        # resolve to ["10", "rm", "-rf", "/"] and every rule below would
+        # then see an effective command named "10".
+        value_flags = spec_for(name).value_flags
         index = 1
         while index < len(tokens) and tokens[index].startswith("-"):
             flag = tokens[index]
@@ -143,7 +126,7 @@ def _consumed_a_possible_command(argv: list[str]) -> bool:
     if not argv:
         return False
     name = os.path.basename(argv[0])
-    value_flags = WRAPPER_VALUE_FLAGS.get(name, frozenset())
+    value_flags = spec_for(name).value_flags
     for token in argv[1:]:
         if not token.startswith("-"):
             if name == "env" and ENV_ASSIGNMENT.match(token):

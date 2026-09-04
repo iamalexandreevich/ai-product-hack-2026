@@ -6,16 +6,10 @@ picks the set of wrappers stage 1 wants resolved.
 """
 
 from agentgate.normalize.model import NormalizedAction, SimpleCommand
+from agentgate.shell.commands import Role, commands_with_role
 from agentgate.shell.wrappers import WRAPPER_COMMANDS, resolve_effective_argv
 
-DOWNLOADERS = {"curl", "wget"}
-
-_WRITE_COMMANDS = {"cp", "mv", "tee", "install", "ln"}
-# cp/mv/install/ln all take "... SOURCE... DEST" — the last non-flag
-# argument is what gets written. tee is different (every non-flag
-# argument is itself a write target) and each caller handles it
-# separately; derived rather than re-listed so the two never drift apart.
-LAST_ARG_WRITE_COMMANDS = _WRITE_COMMANDS - {"tee"}
+DOWNLOADERS = commands_with_role(Role.DOWNLOADER)
 
 # env/command/nohup/timeout/nice/setsid/stdbuf/xargs pass their remaining
 # argv through to execve with the same effective semantics stage 1 cares

@@ -20,25 +20,21 @@ from agentgate.domain.policy import Policy
 from agentgate.domain.verdict import Verdict
 from agentgate.normalize.model import NormalizedAction, SimpleCommand
 from agentgate.normalize.paths import looks_like_path, looks_unresolved, resolve_path
-from agentgate.rules.hard_deny.shared import (
-    DOWNLOADERS,
-    LAST_ARG_WRITE_COMMANDS,
-    by_pipeline,
-    effective_argv,
-)
+from agentgate.rules.hard_deny.shared import DOWNLOADERS, by_pipeline, effective_argv
 from agentgate.shell.argv import Option, ParsedArgv
+from agentgate.shell.commands import Role, commands_with_role, every_upload_flag, spec_for
+from agentgate.shell.paths import PathRole, command_paths
 from agentgate.shell.secrets import is_secret_path
 
-_NETWORK_COMMANDS = {"curl", "wget", "nc", "ncat", "netcat", "ssh", "scp", "sftp", "rsync", "ftp", "telnet", "socat"}
+_NETWORK_COMMANDS = commands_with_role(Role.NETWORK)
 
 # Flags whose value is transmitted outward — the argument becomes request
-# body/upload content. A secret file named here is a real exfil.
-_UPLOAD_FLAGS = {
-    "-T", "--upload-file",
-    "-d", "--data", "--data-ascii", "--data-binary", "--data-raw", "--data-urlencode",
-    "-F", "--form",
-    "--post-file", "--post-data",
-}
+# body/upload content. A secret file named here is a real exfil. Read as
+# the union over every command rather than per command: a flag the table
+# attributes to curl still counts when it appears on another network
+# command's argv, which is the conservative direction for a rule that can
+# only ever add a denial.
+_UPLOAD_FLAGS = every_upload_flag()
 # Single-dash upload flags, indexed by their option LETTER. curl accepts
 # these with an ATTACHED value ("-T.env" == "-T .env") and also BUNDLED
 # into a short-option cluster where the upload letter need not come first
@@ -65,10 +61,6 @@ _IGNORE_VALUE_FLAGS = {
     "-i", "--identity", "--key", "--cert", "--cacert", "--capath",
     "-o", "--output", "-O", "-out", "-e",
 }
-# scp/rsync flags that take a following value which is NOT a positional
-# source/destination argument — without this, an identity file passed to
-# -i is collected as if it were a source file to transfer.
-_SCP_RSYNC_VALUE_FLAGS = {"-i", "-e", "-F", "-o", "-l", "-P", "--rsh", "--exclude"}
 # scp/rsync "user@host:path" or "host:path" remote destination shape.
 _REMOTE_DEST = re.compile(r"^([^/@\s]+@)?[^/@:\s]+:")
 
@@ -77,7 +69,7 @@ _REMOTE_DEST = re.compile(r"^([^/@\s]+@)?[^/@:\s]+:")
 # stdin, nc/ncat/netcat/socat/telnet pipe stdin straight onto the
 # connection. Distinct from curl/wget-family tools, which ignore stdin
 # entirely unless told to use it with an explicit upload flag.
-_STDIN_FORWARDING_COMMANDS = {"ssh", "nc", "ncat", "netcat", "socat", "telnet"}
+_STDIN_FORWARDING_COMMANDS = commands_with_role(Role.STDIN_FORWARDER)
 
 
 class ExfilRule:
@@ -128,7 +120,10 @@ def _sent_secret_paths(cmd: SimpleCommand, cwd: str) -> list[str]:
     for value in _uploaded_values(_parse_for_upload_scan(argv, exe), exe):
         out.extend(_upload_flag_value_paths(value, cwd))
     if exe in ("scp", "rsync"):
-        positionals = _read_argv(argv, frozenset(_SCP_RSYNC_VALUE_FLAGS)).positionals
+        # The transfer tools' own value-taking options come from the
+        # table: without them an identity file passed to -i is collected
+        # as if it were a source file to transfer.
+        positionals = _read_argv(argv, spec_for(exe).value_flags).positionals
         if len(positionals) >= 2 and _looks_remote(positionals[-1]):
             for src in positionals[:-1]:
                 if not looks_unresolved(src):
@@ -198,19 +193,11 @@ def _write_destinations(argv: Sequence[str], cwd: str) -> set[str]:
     """The paths a write command writes to rather than reads: every one of
     tee's positionals, or the last positional of cp/mv/install/ln.
 
-    Read with no value flags at all, because a write command's own short
-    options are its own: tee's -i is boolean, so the token after it is a
-    write target, not the value of the identity flag of the same name.
+    An in-place edit is not one of these, hence WRITE_ONLY: sed -i reads
+    the file it rewrites, and excluding it from this command's reads
+    would hide a secret a downstream network command could forward.
     """
-    positionals = _read_argv(argv).positionals
-    exe = argv[0]
-    if exe == "tee":
-        targets = positionals
-    elif exe in LAST_ARG_WRITE_COMMANDS:
-        targets = positionals[-1:]
-    else:
-        return set()
-    return {resolve_path(t, cwd) for t in targets if not looks_unresolved(t)}
+    return set(command_paths(argv, cwd, PathRole.WRITE_ONLY))
 
 
 def _consumes_piped_stdin(argv: list[str]) -> bool:

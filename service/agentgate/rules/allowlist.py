@@ -26,10 +26,10 @@ from agentgate.domain.policy import Policy
 from agentgate.domain.verdict import Verdict
 from agentgate.normalize.model import NormalizedAction, SimpleCommand
 from agentgate.normalize.paths import is_within, matches_any
-from agentgate.rules.argv_paths import command_argv_paths
+from agentgate.shell.commands import Role, commands_with_role, spec_for
+from agentgate.shell.paths import PathRole, command_paths
 
-READONLY = {"ls", "cat", "head", "tail", "wc", "grep", "rg", "pwd", "which", "stat", "du", "file", "tree", "sort", "uniq", "cut", "tr", "less", "more", "diff"}
-GIT_READONLY = {"status", "diff", "log", "show", "branch", "rev-parse", "remote", "blame"}
+READONLY = commands_with_role(Role.READONLY)
 
 
 class AllowlistRule:
@@ -50,7 +50,7 @@ class AllowlistRule:
         if any(
             matches_any(p, policy.protected_paths, policy.workspace)
             for c in action.commands
-            for p in command_argv_paths(c, action.cwd)
+            for p in command_paths(c.argv, action.cwd, PathRole.ANY)
         ):
             return None
         if all(_matches_prefix(c, policy.safe_prefixes) for c in action.commands):
@@ -78,7 +78,7 @@ def _is_readonly(cmd: SimpleCommand) -> bool:
         return False
     if exe in READONLY:
         return True
-    if exe == "git" and len(cmd.argv) > 1 and cmd.argv[1] in GIT_READONLY:
+    if len(cmd.argv) > 1 and cmd.argv[1] in spec_for(exe).readonly_subcommands:
         return True
     if exe == "echo":
         return True

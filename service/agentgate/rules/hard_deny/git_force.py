@@ -19,12 +19,13 @@ from agentgate.domain.policy import Policy
 from agentgate.domain.verdict import Verdict
 from agentgate.normalize.model import NormalizedAction
 from agentgate.rules.hard_deny.shared import effective_argv
+from agentgate.shell.commands import spec_for
 
 _AMBIGUOUS_ID = "ambiguous.git-force"
 # git global options that take a following value, e.g. `git -C <path> push
 # ...` — skipped (option + value) while looking for the "push" subcommand
 # so it is not missed just because it is not argv[1].
-_GLOBAL_OPTS_WITH_VALUE = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"}
+_GLOBAL_OPTS_WITH_VALUE = spec_for("git").value_flags
 # Refspecs that name a branch only indirectly: whatever the local checkout
 # currently points at, which may well be protected. Not literal branch
 # names, so they cannot be matched against protected_branches at all.

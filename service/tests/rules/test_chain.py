@@ -120,15 +120,16 @@ def test_allowlist_protected_read_falls_through_like_outside_workspace():
     assert STAGE1.evaluate(req(raw="cat /etc/hosts"), P) is None
 
 
-# Fix round 2: the round-1 guard only consulted NormalizedAction.paths, which
-# the normalizer populates from a narrower rule (PATH_COMMANDS membership or
-# looks_like_path) than "every path argument a command has". A READONLY
-# command NOT in PATH_COMMANDS (sort, cut, diff, uniq are all in READONLY but
-# none are in normalize/shell.py's PATH_COMMANDS) reading a bare-name
-# protected path (no leading '/', no '/', not a hard-coded sensitive
-# basename) produced action.paths=[] and slipped through as `allow`. Uses the
-# shipped default profile, whose protected_paths include exactly such
-# bare-name entries (AGENTS.md, SKILL.md, .cursorrules).
+# The protected-path guard consults each command's own arguments, not
+# NormalizedAction.paths, which the normalizer fills from a narrower rule:
+# the command declares its arguments to be paths, or the token looks like
+# one. A readonly command declaring nothing (sort, cut, diff and uniq all
+# carry the readonly role but declare no path arguments) reading a
+# bare-name protected path — no leading '/', no '/', not a known
+# sensitive basename — leaves action.paths empty and would otherwise slip
+# through as `allow`. Uses the shipped default profile, whose
+# protected_paths include exactly such bare-name entries (AGENTS.md,
+# SKILL.md, .cursorrules).
 @pytest.mark.parametrize("raw", [
     "sort AGENTS.md",
     "cut -d: -f1 AGENTS.md",

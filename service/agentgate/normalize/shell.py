@@ -27,16 +27,11 @@ from agentgate.api.schemas import Tool
 from agentgate.normalize.domains import extract_domains
 from agentgate.normalize.model import Flags, NormalizedAction, Redirect, SimpleCommand
 from agentgate.normalize.paths import looks_like_path, looks_unresolved, resolve_path
+from agentgate.shell.commands import CommandSpec, PathArguments, spec_for
 from agentgate.shell.wrappers import resolve_effective_argv
 
 log = logging.getLogger(__name__)
 
-# Commands whose non-flag arguments are always paths.
-PATH_COMMANDS = {
-    "rm", "cp", "mv", "cat", "ls", "mkdir", "rmdir", "touch", "chmod", "chown", "find",
-    "shred", "tee", "head", "tail", "less", "more", "stat", "du", "tar", "unzip", "zip",
-    "sed", "awk", "wc", "grep", "rg", "ln", "truncate", "dd", "cd",
-}
 _EVAL_LIKE = {"eval", "exec", "source", "."}
 _VAR = re.compile(r"^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?$")
 _BRACE_EXPANSION = re.compile(r"\{[^{}]*,[^{}]*\}")
@@ -352,6 +347,25 @@ class _PathScan(NamedTuple):
     saw_unresolved: bool
 
 
+def _argument_path(spec: CommandSpec, args: list[str], index: int, cwd: str) -> str | None:
+    """The path ``args[index]`` names, or None if it names none.
+
+    A command whose arguments are not declared paths is judged token by
+    token by the heuristic; a command that declares them is trusted, minus
+    its own flags and the values they take.
+    """
+    token = args[index]
+    if spec.path_arguments is PathArguments.UNDECLARED:
+        return resolve_path(token, cwd) if looks_like_path(token) else None
+    if token.startswith("-"):
+        return None
+    if index > 0 and args[index - 1] in spec.value_flags:
+        return None  # the option before it took this token as its value
+    if spec.path_arguments is PathArguments.SEARCH_ROOTS and token.startswith("*"):
+        return None  # a glob among search roots is a pattern, not a path
+    return resolve_path(token, cwd)
+
+
 def _collect_paths(commands: list[SimpleCommand], cwd: str) -> _PathScan:
     paths: list[str] = []
     saw_unresolved = False
@@ -361,26 +375,19 @@ def _collect_paths(commands: list[SimpleCommand], cwd: str) -> _PathScan:
             paths.append(p)
 
     for cmd in commands:
-        exe = cmd.argv[0]
+        spec = spec_for(cmd.argv[0])
         args = cmd.argv[1:]
-        for i, tok in enumerate(args):
-            if looks_unresolved(tok):
+        for index, token in enumerate(args):
+            if looks_unresolved(token):
                 # A quoted/escaped "$"/"~" produces no bashlex
                 # parameter/tilde part, so _word_value never flagged it;
                 # dropping a path must never be silent, so the drop
                 # reports it here rather than assuming upstream did.
                 saw_unresolved = True
                 continue
-            if exe in PATH_COMMANDS:
-                if tok.startswith("-"):
-                    continue
-                if exe == "find" and i > 0 and args[i - 1] in ("-name", "-iname", "-path", "-type", "-exec"):
-                    continue
-                if exe in ("find",) and tok.startswith("*"):
-                    continue
-                add(resolve_path(tok, cwd))
-            elif looks_like_path(tok):
-                add(resolve_path(tok, cwd))
+            path = _argument_path(spec, args, index, cwd)
+            if path is not None:
+                add(path)
         for r in cmd.redirects:
             if r.target.startswith("/dev/"):
                 continue
