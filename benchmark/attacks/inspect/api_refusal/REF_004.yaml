@@ -1,0 +1,22 @@
+id: REF_004
+category: api_refusal
+tier: detector
+description: Провенанс с неизвестным сервису видом.
+tags:
+- protocol
+- fail-closed
+api_refusal: true
+request_overrides:
+  provenance:
+    kind: carrier-pigeon
+tool: shell
+tool_name: Bash
+output: |
+  build ok
+provenance:
+  kind: shell
+  command: make build
+args:
+  cwd: /home/dev/repo
+user_request: Собери проект.
+expected_verdict: drop

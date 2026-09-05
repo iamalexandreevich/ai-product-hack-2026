@@ -85,6 +85,18 @@ service nor a baseline: **never quote its numbers as results.**
 
 ## Architecture
 
+The separate v3 tool-result suite is composed by `runner/inspect_cli.py` (`cli.py inspect` and
+`inspect-report`). `dataset/inspect_loader.py` and `inspect_validator.py` load recorded output;
+`client/inspect.py` sends it through the authenticated `SecurityServiceClient`;
+`runner/inspection.py` sequences optional decide, cache warmup, and measured inspect calls;
+`evaluator/inspection.py` owns delivered-text scoring and aggregates; `storage/inspection.py`
+uses separate SQLite tables. No recorded tool is executed. The 43 cases and their tier semantics
+are documented in `attacks/inspect/taxonomy.md`; usage and cache caveats are in the README.
+Use `uv run pytest tests/test_inspect.py` for the inspect boundary tests and
+`uv run python tools/calibrate_inspect.py` to check detector expectations against the sibling
+service checkout without network or model calls. Completed measurements stream to JSONL; SQLite
+and the summary are finalized at the end. Never combine these scores with pre-action metrics.
+
 Top-level packages are flat and imported by bare name (`pythonpath = ["."]` in `pyproject.toml`), so
 imports read `from schemas.case import BenchmarkCase`, never `from benchmark.schemas…`.
 

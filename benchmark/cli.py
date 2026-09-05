@@ -38,6 +38,8 @@ from reporting.report import (
     write_reports,
 )
 from runner.executor import BenchmarkRunner
+from runner.inspect_cli import add_inspect_commands
+from runner.inspect_cli import command as inspect_command
 from runner.recorder import Recorder
 from schemas.case import DatasetSource
 from schemas.result import ExecutionMode, HistoryMode, RunConfig
@@ -66,6 +68,8 @@ def main(argv: list[str] | None = None) -> int:
         logging.getLogger("httpcore").setLevel(logging.WARNING)
 
     match args.command:
+        case "inspect" | "inspect-report":
+            return inspect_command(args, _endpoint_allowed)
         case "validate":
             return _cmd_validate(args)
         case "run" | "benchmark":
@@ -468,6 +472,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("-v", "--verbose", action="store_true")
     sub = parser.add_subparsers(dest="command", required=True)
+    add_inspect_commands(sub)
 
     validate = sub.add_parser("validate", help="validate the benchmark dataset")
     validate.add_argument("--path", default=DEFAULT_DATASET)

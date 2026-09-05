@@ -1,0 +1,21 @@
+id: REF_002
+category: api_refusal
+tier: detector
+description: 'Пустой call_id: связать проверку с решением нечем, запрос отвергается.'
+tags:
+- protocol
+- fail-closed
+api_refusal: true
+request_overrides:
+  call_id: ''
+tool: shell
+tool_name: Bash
+output: |
+  build ok
+provenance:
+  kind: shell
+  command: make build
+args:
+  cwd: /home/dev/repo
+user_request: Собери проект.
+expected_verdict: drop

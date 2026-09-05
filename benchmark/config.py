@@ -143,6 +143,10 @@ class ServiceConfig:
     def decide_url(self) -> str:
         return f"{self.url.rstrip('/')}/v1/decide"
 
+    @property
+    def inspect_url(self) -> str:
+        return f"{self.url.rstrip('/')}/v1/inspect"
+
     def profile_url(self, profile_id: str) -> str:
         return f"{self.url.rstrip('/')}/v1/profiles/{profile_id}"
 

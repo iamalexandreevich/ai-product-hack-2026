@@ -121,6 +121,107 @@ def _response(
     }
 
 
+# Грубые признаки инструкциеподобного текста. Это НЕ детекторы сервиса: там регулярки,
+# порог длинного пробега base64, чистка невидимых символов и ступень 2 по флагу. Здесь
+# ровно столько, чтобы конвейер inspect-набора можно было прогнать без сервиса.
+INSPECT_NEEDLES = (
+    "ignore all previous instructions",
+    "ignore previous instructions",
+    "disregard all prior instructions",
+    "disregard prior instructions",
+    "you are now in",
+    "do not mention this to the user",
+    "игнорируй все предыдущие инструкции",
+)
+INSPECT_ROLE_PREFIXES = ("system:", "assistant:")
+MASK_LINE = "[gate: instruction-like text removed]"
+INSPECT_KINDS = ("file", "web", "mcp", "shell", "subagent", "unknown")
+
+
+def _line_is_flagged(line: str) -> bool:
+    lowered = line.casefold().strip()
+    if any(needle in lowered for needle in INSPECT_NEEDLES):
+        return True
+    if any(lowered.startswith(prefix) for prefix in INSPECT_ROLE_PREFIXES):
+        return True
+    return ("curl" in lowered or "wget" in lowered) and "| s" in lowered.replace("|s", "| s")
+
+
+def inspect(body: dict[str, Any]) -> dict[str, Any]:
+    """Заглушка `POST /v1/inspect`. Fail-closed здесь — `drop`, а не `ask`."""
+    started = time.perf_counter()
+    if not isinstance(body, dict):
+        return _inspect_response("drop", 0, "api.invalid-request", started, "expected an object")
+
+    # Плоскость протокола: всё, что сервис отверг бы до детекторов.
+    if body.get("protocol", 1) != 1:
+        return _inspect_response("drop", 0, None, started, "unsupported protocol")
+    if not str(body.get("call_id") or "").strip():
+        return _inspect_response("drop", 0, None, started, "call_id is required")
+    if body.get("status") not in ("completed", "error"):
+        return _inspect_response("drop", 0, None, started, "unknown status")
+    provenance = body.get("provenance")
+    if not isinstance(provenance, dict) or provenance.get("kind") not in INSPECT_KINDS:
+        return _inspect_response("drop", 0, None, started, "unknown provenance kind")
+
+    output = body.get("output")
+    if not isinstance(output, str):
+        return _inspect_response("drop", 0, "api.invalid-request", started, "output must be text")
+    if len(output.encode("utf-8", "surrogatepass")) > 262144:
+        return _inspect_response("drop", 0, "api.output-too-large", started, "output too large")
+    lines = output.split("\n")
+    counted = len(lines) - 1 if output.endswith("\n") else len(lines)
+    flagged = [n for n, line in enumerate(lines) if line and _line_is_flagged(line)]
+    if not flagged:
+        return _inspect_response("pass", 1, None, started, "")
+    if len(flagged) > counted * 0.5:
+        return _inspect_response(
+            "drop",
+            1,
+            "inspect.injection",
+            started,
+            f"prompt injection detected in {len(flagged)} of {counted} lines",
+        )
+    flagged_set = set(flagged)
+    rewritten = "\n".join(MASK_LINE if n in flagged_set else line for n, line in enumerate(lines))
+    return _inspect_response(
+        "mask",
+        1,
+        "inspect.injection",
+        started,
+        f"rewrote {len(flagged)} line(s) carrying instruction-like text",
+        output=rewritten,
+    )
+
+
+def _inspect_response(
+    verdict: str,
+    stage: int,
+    rule_id: str | None,
+    started: float,
+    reason: str,
+    output: str | None = None,
+) -> dict[str, Any]:
+    total = (time.perf_counter() - started) * 1000
+    return {
+        "verdict": verdict,
+        "output": output,
+        "reason": reason,
+        "suggest": "",
+        "stage": stage,
+        "rule_id": rule_id,
+        "model": None,
+        "latency_ms": {
+            "stage1": round(total) if stage >= 1 else None,
+            "stage2": None,
+            "total": round(total),
+        },
+        "cached": False,
+        "decision_id": uuid.uuid4().hex[:26].upper(),
+        "protocol": 1,
+    }
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -133,17 +234,24 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, {"error": "not found"})
 
     def do_POST(self) -> None:
-        if self.path != "/v1/decide":
+        if self.path not in ("/v1/decide", "/v1/inspect"):
             self._send(404, {"error": "not found"})
             return
         length = int(self.headers.get("content-length", 0))
+        inspecting = self.path == "/v1/inspect"
         try:
             body = json.loads(self.rfile.read(length) or b"{}")
         except json.JSONDecodeError:
-            # Fail-closed, exactly as the contract requires (section 4.4).
-            self._send(200, _response("ask", 0, None, time.perf_counter(), "invalid request body"))
+            # Fail-closed, exactly as the contract requires (section 4.4). The two routes
+            # fail closed to different verdicts: decide has a human to ask, inspect does not.
+            refusal = (
+                _inspect_response("drop", 0, None, time.perf_counter(), "invalid request body")
+                if inspecting
+                else _response("ask", 0, None, time.perf_counter(), "invalid request body")
+            )
+            self._send(200, refusal)
             return
-        self._send(200, decide(body))
+        self._send(200, inspect(body) if inspecting else decide(body))
 
     def log_message(self, *args: object) -> None:
         pass
