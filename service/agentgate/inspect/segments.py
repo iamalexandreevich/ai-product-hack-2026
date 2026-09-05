@@ -10,7 +10,7 @@ so the prompt and the validator can depend on the shape without it.
 """
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from agentgate.inspect.detectors import Finding
 from agentgate.profiles.schema import ModelBudget
@@ -43,20 +43,27 @@ def build(lines: Sequence[str], findings: Sequence[Finding], budget: ModelBudget
     they touch, cut to `segment_max_lines`, then taken in line order until
     `max_segments` or `max_chars` runs out. With no findings the head of
     the output is the one window: an instruction is most often at the
-    start of a file or a page, so the head outranks the tail.
+    start of a file or a page, so the head outranks the tail. Everything
+    the prompt does not show is counted in `omitted_lines`, whether it was
+    cut for the budget or never windowed at all.
     """
     if not lines:
         return Segments()
-    windows = _merge(_windows(lines, findings, budget.window_lines))
+    windows = _merge(_windows(lines, findings, budget))
     chunks = [chunk for window in windows for chunk in _cut(window, budget.segment_max_lines)]
-    return _fit(lines, chunks, budget)
+    fitted = _fit(lines, chunks, budget)
+    beyond_the_head = 0 if findings else len(lines) - 1 - windows[-1][1]
+    return replace(fitted, omitted_lines=fitted.omitted_lines + beyond_the_head)
 
 
-def _windows(lines: Sequence[str], findings: Sequence[Finding], radius: int) -> list[tuple[int, int]]:
+def _windows(lines: Sequence[str], findings: Sequence[Finding], budget: ModelBudget) -> list[tuple[int, int]]:
     last = len(lines) - 1
     if not findings:
-        return [(0, last)]
-    return sorted((max(0, f.line - radius), min(last, f.last + radius)) for f in findings)
+        # Only as much head as `_fit` could possibly keep: cutting the whole
+        # output would report thousands of omitted segments where the truth
+        # is one window that ran out of room.
+        return [(0, min(last, budget.max_segments * budget.segment_max_lines - 1))]
+    return sorted((max(0, f.line - budget.window_lines), min(last, f.last + budget.window_lines)) for f in findings)
 
 
 def _merge(windows: list[tuple[int, int]]) -> list[tuple[int, int]]:

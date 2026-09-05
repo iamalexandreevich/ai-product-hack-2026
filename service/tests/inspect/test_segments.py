@@ -84,3 +84,13 @@ def test_segment_coordinates_are_those_of_output_split():
     s = build(lines, [_finding(1)], ModelBudget(window_lines=0))
     assert s.items[0].lines == (lines[1],)
     assert s.covers(1, 1)
+
+
+def test_the_head_window_is_capped_at_what_could_be_kept():
+    # Without the cap the head is cut into one chunk per `segment_max_lines`
+    # of the whole output, and every chunk past `max_segments` is reported
+    # as an omitted segment.
+    s = build(_lines(1000), [], ModelBudget(segment_max_lines=10, max_segments=2, max_chars=100_000))
+    assert [(seg.start, seg.end) for seg in s.items] == [(0, 9), (10, 19)]
+    assert s.omitted_segments == 0
+    assert s.omitted_lines == 980

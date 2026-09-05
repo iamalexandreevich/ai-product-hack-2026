@@ -67,7 +67,7 @@ def apply(output: str, findings: list[Finding]) -> Stage1Outcome:
         verdict=InspectVerdict.mask,
         replacement=_rewrite(output.split("\n"), by_line),
         rule_id=lead,
-        reason=_reason(kept, redacted),
+        reason=_reason(by_line, redacted),
         spans=tuple(_span(f) for f in kept),
         redacted=redacted,
     )
@@ -79,6 +79,10 @@ def resolve(findings: list[Finding]) -> list[Finding]:
     A finding that loses every one of its lines is dropped; one that keeps
     at least one line is kept whole -- its span still reports the range it
     was asked for, and `_by_line` decides what each line actually gets.
+
+    Winners are identified by `id()`, not by value: a detector and the
+    model can report the same range with the same kind, and two equal
+    findings must stay two findings rather than collapse into one.
     """
     by_line = _by_line(findings)
     winners = {id(f) for f in by_line.values()}
@@ -148,8 +152,8 @@ def _rewrite(lines: list[str], by_line: dict[int, Finding]) -> str:
     return "\n".join(rewritten)
 
 
-def _reason(kept: list[Finding], redacted: int) -> str:
-    rewritten = len(kept) - redacted
+def _reason(by_line: dict[int, Finding], redacted: int) -> str:
+    rewritten = sum(1 for f in by_line.values() if f.action is not Action.redact)
     parts = []
     if rewritten:
         parts.append(f"rewrote {rewritten} line(s) carrying instruction-like or invisible text")

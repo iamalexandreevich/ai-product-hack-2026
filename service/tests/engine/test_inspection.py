@@ -1,4 +1,5 @@
 from agentgate.api.schemas import Cost, InspectVerdict, Span
+from agentgate.engine.timings import Latency
 from tests.factories import inspect_request, inspection
 
 
@@ -38,9 +39,6 @@ def test_record_and_response_carry_the_cost_when_stage2_ran():
 
 
 def test_a_cache_hit_carries_no_cost():
-    from tests.factories import inspect_request
-    from agentgate.engine.timings import Latency
-
     original = inspection(stage=2, model="m", cost=Cost(input_tokens=100, output_tokens=20))
     hit = original.as_cached("01J1", inspect_request(), Latency(total_ms=0), "/w")
     assert hit.cost is None
@@ -71,8 +69,6 @@ def test_raw_is_the_original_when_nothing_was_redacted():
 
 
 def test_a_cache_hit_keeps_spans_redaction_and_redacted_text_but_not_rejections():
-    from agentgate.engine.timings import Latency
-
     spans = (Span(line_start=0, line_end=0, kind="secret", source="detector"),)
     original = inspection(verdict=InspectVerdict.mask, replacement="r", spans=spans, redacted=1, spans_rejected=3, redacted_output="r")
     hit = original.as_cached("01J1", inspect_request(), Latency(total_ms=0), "/w")

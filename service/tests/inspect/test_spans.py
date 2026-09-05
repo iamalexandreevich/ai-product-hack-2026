@@ -1,8 +1,9 @@
-from agentgate.inspect.classify import ModelSpan
+from agentgate.api.schemas import SpanKind
 from agentgate.inspect.detectors import Action
 from agentgate.inspect.segments import Segment, Segments
-from agentgate.inspect.spans import validate
+from agentgate.inspect.spans import MODEL_SPAN_KINDS, ModelSpan, validate
 from agentgate.profiles.schema import ModelBudget
+from typing import get_args
 from tests.factories import model_span
 
 ALL = Segments(items=(Segment(start=0, end=99, lines=tuple("x" for _ in range(100))),))
@@ -59,3 +60,8 @@ def test_confidence_outside_the_unit_interval_is_rejected():
 def test_findings_come_back_in_line_order():
     v = validate([model_span(50, 50), model_span(3, 3)], 100, ALL, BUDGET)
     assert [f.line for f in v.findings] == [3, 50]
+
+
+def test_the_model_may_ask_for_every_span_kind_but_secret():
+    assert "secret" not in MODEL_SPAN_KINDS
+    assert set(MODEL_SPAN_KINDS) | {"secret"} == set(get_args(SpanKind))

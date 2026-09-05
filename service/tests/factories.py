@@ -19,7 +19,8 @@ from agentgate.engine.inspection import Inspection
 from agentgate.engine.inspector import Inspector
 from agentgate.engine.timings import Latency
 from agentgate.inspect.chain import INSPECT_STAGE1
-from agentgate.inspect.classify import InspectCase, InspectClassifier, InspectOutcome, ModelSpan
+from agentgate.inspect.classify import InspectCase, InspectClassifier, InspectOutcome
+from agentgate.inspect.spans import ModelSpan
 from agentgate.inspect.detectors import Detector
 from agentgate.normalize import normalize
 from agentgate.normalize.model import NormalizedAction
