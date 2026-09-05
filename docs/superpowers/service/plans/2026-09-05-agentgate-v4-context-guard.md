@@ -40,11 +40,19 @@
 - TDD: сначала падающий тест. Код и комментарии — английский; документация — русский.
 - Все команды — из `service/`, `uv run …`. Полный прогон перед коммитом:
   ```bash
-  cd service && AGENTGATE_TEST_DB_URL=postgresql+asyncpg://agentgate:agentgate@localhost:5433/agentgate_test uv run pytest -q
+  cd service && AGENTGATE_TEST_DB_URL=postgresql+asyncpg://agentgate:agentgate@localhost:5433/agentgate_test_v4 uv run pytest -q
   ```
 - Коммит только явных путей через `git commit --only <пути>`. Никогда `git add -A`, `git add .`, `git commit -a`, `git stash`, `git checkout .`. Сообщение заканчивается строкой `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`.
 - Зона записи: `service/`, `contracts/`, `docs/reports/`, корневой `CLAUDE.md` (задача 12). `service/.env` не читать и не коммитить.
 - Общие фабрики и фейки — только в `tests/factories.py`; импорт одного тестового модуля из другого запрещён (исключение, уже существующее: `tests/api/test_inspect_route.py` берёт `build`/`call`/`inspect_body` из `tests/api/test_app.py`).
+
+**Изоляция от параллельной работы над v3.1**
+
+- v4 живёт в worktree `…/ai-product-hack-2026-wt/v4` на ветке `feat/v4-context-guard` (от `main`, `8ab67c5`). Основной checkout `…/ai-product-hack-2026` принадлежит другой сессии (ветка `feat/v3.1-strictness-mcp-domains`, её worktree `-wt/a` и `-wt/b`): туда не заходить, её ветки не трогать.
+- Исполнитель каждой задачи работает в своём worktree `…/ai-product-hack-2026-wt/v4-<task>`, созданном от `feat/v4-context-guard`; базовый коммит назван при постановке и проверяется первым делом.
+- Тестовая база только `agentgate_test_v4` (та же `service-db-1`, порт 5433). Базы `agentgate_test`, `_a`, `_b` заняты сессией v3.1; сквозной тест сбрасывает все таблицы, общая база сломала бы обе стороны.
+- Журнал SDD и брифы — в `docs/superpowers/service/sdd/v4/`, не в общем `sdd/ledger.md`.
+- Порядок слияния: v3.1 уходит в `main` первой; перед волной 2 `main` вливается в `feat/v4-context-guard`. Ожидаемые конфликты: `profiles/schema.py` (разные участки), `tests/factories.py` и `tests/profiles/test_schema.py` (оба дописывают в конец), `contracts/openapi.yaml` (не править руками — перегенерировать), документация. Отчёт v3.1 — `task-23`, поэтому отчёт v4 — `task-24`.
 
 ## Отступления от спеки, принятые планом
 
@@ -84,7 +92,7 @@
 | `agentgate/session/cache_key.py` | изменить | `inspect_cache_key` с `task_digest`, `history_digest` | 9 |
 | `agentgate/engine/inspection.py` | изменить | `spans`, `redacted`, `spans_rejected`, `redacted_output` → запись | 10 |
 | `agentgate/inspect/reconcile.py` | создать | капы §4.7, `unredact`, слияние находок, `inspect.semantic` | 8 |
-| `service/README.md`, `service/CLAUDE.md`, `contracts/README.md`, `CLAUDE.md`, `docs/reports/task-23-v4-context-guard.md` | изменить / создать | документация и отчёт | 12 |
+| `service/README.md`, `service/CLAUDE.md`, `contracts/README.md`, `CLAUDE.md`, `docs/reports/task-24-v4-context-guard.md` | изменить / создать | документация и отчёт | 12 |
 
 ## Волны
 
@@ -605,7 +613,7 @@ Expected: PASS; `git diff --stat ../contracts` показывает `inspect_res
 - [ ] **Step 14: Полный прогон и коммит**
 
 ```bash
-cd service && AGENTGATE_TEST_DB_URL=postgresql+asyncpg://agentgate:agentgate@localhost:5433/agentgate_test uv run pytest -q
+cd service && AGENTGATE_TEST_DB_URL=postgresql+asyncpg://agentgate:agentgate@localhost:5433/agentgate_test_v4 uv run pytest -q
 ```
 
 Expected: всё зелёное (e2e накатывает `0006` через `alembic upgrade head`).
@@ -2264,7 +2272,7 @@ async def test_inspect_spans_and_redaction_roundtrip_through_postgres(session_fa
 
 - [ ] **Step 2: Запустить, убедиться, что падают**
 
-Run: `cd service && AGENTGATE_TEST_DB_URL=postgresql+asyncpg://agentgate:agentgate@localhost:5433/agentgate_test uv run pytest tests/engine/test_inspection.py tests/store/test_repo.py -q -k "spans or redact"`
+Run: `cd service && AGENTGATE_TEST_DB_URL=postgresql+asyncpg://agentgate:agentgate@localhost:5433/agentgate_test_v4 uv run pytest tests/engine/test_inspection.py tests/store/test_repo.py -q -k "spans or redact"`
 Expected: FAIL — `TypeError: unexpected keyword 'spans'`.
 
 - [ ] **Step 3: Реализация**
@@ -2288,7 +2296,7 @@ Expected: FAIL — `TypeError: unexpected keyword 'spans'`.
 
 - [ ] **Step 4: Прогнать**
 
-Run: `cd service && AGENTGATE_TEST_DB_URL=postgresql+asyncpg://agentgate:agentgate@localhost:5433/agentgate_test uv run pytest tests/engine tests/store tests/api -q`
+Run: `cd service && AGENTGATE_TEST_DB_URL=postgresql+asyncpg://agentgate:agentgate@localhost:5433/agentgate_test_v4 uv run pytest tests/engine tests/store tests/api -q`
 Expected: PASS.
 
 - [ ] **Step 5: Коммит**
@@ -2920,7 +2928,7 @@ Expected: PASS.
 
 ```bash
 cd service && uv run python scripts/export_contracts.py && uv run python scripts/export_openapi.py && git diff --exit-code ../contracts
-cd service && AGENTGATE_TEST_DB_URL=postgresql+asyncpg://agentgate:agentgate@localhost:5433/agentgate_test uv run pytest -q
+cd service && AGENTGATE_TEST_DB_URL=postgresql+asyncpg://agentgate:agentgate@localhost:5433/agentgate_test_v4 uv run pytest -q
 ```
 
 Expected: контракты без diff (схемы не менялись с задачи 0), всё зелёное.
@@ -2940,7 +2948,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - Modify: `service/CLAUDE.md` (карта модулей: `inspect/` — `secrets.py`, `segments.py`, `spans.py`, `reconcile.py`; закрытый список слотов промпта inspect: `[SEGMENTS]`, `[CANDIDATES]` вместо `[OUTPUT]`; «Реализован v4»)
 - Modify: `contracts/README.md` (раздел «v4: Context Guard»: `spans`, `redacted`, `rule_id` `inspect.secret` и `inspect.semantic`, что `output` при `mask` по-прежнему авторитетен, что `raw` в ленте — после редакции)
 - Modify: `CLAUDE.md` (корневой: абзац «Что построено» — v4; известные ограничения: убрать четыре закрытых пункта — «пороги детекторов не зависят от провенанса», «mask — построчная замена», «вердикт ступени 2 кэшируется по содержимому», «маскирование секретов … v4»; добавить новые — см. ниже)
-- Create: `docs/reports/task-23-v4-context-guard.md`
+- Create: `docs/reports/task-24-v4-context-guard.md`
 
 - [ ] **Step 1: `service/README.md`**
 
@@ -2973,7 +2981,7 @@ inspect:
 
 - [ ] **Step 2: `service/CLAUDE.md`**
 
-В строке про inspect карты модулей заменить описание на: `detectors.py` — `Detector`, `Action` (`mask`/`clean`/`redact`), `Finding` (диапазон строк с `rewritten`, `candidate_key`, `kind`, `confidence`); `secrets.py` — формы секретов, энтропийные кандидаты, провенанс-политика (`scan_secrets`, `entropy_candidates_allowed`); `mask.py` — `apply` с приоритетом `redact > clean > mask`, `redacted_lines`, спаны; `segments.py` — окна вокруг находок по бюджету профиля; `spans.py` — валидация спанов модели; `reconcile.py` — капы ступени 2 и слияние; `classify.py` — `InspectCase` с сегментами, `ModelSpan`, `InspectOutput` (`verdict`, `spans`, `unredact`, `reason`). Закрытый список слотов промпта inspect: `[TASK]`, `[HISTORY]`, `[PROVENANCE]`, `[FLAGS]`, `[SEGMENTS]`, `[CANDIDATES]` — сегменты из текста после редакции. Добавить строку «**Реализован v4**: спека `2026-09-05-agentgate-v4-context-guard-design.md`, план `2026-09-05-agentgate-v4-context-guard.md`, отчёт `docs/reports/task-23-v4-context-guard.md`».
+В строке про inspect карты модулей заменить описание на: `detectors.py` — `Detector`, `Action` (`mask`/`clean`/`redact`), `Finding` (диапазон строк с `rewritten`, `candidate_key`, `kind`, `confidence`); `secrets.py` — формы секретов, энтропийные кандидаты, провенанс-политика (`scan_secrets`, `entropy_candidates_allowed`); `mask.py` — `apply` с приоритетом `redact > clean > mask`, `redacted_lines`, спаны; `segments.py` — окна вокруг находок по бюджету профиля; `spans.py` — валидация спанов модели; `reconcile.py` — капы ступени 2 и слияние; `classify.py` — `InspectCase` с сегментами, `ModelSpan`, `InspectOutput` (`verdict`, `spans`, `unredact`, `reason`). Закрытый список слотов промпта inspect: `[TASK]`, `[HISTORY]`, `[PROVENANCE]`, `[FLAGS]`, `[SEGMENTS]`, `[CANDIDATES]` — сегменты из текста после редакции. Добавить строку «**Реализован v4**: спека `2026-09-05-agentgate-v4-context-guard-design.md`, план `2026-09-05-agentgate-v4-context-guard.md`, отчёт `docs/reports/task-24-v4-context-guard.md`».
 
 - [ ] **Step 3: `contracts/README.md`**
 
@@ -3004,13 +3012,13 @@ inspect:
 
 - [ ] **Step 5: Отчёт**
 
-Создать `docs/reports/task-23-v4-context-guard.md` по структуре `task-22-v3-rules-and-inspect.md`: 1. Как выполнялось (волны, кто в каком worktree, базовые коммиты); 2. Что построено по задачам; 3. Доказательства TDD (для каждой задачи — имя падавшего теста и коммит); 4. Находки ревью и как закрыты; 5. Принятые решения (десять отступлений из раздела плана «Отступления от спеки» с итогом); 6. Открытые вопросы владельцу (четыре из §8 спеки плюс всё, что всплыло).
+Создать `docs/reports/task-24-v4-context-guard.md` по структуре `task-22-v3-rules-and-inspect.md`: 1. Как выполнялось (волны, кто в каком worktree, базовые коммиты); 2. Что построено по задачам; 3. Доказательства TDD (для каждой задачи — имя падавшего теста и коммит); 4. Находки ревью и как закрыты; 5. Принятые решения (десять отступлений из раздела плана «Отступления от спеки» с итогом); 6. Открытые вопросы владельцу (четыре из §8 спеки плюс всё, что всплыло).
 
 - [ ] **Step 6: Полный прогон и коммит**
 
 ```bash
-cd service && AGENTGATE_TEST_DB_URL=postgresql+asyncpg://agentgate:agentgate@localhost:5433/agentgate_test uv run pytest -q
-git commit --only service/README.md service/CLAUDE.md contracts/README.md CLAUDE.md docs/reports/task-23-v4-context-guard.md -m "docs: AgentGate v4 Context Guard — README, module map, contract notes, report
+cd service && AGENTGATE_TEST_DB_URL=postgresql+asyncpg://agentgate:agentgate@localhost:5433/agentgate_test_v4 uv run pytest -q
+git commit --only service/README.md service/CLAUDE.md contracts/README.md CLAUDE.md docs/reports/task-24-v4-context-guard.md -m "docs: AgentGate v4 Context Guard — README, module map, contract notes, report
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
