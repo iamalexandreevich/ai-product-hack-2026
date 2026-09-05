@@ -68,7 +68,7 @@
 | `agentgate/domain/replay.py` | изменить | `Replay.response` — ответ любого вида |
 | `agentgate/bootstrap.py` | изменить | `Inspector`, `InspectCache`, `Service.inspector` |
 | `scripts/export_contracts.py`, `tests/test_contracts.py` | изменить | схемы inspect |
-| `contracts/*`, `contracts/README.md`, `service/CLAUDE.md`, `CLAUDE.md`, роадмап, `docs/reports/task-20-v3-rules-and-inspect.md` | изменить / создать | контракты, документация, отчёт |
+| `contracts/*`, `contracts/README.md`, `service/CLAUDE.md`, `CLAUDE.md`, роадмап, `docs/reports/task-22-v3-rules-and-inspect.md` | изменить / создать | контракты, документация, отчёт |
 | `tests/factories.py` | изменить | `rule_set`, `inspect_request`, `FakeInspectClassifier`, `FakeInspectCache` |
 
 ---
@@ -1806,18 +1806,18 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 **Files:**
 - Modify: `contracts/README.md`, `service/README.md`, `service/CLAUDE.md`, `CLAUDE.md`, `docs/superpowers/service/specs/context-versions-roadmap.md`, `docs/superpowers/service/specs/v3-tool-result-evaluation.md` (ссылка на действующую спеку)
-- Create: `docs/reports/task-20-v3-rules-and-inspect.md`
+- Create: `docs/reports/task-22-v3-rules-and-inspect.md`
 
 - [ ] **Step 1: `contracts/README.md`** — раздел «v3: правила пользователя и `/v1/inspect`»: форма `rules`, приоритет, виды шаблонов и `fnmatch`-семантика (`*` пересекает `/`), лимиты и `rule_id` отказов; `/v1/inspect` — три вердикта, `mask` с авторитетным `output`, `drop` при ошибке, лимит 256 КБ, кэш, `Idempotency-Key`, `call_id` в `decide`; примечание про опечатку `origin/source` в примере адаптеров.
 - [ ] **Step 2: `service/CLAUDE.md`** — «Реализован v3» с закрытым списком промпта inspect; карта модулей: `domain/client_rules.py`, `domain/inspect_cache.py`, `rules/client_rules.py`, пакет `inspect/`, `engine/inspection.py`, `engine/inspector.py`, `session/inspect_cache.py`; «Куда добавлять»: детектор — строка в `INSPECT_STAGE1`; правила: `pass` по ошибке недостижим, детекторы — единственное место чтения текста как есть.
 - [ ] **Step 3: корневой `CLAUDE.md`** — «Что построено (v3…)», эндпоинты: `POST /v1/inspect`, `?kind=`; протоколы-швы: `InspectClassifier`, `InspectCache`; известные ограничения: пороги детекторов не зависят от провенанса; `rules.allow` не проходит для команд с редиректом в файл; `mask` — построчная замена, перефразированные инъекции — v4.
 - [ ] **Step 4: роадмап** — v3 «реализовано», v4 — только семантическая защита.
-- [ ] **Step 5: отчёт** `docs/reports/task-20-v3-rules-and-inspect.md` по образцу `task-18-v2-dialogue-context.md`: что построено по задачам, доказательства TDD, находки ревью, решения, отложенное. Заполнять по факту.
+- [ ] **Step 5: отчёт** `docs/reports/task-22-v3-rules-and-inspect.md` по образцу `task-18-v2-dialogue-context.md`: что построено по задачам, доказательства TDD, находки ревью, решения, отложенное. Заполнять по факту.
 - [ ] **Step 6: финальная проверка и коммит**
 
 ```bash
 cd service && uv run python scripts/export_contracts.py && uv run python scripts/export_openapi.py && git diff --exit-code ../contracts && AGENTGATE_TEST_DB_URL=… uv run pytest -q
-git commit --only contracts/README.md service/README.md service/CLAUDE.md CLAUDE.md docs/superpowers/service/specs/context-versions-roadmap.md docs/superpowers/service/specs/v3-tool-result-evaluation.md docs/reports/task-20-v3-rules-and-inspect.md -m "docs: v3 in the contract README, the module maps, the roadmap and the task report
+git commit --only contracts/README.md service/README.md service/CLAUDE.md CLAUDE.md docs/superpowers/service/specs/context-versions-roadmap.md docs/superpowers/service/specs/v3-tool-result-evaluation.md docs/reports/task-22-v3-rules-and-inspect.md -m "docs: v3 in the contract README, the module maps, the roadmap and the task report
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```

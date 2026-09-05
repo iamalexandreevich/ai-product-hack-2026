@@ -1,4 +1,4 @@
-# Задача 20: AgentGate v3 — правила пользователя и `/v1/inspect`
+# Задача 22: AgentGate v3 — правила пользователя и `/v1/inspect`
 
 Ветка `feat/v3-rules-and-inspect` (собрана из worktree-веток `wt/v3-a` и `wt/v3-b` по волнам). Спека `docs/superpowers/service/specs/2026-09-04-agentgate-v3-rules-and-inspect-design.md`, план `docs/superpowers/service/plans/2026-09-04-agentgate-v3-rules-and-inspect.md` (12 задач). Отчёт написан 5 сентября 2026 по факту выполнения, диапазон коммитов `dbac0a3..HEAD` ветки; после `0ccd034` добавились правки финального ревью и стоимость решения в ответе, см. разделы 4а и 4б.
 
