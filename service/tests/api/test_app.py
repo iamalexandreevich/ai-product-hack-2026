@@ -35,12 +35,13 @@ class FakeDecisionRepo:
     async def insert(self, decision):
         self.rows.append(decision)
 
-    async def list(self, session_id, model, limit, before, kind=None):
+    async def list(self, session_id, model, limit, before, kind=None, key_id=None):
         rows = [
             r for r in self.rows
             if (session_id is None or r.request.session_id == session_id)
             and (model is None or r.verdict.model == model)
             and (kind is None or r.to_record().kind == kind)
+            and (key_id is None or r.to_record().key_id == key_id)
         ]
         rows = sorted(rows, key=lambda r: r.id, reverse=True)
         if before:
@@ -685,6 +686,19 @@ async def test_feed_filters_by_kind(tmp_path):
     await call(app, "POST", "/v1/inspect", json=inspect_body())
     items = (await call(app, "GET", "/v1/decisions?kind=inspect")).json()["items"]
     assert [i["kind"] for i in items] == ["inspect"]
+
+
+async def test_the_feed_filters_by_key_id(tmp_path):
+    from agentgate.store.keys import hash_key
+
+    plaintext = "agk_" + "d" * 43
+    app, _, _, _ = build(tmp_path, token="secret", key_repo=FakeKeyRepo({hash_key(plaintext): "key-9"}))
+    await call(app, "POST", "/v1/decide", json=body(), headers={"authorization": f"Bearer {plaintext}"})
+    await call(app, "POST", "/v1/decide", json=body(), headers={"authorization": "Bearer secret"})
+
+    page = await call(app, "GET", "/v1/decisions?key_id=key-9", headers={"authorization": "Bearer secret"})
+
+    assert [i["key_id"] for i in page.json()["items"]] == ["key-9"]
 
 
 # --- key_id attribution -----------------------------------------------------

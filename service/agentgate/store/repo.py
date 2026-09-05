@@ -52,12 +52,9 @@ class DecisionRepo:
         # Core insert against the Table, keyed by column *names* (so `metadata`
         # is just `metadata`), not the ORM entity with its `metadata_` attribute.
         table = DecisionRow.__table__
-        # `key_id` has no column yet (attribution lands in a later task); it
-        # is excluded here rather than in DecisionRecord so the JSONL log,
-        # which writes the full record, keeps carrying it.
-        values = stored.to_record().model_dump(exclude={"decision_id", "key_id"})
+        values = stored.to_record().model_dump(exclude={"decision_id"})
         stmt = pg_insert(table).values(**values).on_conflict_do_nothing(
-            index_elements=[table.c.idempotency_key],
+            index_elements=[table.c.principal, table.c.idempotency_key],
             index_where=table.c.idempotency_key.isnot(None),
         )
         async with self._sf() as s:
@@ -86,7 +83,8 @@ class DecisionRepo:
         return [record_from_row(r) for r in rows]
 
     async def list(
-        self, session_id: str | None, model: str | None, limit: int, before: str | None, kind: str | None = None
+        self, session_id: str | None, model: str | None, limit: int, before: str | None,
+        kind: str | None = None, key_id: str | None = None,
     ) -> list[DecisionRecord]:
         """List decisions ordered by ``id`` descending (newest first).
 
@@ -96,6 +94,9 @@ class DecisionRepo:
         pathological value (zero, negative, or unbounded) cannot turn this
         into a database error or an unbounded read. ``kind`` filters to
         ``"decide"`` or ``"inspect"`` rows; omitted, both kinds are returned.
+        ``key_id`` filters to the decisions one issued API key was charged
+        with; rows taken under the static token carry no key and cannot be
+        selected.
         """
         limit = max(1, min(limit, 1000))
         stmt = select(DecisionRow).order_by(DecisionRow.id.desc()).limit(limit)
@@ -107,6 +108,8 @@ class DecisionRepo:
             stmt = stmt.where(DecisionRow.id < before)
         if kind is not None:
             stmt = stmt.where(DecisionRow.kind == kind)
+        if key_id is not None:
+            stmt = stmt.where(DecisionRow.key_id == key_id)
         async with self._sf() as s:
             rows = (await s.execute(stmt)).scalars().all()
         return [record_from_row(r) for r in rows]

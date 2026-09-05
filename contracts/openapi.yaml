@@ -640,6 +640,18 @@ paths:
           description: Return only rows of this kind. Omitted, both kinds are returned.
           title: Kind
         description: Return only rows of this kind. Omitted, both kinds are returned.
+      - name: key_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Return only decisions authenticated with this issued API key. Decisions
+            taken under the static token carry no key and are never returned.
+          title: Key Id
+        description: Return only decisions authenticated with this issued API key. Decisions
+          taken under the static token carry no key and are never returned.
       responses:
         '200':
           description: A page of decisions, newest first.

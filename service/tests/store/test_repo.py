@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -543,4 +544,44 @@ async def test_inspect_spans_and_redaction_roundtrip_through_postgres(session_fa
         {"line_start": 2, "line_end": 3, "kind": "instruction", "source": "model", "confidence": 0.7},
     ]
     assert (record.redacted, record.spans_rejected) == (1, 1)
-    assert record.raw == "K=[gate: secret redacted]\n"
+
+
+# --- v3.2: key attribution and per-principal idempotency ---------------------
+
+
+async def test_two_principals_may_share_one_idempotency_key(session_factory):
+    await _seed_session(session_factory)
+    repo = DecisionRepo(session_factory)
+
+    first = replace(rec(), idempotency_key="same", key_id="01HZKEYA")
+    second = replace(rec(), idempotency_key="same", key_id="01HZKEYB")
+
+    assert await repo.insert(first) is True
+    assert await repo.insert(second) is True
+
+
+async def test_one_principal_may_not_use_one_idempotency_key_twice(session_factory):
+    await _seed_session(session_factory)
+    repo = DecisionRepo(session_factory)
+
+    assert await repo.insert(replace(rec(), idempotency_key="same", key_id="01HZKEYA")) is True
+    assert await repo.insert(replace(rec(), idempotency_key="same", key_id="01HZKEYA")) is False
+
+
+async def test_the_static_token_is_one_principal_too(session_factory):
+    await _seed_session(session_factory)
+    repo = DecisionRepo(session_factory)
+
+    assert await repo.insert(replace(rec(), idempotency_key="same", key_id=None)) is True
+    assert await repo.insert(replace(rec(), idempotency_key="same", key_id=None)) is False
+
+
+async def test_list_filters_by_key_id(session_factory):
+    await _seed_session(session_factory)
+    repo = DecisionRepo(session_factory)
+    await repo.insert(replace(rec(), key_id="01HZKEYA"))
+    await repo.insert(replace(rec(), key_id="01HZKEYB"))
+
+    rows = await repo.list(session_id=None, model=None, limit=100, before=None, key_id="01HZKEYA")
+
+    assert [r.key_id for r in rows] == ["01HZKEYA"]

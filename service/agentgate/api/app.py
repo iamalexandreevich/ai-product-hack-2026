@@ -591,6 +591,15 @@ def create_app(
             Literal["decide", "inspect"] | None,
             Query(description="Return only rows of this kind. Omitted, both kinds are returned."),
         ] = None,
+        key_id: Annotated[
+            str | None,
+            Query(
+                description=(
+                    "Return only decisions authenticated with this issued API key. "
+                    "Decisions taken under the static token carry no key and are never returned."
+                ),
+            ),
+        ] = None,
     ) -> DecisionListResponse:
         """Decision feed for the dashboard and the benchmark. Returns stored decisions
         newest first as `{items, next_before}`, with cursor pagination by `decision_id`:
@@ -602,7 +611,9 @@ def create_app(
         (this is a read endpoint, not the always-200 decide path). Requires the bearer
         credential when the service is configured with one.
         """
-        rows = await decision_repo.list(session_id=session_id, model=model, limit=limit, before=before, kind=kind)
+        rows = await decision_repo.list(
+            session_id=session_id, model=model, limit=limit, before=before, kind=kind, key_id=key_id
+        )
         next_before = rows[-1].id if len(rows) == limit else None
         return DecisionListResponse(items=rows, next_before=next_before)
 
