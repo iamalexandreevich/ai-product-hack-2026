@@ -150,3 +150,23 @@ async def test_redirect_status_is_http_not_invalid_json():
     with pytest.raises(Stage2Error) as e:
         await make_client(handler).classify("s", "u")
     assert e.value.kind == "http"
+
+
+async def test_structured_output_max_tokens_reaches_the_request_body():
+    from agentgate.classify.client import StructuredOutput
+
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json=ok_body(json.dumps({"decision": "A", "risk": "none", "reason": "", "suggest": ""})))
+
+    cfg = ModelConfig(base_url="http://llm/v1", model="q")
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    so = StructuredOutput(name="t", schema=DECIDE_STRUCTURED_OUTPUT.schema, model=DECIDE_STRUCTURED_OUTPUT.model, max_tokens=777)
+    await LLMClient("m", cfg, http, so).classify("s", "u")
+    assert seen["body"]["max_tokens"] == 777
+
+
+def test_structured_output_max_tokens_defaults_to_300():
+    assert DECIDE_STRUCTURED_OUTPUT.max_tokens == 300

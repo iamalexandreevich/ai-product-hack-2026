@@ -103,6 +103,63 @@
       ],
       "title": "LatencyMs",
       "type": "object"
+    },
+    "Span": {
+      "description": "One range of lines the verdict rewrote, by coordinates only -- never\nthe text. Lines are 0-based indexes into `output.split(\"\\n\")`,\n`line_end` inclusive.",
+      "properties": {
+        "line_start": {
+          "minimum": 0,
+          "title": "Line Start",
+          "type": "integer"
+        },
+        "line_end": {
+          "minimum": 0,
+          "title": "Line End",
+          "type": "integer"
+        },
+        "kind": {
+          "enum": [
+            "instruction",
+            "pipe-exec",
+            "encoded",
+            "invisible",
+            "secret"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "source": {
+          "enum": [
+            "detector",
+            "model"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "confidence": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Present only for `source: model`.",
+          "title": "Confidence"
+        }
+      },
+      "required": [
+        "line_start",
+        "line_end",
+        "kind",
+        "source"
+      ],
+      "title": "Span",
+      "type": "object"
     }
   },
   "description": "The verdict on one tool result. Always HTTP 200.",
@@ -191,6 +248,21 @@
       ],
       "default": null,
       "description": "Token usage and money cost of the stage-2 call. Absent when stage 2 did not run."
+    },
+    "spans": {
+      "description": "Ranges the verdict masked or redacted, by line coordinates; never the text itself.",
+      "items": {
+        "$ref": "#/$defs/Span"
+      },
+      "title": "Spans",
+      "type": "array"
+    },
+    "redacted": {
+      "default": 0,
+      "description": "How many secret values were redacted.",
+      "minimum": 0,
+      "title": "Redacted",
+      "type": "integer"
     }
   },
   "required": [

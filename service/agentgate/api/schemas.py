@@ -646,6 +646,30 @@ class InspectRequest(BaseModel):
         return hashlib.sha256(payload.encode("utf-8", "surrogatepass")).hexdigest()
 
 
+SPAN_KINDS = ("instruction", "pipe-exec", "encoded", "invisible", "secret")
+SpanKind = Literal["instruction", "pipe-exec", "encoded", "invisible", "secret"]
+SpanSource = Literal["detector", "model"]
+
+
+class Span(BaseModel):
+    """One range of lines the verdict rewrote, by coordinates only -- never
+    the text. Lines are 0-based indexes into `output.split("\\n")`,
+    `line_end` inclusive."""
+
+    line_start: int = Field(ge=0)
+    line_end: int = Field(ge=0)
+    kind: SpanKind
+    source: SpanSource
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0, description="Present only for `source: model`.")
+
+    @model_serializer(mode="wrap")
+    def _drop_absent_confidence(self, handler: SerializerFunctionWrapHandler):
+        data = handler(self)
+        if self.confidence is None:
+            data.pop("confidence", None)
+        return data
+
+
 class InspectResponse(BaseModel):
     """The verdict on one tool result. Always HTTP 200."""
 
@@ -671,6 +695,11 @@ class InspectResponse(BaseModel):
         default=None,
         description="Token usage and money cost of the stage-2 call. Absent when stage 2 did not run.",
     )
+    spans: list[Span] = Field(
+        default_factory=list,
+        description="Ranges the verdict masked or redacted, by line coordinates; never the text itself.",
+    )
+    redacted: int = Field(default=0, ge=0, description="How many secret values were redacted.")
 
     @model_validator(mode="after")
     def _mask_has_output(self) -> "InspectResponse":

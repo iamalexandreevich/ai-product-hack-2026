@@ -46,6 +46,9 @@ class StructuredOutput:
     name: str
     schema: dict
     model: type[BaseModel]
+    # Enough for one decide answer; a caller whose answer is a list (the
+    # inspect spans) raises it explicitly.
+    max_tokens: int = 300
 
 
 class LLMClient:
@@ -72,7 +75,7 @@ class LLMClient:
             "model": self.config.model,
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
             "temperature": 0,
-            "max_tokens": 300,
+            "max_tokens": self._structured_output.max_tokens,
         }
         if self.config.structured_output:
             body["response_format"] = {

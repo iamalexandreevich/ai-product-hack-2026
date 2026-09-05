@@ -20,6 +20,7 @@ from enum import Enum
 class Action(Enum):
     mask = "mask"
     clean = "clean"
+    redact = "redact"
 
 
 @dataclass(frozen=True)
@@ -61,11 +62,29 @@ class Detector:
 
 @dataclass(frozen=True)
 class Finding:
-    """One flagged line. `line` is a 0-based index into `output.split("\\n")`."""
+    """One flagged range of lines. `line` is a 0-based index into
+    `output.split("\\n")`; `line_end` (inclusive) defaults to `line`.
+
+    `rewritten` is what a `redact` finding puts in place of its first line
+    (the value replaced, the key name kept); the rest of a multi-line
+    range is collapsed. `candidate_key` marks an entropy-only secret
+    candidate the classifier may release, and names the key the prompt
+    shows for it. `kind` and `confidence` are set on spans the model
+    returned; detector findings derive their kind from `rule_id`.
+    """
 
     line: int
     rule_id: str
     action: Action
+    line_end: int | None = None
+    rewritten: str | None = None
+    candidate_key: str | None = None
+    kind: str | None = None
+    confidence: float | None = None
+
+    @property
+    def last(self) -> int:
+        return self.line if self.line_end is None else self.line_end
 
 
 # The word a `<!--...-->` comment must hide, checked only against the text

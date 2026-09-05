@@ -301,6 +301,8 @@ INSPECT_RESPONSE_EXAMPLES: dict[str, dict[str, Any]] = {
             "cached": False,
             "decision_id": "01M1PJ8HBMHCX96BNY1W0TDXJK",
             "protocol": 1,
+            "spans": [{"line_start": 2, "line_end": 2, "kind": "instruction", "source": "detector"}],
+            "redacted": 0,
         },
     },
     "clean_git_status": {
@@ -317,6 +319,8 @@ INSPECT_RESPONSE_EXAMPLES: dict[str, dict[str, Any]] = {
             "cached": False,
             "decision_id": "01M1PJ8J2K4M6N8P0Q2R4S6T8V",
             "protocol": 1,
+            "spans": [],
+            "redacted": 0,
         },
     },
 }

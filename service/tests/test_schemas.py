@@ -22,6 +22,7 @@ from agentgate.api.schemas import (
     InspectRequest,
     InspectResponse,
     InspectVerdict,
+    Span,
     LatencyMs,
     Tool,
     Turn,
@@ -411,3 +412,25 @@ def test_inspect_response_carries_cost_when_stage2_ran():
     cost = Cost(input_tokens=10, output_tokens=5)
     r = InspectResponse(verdict="pass", stage=2, latency_ms=LatencyMs(total=1), decision_id="01J", cost=cost)
     assert r.model_dump()["cost"]["input_tokens"] == 10
+
+
+def test_span_drops_confidence_when_absent():
+    s = Span(line_start=1, line_end=2, kind="instruction", source="detector")
+    assert "confidence" not in s.model_dump()
+
+
+def test_span_keeps_confidence_from_the_model():
+    s = Span(line_start=1, line_end=2, kind="instruction", source="model", confidence=0.9)
+    assert s.model_dump()["confidence"] == 0.9
+
+
+def test_span_rejects_an_unknown_kind():
+    with pytest.raises(ValidationError):
+        Span(line_start=1, line_end=2, kind="rude", source="model")
+
+
+def test_inspect_response_defaults_spans_and_redacted():
+    r = InspectResponse(verdict="pass", stage=1, latency_ms=LatencyMs(total=1), decision_id="01J")
+    assert r.spans == []
+    assert r.redacted == 0
+    assert r.model_dump()["spans"] == []

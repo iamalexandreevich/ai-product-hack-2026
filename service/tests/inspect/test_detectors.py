@@ -249,3 +249,21 @@ def test_scan_p50_under_20ms_for_adversarial_single_line_corpus(corpus_factory):
     text = corpus_factory()
     p50 = _p50_ms(text)
     assert p50 <= 20.0, f"p50={p50:.3f}ms"
+
+
+def test_action_has_redact():
+    assert Action.redact.value == "redact"
+
+
+def test_finding_defaults_to_a_single_line_without_rewrite():
+    f = Finding(line=3, rule_id="inspect.injection", action=Action.mask)
+    assert f.last == 3
+    assert f.rewritten is None
+    assert f.candidate_key is None
+    assert f.kind is None
+    assert f.confidence is None
+
+
+def test_finding_range_reports_its_last_line():
+    f = Finding(line=3, rule_id="inspect.secret", action=Action.redact, line_end=7, rewritten="[gate: private key redacted]")
+    assert f.last == 7

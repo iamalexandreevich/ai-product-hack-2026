@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from agentgate.profiles.schema import DenyWindow, History, InspectSettings, ModelConfig, NetworkMode, PerTurnChars, Profile
+from agentgate.profiles.schema import DenyWindow, History, InspectSettings, ModelBudget, ModelConfig, NetworkMode, PerTurnChars, Profile
 from tests.factories import minimal_profile_data, profile
 
 
@@ -119,3 +119,18 @@ def test_model_config_rejects_only_input_price():
 def test_model_config_rejects_only_output_price():
     with pytest.raises(ValueError):
         ModelConfig(base_url="http://x/v1", model="q", price_per_1m_output=0.60)
+
+
+def test_inspect_classifier_accepts_always():
+    assert InspectSettings(classifier="always").classifier == "always"
+
+
+def test_inspect_secrets_default_on_and_budget_defaults():
+    s = InspectSettings()
+    assert s.secrets == "on"
+    assert (s.model_budget.max_chars, s.model_budget.window_lines, s.model_budget.max_segments, s.model_budget.segment_max_lines) == (24000, 12, 20, 200)
+
+
+def test_model_budget_rejects_zero_segment_lines():
+    with pytest.raises(ValidationError):
+        ModelBudget(segment_max_lines=0)

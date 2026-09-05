@@ -470,6 +470,12 @@ paths:
                     cached: false
                     decision_id: 01M1PJ8HBMHCX96BNY1W0TDXJK
                     protocol: 1
+                    spans:
+                    - line_start: 2
+                      line_end: 2
+                      kind: instruction
+                      source: detector
+                    redacted: 0
                 clean_git_status:
                   summary: pass — nothing to do
                   value:
@@ -487,6 +493,8 @@ paths:
                     cached: false
                     decision_id: 01M1PJ8J2K4M6N8P0Q2R4S6T8V
                     protocol: 1
+                    spans: []
+                    redacted: 0
         '401':
           description: |
             Missing or invalid bearer token. This is the only status the service returns
@@ -1224,6 +1232,22 @@ components:
           - type: 'null'
           description: Token usage and money cost of the stage-2 call. `null` when stage 2
             did not run.
+        spans:
+          items:
+            $ref: '#/components/schemas/Span'
+          type: array
+          title: Spans
+          description: Ranges an inspect verdict masked or redacted; empty for decide records.
+        redacted:
+          type: integer
+          title: Redacted
+          description: Secret values redacted by an inspect verdict.
+          default: 0
+        spans_rejected:
+          type: integer
+          title: Spans Rejected
+          description: Model spans discarded by validation before application (spec 4.5).
+          default: 0
         decision_id:
           type: string
           title: Decision Id
@@ -1542,6 +1566,19 @@ components:
           - type: 'null'
           description: Token usage and money cost of the stage-2 call. Absent when stage 2
             did not run.
+        spans:
+          items:
+            $ref: '#/components/schemas/Span'
+          type: array
+          title: Spans
+          description: Ranges the verdict masked or redacted, by line coordinates; never the
+            text itself.
+        redacted:
+          type: integer
+          minimum: 0.0
+          title: Redacted
+          description: How many secret values were redacted.
+          default: 0
       type: object
       required:
       - verdict
@@ -1557,11 +1594,27 @@ components:
           enum:
           - 'off'
           - on-flag
+          - always
           title: Classifier
           default: 'off'
+        secrets:
+          type: string
+          enum:
+          - 'on'
+          - 'off'
+          title: Secrets
+          default: 'on'
+        model_budget:
+          $ref: '#/components/schemas/ModelBudget'
       type: object
       title: InspectSettings
-      description: How the inspect route judges a tool result beyond stage 1.
+      description: |-
+        How the inspect route judges a tool result beyond stage 1.
+
+        `secrets` defaults on: the detector is deterministic, costs
+        milliseconds and needs no model. `classifier` defaults off: `always`
+        is the only mode that catches a paraphrased injection and the only
+        expensive one.
     InspectStatus:
       enum:
       - completed
@@ -1639,6 +1692,33 @@ components:
       - tool
       title: McpProvenance
       type: object
+    ModelBudget:
+      properties:
+        max_chars:
+          type: integer
+          minimum: 1.0
+          title: Max Chars
+          default: 24000
+        window_lines:
+          type: integer
+          minimum: 0.0
+          title: Window Lines
+          default: 12
+        max_segments:
+          type: integer
+          minimum: 1.0
+          title: Max Segments
+          default: 20
+        segment_max_lines:
+          type: integer
+          minimum: 1.0
+          title: Segment Max Lines
+          default: 200
+      type: object
+      title: ModelBudget
+      description: |-
+        How much of a tool result reaches the inspect classifier, in the
+        operator's units: characters and lines, never tokens.
     ModelConfig:
       properties:
         base_url:
@@ -1865,6 +1945,50 @@ components:
       - command
       title: ShellProvenance
       type: object
+    Span:
+      properties:
+        line_start:
+          type: integer
+          minimum: 0.0
+          title: Line Start
+        line_end:
+          type: integer
+          minimum: 0.0
+          title: Line End
+        kind:
+          type: string
+          enum:
+          - instruction
+          - pipe-exec
+          - encoded
+          - invisible
+          - secret
+          title: Kind
+        source:
+          type: string
+          enum:
+          - detector
+          - model
+          title: Source
+        confidence:
+          anyOf:
+          - type: number
+            maximum: 1.0
+            minimum: 0.0
+          - type: 'null'
+          title: Confidence
+          description: 'Present only for `source: model`.'
+      type: object
+      required:
+      - line_start
+      - line_end
+      - kind
+      - source
+      title: Span
+      description: |-
+        One range of lines the verdict rewrote, by coordinates only -- never
+        the text. Lines are 0-based indexes into `output.split("\n")`,
+        `line_end` inclusive.
     SubagentProvenance:
       additionalProperties: false
       properties:

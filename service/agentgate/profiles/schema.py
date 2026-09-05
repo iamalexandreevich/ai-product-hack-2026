@@ -107,10 +107,28 @@ class History(BaseModel):
         }[role]
 
 
-class InspectSettings(BaseModel):
-    """How the inspect route judges a tool result beyond stage 1."""
+class ModelBudget(BaseModel):
+    """How much of a tool result reaches the inspect classifier, in the
+    operator's units: characters and lines, never tokens."""
 
-    classifier: Literal["off", "on-flag"] = "off"
+    max_chars: int = Field(default=24000, ge=1)
+    window_lines: int = Field(default=12, ge=0)
+    max_segments: int = Field(default=20, ge=1)
+    segment_max_lines: int = Field(default=200, ge=1)
+
+
+class InspectSettings(BaseModel):
+    """How the inspect route judges a tool result beyond stage 1.
+
+    `secrets` defaults on: the detector is deterministic, costs
+    milliseconds and needs no model. `classifier` defaults off: `always`
+    is the only mode that catches a paraphrased injection and the only
+    expensive one.
+    """
+
+    classifier: Literal["off", "on-flag", "always"] = "off"
+    secrets: Literal["on", "off"] = "on"
+    model_budget: ModelBudget = Field(default_factory=ModelBudget)
 
 
 class Profile(BaseModel):

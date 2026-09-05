@@ -19,7 +19,7 @@ from agentgate.engine.inspection import Inspection
 from agentgate.engine.inspector import Inspector
 from agentgate.engine.timings import Latency
 from agentgate.inspect.chain import INSPECT_STAGE1
-from agentgate.inspect.classify import InspectCase, InspectClassifier, InspectOutcome
+from agentgate.inspect.classify import InspectCase, InspectClassifier, InspectOutcome, ModelSpan
 from agentgate.inspect.detectors import Detector
 from agentgate.normalize import normalize
 from agentgate.normalize.model import NormalizedAction
@@ -377,37 +377,45 @@ class FakeInspectCache:
 class FakeInspectClassifier:
     """An InspectClassifier that answers what it was told to, and keeps what it was asked.
 
-    `answer` is one of "P"/"M"/"D"; a "P" or "D" answer drops stage 1's
-    replacement (a rewrite is only meaningful for "M"). Passing `error`
-    instead produces a failure outcome carrying stage 1's own verdict, the
-    same shape `Inspector` falls back to on any stage-2 error.
+    `answer` is one of "pass"/"mask"/"drop"; `spans` and `unredact` are
+    handed back verbatim on `mask` (and `unredact` on any verdict), the
+    engine validates them. Passing `error` instead produces a failure
+    outcome carrying stage 1's own verdict, the same shape `Inspector`
+    falls back to on any stage-2 error. The one-letter answers "P"/"M"/"D"
+    are still accepted for the v3 tests.
     """
+
+    _LETTERS = {"P": "pass", "M": "mask", "D": "drop"}
 
     def __init__(
         self, answer: str | None = None, reason: str = "", error: str | None = None, name: str = "m",
+        spans: tuple[ModelSpan, ...] = (), unredact: tuple[int, ...] = (),
     ) -> None:
         self.name = name
         self.calls = 0
         self.cases: list[InspectCase] = []
-        self._answer = answer
+        self._answer = self._LETTERS.get(answer, answer)
         self._reason = reason
         self._error = error
+        self._spans = spans
+        self._unredact = unredact
 
     async def classify(self, case: InspectCase) -> InspectOutcome:
         self.calls += 1
         self.cases.append(case)
         if self._error is not None:
-            return InspectOutcome(
-                verdict=case.stage1.verdict, replacement=case.stage1.replacement,
-                reason=case.stage1.reason, model=self.name, error=self._error,
-            )
-        if self._answer == "P":
-            return InspectOutcome(verdict=InspectVerdict.pass_, replacement=None, reason=self._reason, model=self.name)
-        if self._answer == "D":
-            return InspectOutcome(verdict=InspectVerdict.drop, replacement=None, reason=self._reason, model=self.name)
+            return InspectOutcome(verdict=case.stage1.verdict, reason=case.stage1.reason, model=self.name, error=self._error)
+        if self._answer == "pass":
+            return InspectOutcome(verdict=InspectVerdict.pass_, reason=self._reason, model=self.name, unredact=self._unredact)
+        if self._answer == "drop":
+            return InspectOutcome(verdict=InspectVerdict.drop, reason=self._reason, model=self.name)
         return InspectOutcome(
-            verdict=case.stage1.verdict, replacement=case.stage1.replacement, reason=self._reason, model=self.name,
+            verdict=InspectVerdict.mask, reason=self._reason, model=self.name, spans=self._spans, unredact=self._unredact,
         )
+
+
+def model_span(line_start: int, line_end: int | None = None, kind: str = "instruction", confidence: float = 0.9) -> ModelSpan:
+    return ModelSpan(line_start=line_start, line_end=line_start if line_end is None else line_end, kind=kind, confidence=confidence)
 
 
 def inspector(

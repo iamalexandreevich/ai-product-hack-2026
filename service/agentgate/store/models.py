@@ -70,6 +70,9 @@ class DecisionRow(Base):
     provenance: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     replacement: Mapped[str | None] = mapped_column(Text, nullable=True)
     cost: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    spans: Mapped[list] = mapped_column(JSONB, default=list)
+    redacted: Mapped[int] = mapped_column(Integer, default=0)
+    spans_rejected: Mapped[int] = mapped_column(Integer, default=0)
 
     __table_args__ = (
         Index("ix_decisions_session_ts", "session_id", "ts"),

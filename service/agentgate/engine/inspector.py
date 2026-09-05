@@ -188,7 +188,10 @@ class Inspector:
         stays `pass` after both caps carries no `rule_id`: stage 1's rule
         did not actually hold.
         """
-        verdict, replacement, reason = result.verdict, result.replacement, result.reason
+        verdict, reason = result.verdict, result.reason
+        # The classifier returns no text: a `mask` answer means stage 1's
+        # own rewrite stands.
+        replacement = outcome.replacement if verdict is InspectVerdict.mask else None
         rule_id = outcome.rule_id
         clean_findings = [f for f in findings if f.action is Action.clean]
         if outcome.verdict is InspectVerdict.drop and verdict is InspectVerdict.pass_:
@@ -207,17 +210,14 @@ class Inspector:
     ) -> InspectOutcome:
         classifier = self._classifier_for(profile_id, policy)
         if classifier is None:
-            return InspectOutcome(
-                verdict=outcome.verdict, replacement=outcome.replacement, reason=outcome.reason,
-                model=None, error="unknown-model",
-            )
+            return InspectOutcome(verdict=outcome.verdict, reason=outcome.reason, model=None, error="unknown-model")
         case = InspectCase.build(request, Dialogue.of(request.history), policy, findings, outcome)
         try:
             return await classifier.classify(case)
         except Exception as exc:  # noqa: BLE001 - a classifier bug falls back to stage 1, never to `pass`
             log.exception("inspect stage 2 raised")
             return InspectOutcome(
-                verdict=outcome.verdict, replacement=outcome.replacement, reason=outcome.reason,
+                verdict=outcome.verdict, reason=outcome.reason,
                 model=classifier.name, error=f"unexpected ({type(exc).__name__})",
             )
 

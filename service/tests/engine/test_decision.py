@@ -154,3 +154,10 @@ def test_response_cost_carries_amount_when_the_verdict_has_one():
     dumped = response.model_dump()
     assert dumped["cost"]["amount"] == cost.amount
     assert dumped["cost"]["currency"] == "USD"
+
+
+def test_record_defaults_spans_and_redaction_counters():
+    record = decision().to_record()
+    assert record.spans == []
+    assert record.redacted == 0
+    assert record.spans_rejected == 0

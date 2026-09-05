@@ -34,6 +34,7 @@ from agentgate.api.schemas import (
     InspectResponse,
     InspectVerdict,
     LatencyMs,
+    Span,
     Tool,
     Turn,
 )
@@ -139,6 +140,13 @@ class DecisionRecord(BaseModel):
         default=None,
         description="Token usage and money cost of the stage-2 call. `null` when stage 2 did not run.",
     )
+    spans: list[Span] = Field(
+        default_factory=list, description="Ranges an inspect verdict masked or redacted; empty for decide records."
+    )
+    redacted: int = Field(default=0, description="Secret values redacted by an inspect verdict.")
+    spans_rejected: int = Field(
+        default=0, description="Model spans discarded by validation before application (spec 4.5)."
+    )
 
     @computed_field(description="Same ULID as `id`; mirrors the field name /v1/decide returns.")
     @property
@@ -165,6 +173,7 @@ class DecisionRecord(BaseModel):
             verdict=InspectVerdict(self.decision), output=self.replacement, reason=self.reason, suggest=self.suggest,
             stage=self.stage, rule_id=self.rule_id, model=self.model, latency_ms=self._latency_ms(),
             cached=self.cached, decision_id=self.id, protocol=self.protocol, cost=self.cost,
+            spans=self.spans, redacted=self.redacted,
         )
 
     def _latency_ms(self) -> LatencyMs:
