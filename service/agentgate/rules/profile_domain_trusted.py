@@ -42,6 +42,12 @@ exact example spec v3.1 §5.1 uses for why a domain is not a permission),
 so only `GET`/`HEAD` pass. wget has no flag-free read that stays off
 disk, so it qualifies only when told to write to stdout: `-O -`,
 `--output-document=-`, or the bundled `-qO-`.
+
+A `tool: network` action takes a shorter path: it has no argv to read
+flags from and no paths to check, so the conditions that survive are the
+network ones -- the flag, a trusting mode, an explicitly declared domain --
+plus `method in {GET, HEAD}`. `method: None` never qualifies: "the harness
+did not say" is not "the method is safe".
 """
 
 from collections.abc import Sequence
@@ -81,11 +87,23 @@ class ProfileDomainTrustedRule:
     def evaluate(self, action: NormalizedAction, policy: Policy) -> Verdict | None:
         if not self._network_trusts(action, policy):
             return None
+        if action.tool is Tool.network:
+            return self._network_tool_verdict(action)
         if not self._shape_is_readable(action):
             return None
         if not all(self._command_is_a_read(c, policy) for c in action.commands):
             return None
         if not self._paths_are_safe(action, policy):
+            return None
+        return Verdict.allow(self.id)
+
+    def _network_tool_verdict(self, action: NormalizedAction) -> Verdict | None:
+        """A `tool: network` action carries no argv and no paths, so the
+        eleven shell conditions collapse to one: the method must itself be a
+        read. An absent method is not a read -- the harness that did not say
+        gets the classifier, not a permission.
+        """
+        if action.method not in _READ_ONLY_METHODS:
             return None
         return Verdict.allow(self.id)
 

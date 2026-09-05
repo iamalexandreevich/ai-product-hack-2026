@@ -7,7 +7,14 @@ import pytest
 
 from agentgate.api.schemas import DecisionKind
 from agentgate.rules.profile_domain_trusted import ProfileDomainTrustedRule
-from tests.factories import mcp_action, shell_action, stage1_policy, trusted_policy, unparseable_action
+from tests.factories import (
+    mcp_action,
+    network_action,
+    shell_action,
+    stage1_policy,
+    trusted_policy,
+    unparseable_action,
+)
 
 RULE = ProfileDomainTrustedRule()
 TRUSTED = trusted_policy()
@@ -364,3 +371,51 @@ def test_a_literal_header_value_stays_allowed():
     verdict = RULE.evaluate(shell_action("curl -H 'X-Test: value' https://pypi.org/x"), TRUSTED)
     assert verdict is not None
     assert verdict.decision is DecisionKind.allow
+
+
+@pytest.mark.parametrize("method", ["GET", "HEAD"])
+def test_a_read_method_on_a_trusted_domain_is_allowed(method):
+    verdict = RULE.evaluate(network_action(method=method), trusted_policy())
+
+    assert verdict is not None and verdict.decision is DecisionKind.allow
+    assert verdict.rule_id == "profile.domain-trusted"
+
+
+@pytest.mark.parametrize(
+    "method", ["POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    ids=["post", "put", "patch", "delete", "options"],
+)
+def test_a_writing_method_is_not_allowed(method):
+    assert RULE.evaluate(network_action(method=method), trusted_policy()) is None
+
+
+def test_an_unknown_method_is_not_allowed():
+    assert RULE.evaluate(network_action(method=None), trusted_policy()) is None
+
+
+def test_an_undeclared_domain_is_not_allowed():
+    assert RULE.evaluate(network_action(domains=("evil.example",), method="GET"), trusted_policy()) is None
+
+
+def test_no_domain_at_all_is_not_allowed():
+    assert RULE.evaluate(network_action(domains=(), method="GET"), trusted_policy()) is None
+
+
+def test_open_mode_never_allows():
+    assert RULE.evaluate(network_action(method="GET"), trusted_policy(mode="open")) is None
+
+
+def test_the_flag_off_never_allows():
+    assert RULE.evaluate(network_action(method="GET"), stage1_policy()) is None
+
+
+def test_ask_mode_allows_a_read_of_a_declared_domain():
+    verdict = RULE.evaluate(network_action(method="GET"), trusted_policy(mode="ask"))
+
+    assert verdict is not None and verdict.decision is DecisionKind.allow
+
+
+def test_a_subdomain_of_a_declared_domain_is_allowed():
+    verdict = RULE.evaluate(network_action(domains=("files.github.com",), method="GET"), trusted_policy())
+
+    assert verdict is not None and verdict.decision is DecisionKind.allow
