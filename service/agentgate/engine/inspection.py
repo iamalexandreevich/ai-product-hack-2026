@@ -9,7 +9,7 @@ shared with `/v1/decisions`.
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from agentgate.api.schemas import Cost, InspectRequest, InspectResponse, InspectVerdict
+from agentgate.api.schemas import Cost, InspectRequest, InspectResponse, InspectVerdict, Span
 from agentgate.domain.dialogue import Dialogue
 from agentgate.engine.decision import DecisionRecord
 from agentgate.engine.timings import Latency
@@ -40,6 +40,14 @@ class Inspection:
     # `session_ref` can hand the writer a row to ensure without resolving it
     # a second time or importing the profile loader into `store`.
     workspace: str = ""
+    spans: tuple[Span, ...] = ()
+    redacted: int = 0
+    spans_rejected: int = 0
+    # The output with stage 1's redactions applied and the line count kept.
+    # `None` when nothing was redacted. This -- never `request.output` --
+    # is what the record stores as `raw`: the service must not become the
+    # long-term store of the secrets it hides.
+    redacted_output: str | None = None
 
     def session_state(self) -> None:
         """Inspect never owns a session's counters."""
@@ -64,13 +72,17 @@ class Inspection:
         would misreport it as having failed, produced a raw model response,
         or been submitted under someone else's idempotency key. `model` and
         `findings` stay: the verdict is deterministic on content, so they
-        still describe why it was reached.
+        still describe why it was reached. `spans`, `redacted` and
+        `redacted_output` are part of the verdict too and carry over the
+        same way; `spans_rejected` describes validation of one call's model
+        response, not the content, so it does not.
         """
         return Inspection(
             id=new_id, ts=datetime.now(timezone.utc), request=request, verdict=self.verdict,
             latency=latency, profile_id=self.profile_id, profile_hash=self.profile_hash,
             replacement=self.replacement, reason=self.reason, suggest=self.suggest, stage=0,
             rule_id=self.rule_id, model=self.model, cached=True, findings=self.findings, workspace=workspace,
+            spans=self.spans, redacted=self.redacted, redacted_output=self.redacted_output,
         )
 
     def to_response(self) -> InspectResponse:
@@ -78,9 +90,10 @@ class Inspection:
 
     def to_record(self) -> DecisionRecord:
         provenance = self.request.provenance.model_dump()
+        raw = self.request.output if self.redacted_output is None else self.redacted_output
         return DecisionRecord(
             id=self.id, session_id=self.request.session_id, ts=self.ts, harness=self.request.harness,
-            tool=self.request.tool, raw=self.request.output,
+            tool=self.request.tool, raw=raw,
             normalized={"tool_name": self.request.tool_name, "status": self.request.status.value},
             user_request=self.request.user_request, profile_id=self.profile_id, profile_hash=self.profile_hash,
             decision=self.verdict, reason=self.reason, suggest=self.suggest, stage=self.stage, rule_id=self.rule_id,
@@ -91,7 +104,7 @@ class Inspection:
             history=[], history_digest=Dialogue.of(self.request.history).digest(),
             idempotency_key=self.idempotency_key, request_digest=self.request.identity_digest(),
             kind="inspect", call_id=self.request.call_id, provenance=provenance, replacement=self.replacement,
-            cost=self.cost,
+            cost=self.cost, spans=list(self.spans), redacted=self.redacted, spans_rejected=self.spans_rejected,
         )
 
     def allow_cache_entry(self) -> None:
