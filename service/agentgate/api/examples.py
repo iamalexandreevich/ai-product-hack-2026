@@ -125,7 +125,6 @@ RESPONSE_EXAMPLES: dict[str, dict[str, Any]] = {
             "cached": False,
             "decision_id": "01J8QZ4T7K3M9V2B5N6P0R1S2T",
             "protocol": 1,
-            "cost": None,
         },
     },
     "deny_unknown_package": {
@@ -151,7 +150,7 @@ RESPONSE_EXAMPLES: dict[str, dict[str, Any]] = {
             "protocol": 1,
             "cost": {
                 "input_tokens": 812, "output_tokens": 41, "reasoning_tokens": 0,
-                "currency": "USD", "amount": 0.000147,
+                "currency": "USD", "amount": 0.0001464,
             },
         },
     },
@@ -176,7 +175,10 @@ RESPONSE_EXAMPLES: dict[str, dict[str, Any]] = {
             "cached": False,
             "decision_id": "01J8QZ4W3D9J5F8B2E4G6H8K0M",
             "protocol": 1,
-            "cost": None,
+            "cost": {
+                "input_tokens": 600, "output_tokens": 100, "reasoning_tokens": 0,
+                "currency": "USD", "amount": 0.00015,
+            },
         },
     },
     "ask_uncertain_db_cleanup": {
@@ -203,7 +205,10 @@ RESPONSE_EXAMPLES: dict[str, dict[str, Any]] = {
             "cached": False,
             "decision_id": "01J8QZ50B4N7Q9W2X4Y6Z8A0C2",
             "protocol": 1,
-            "cost": None,
+            "cost": {
+                "input_tokens": 1200, "output_tokens": 220, "reasoning_tokens": 0,
+                "currency": "USD", "amount": 0.000312,
+            },
         },
     },
     "fail_closed_invalid_request": {
@@ -230,7 +235,6 @@ RESPONSE_EXAMPLES: dict[str, dict[str, Any]] = {
             "cached": False,
             "decision_id": "01J8QZ51D6P0S2U4W6Y8A0C2E4",
             "protocol": 1,
-            "cost": None,
         },
     },
 }
@@ -297,7 +301,6 @@ INSPECT_RESPONSE_EXAMPLES: dict[str, dict[str, Any]] = {
             "cached": False,
             "decision_id": "01M1PJ8HBMHCX96BNY1W0TDXJK",
             "protocol": 1,
-            "cost": None,
         },
     },
     "clean_git_status": {
@@ -314,7 +317,6 @@ INSPECT_RESPONSE_EXAMPLES: dict[str, dict[str, Any]] = {
             "cached": False,
             "decision_id": "01M1PJ8J2K4M6N8P0Q2R4S6T8V",
             "protocol": 1,
-            "cost": None,
         },
     },
 }

@@ -170,7 +170,7 @@ class LLMInspectClassifier:
         return self._outcome_from(output, case.stage1, usage)
 
     def _outcome_from(self, output: InspectOutput, stage1: Stage1Outcome, usage: Usage | None) -> InspectOutcome:
-        cost = self._cost_of(usage)
+        cost = Cost.for_model(usage, self._config)
         if output.decision == "P":
             return InspectOutcome(verdict=InspectVerdict.pass_, replacement=None, reason=output.reason, model=self.name, cost=cost)
         if output.decision == "D":
@@ -178,11 +178,6 @@ class LLMInspectClassifier:
         return InspectOutcome(
             verdict=stage1.verdict, replacement=stage1.replacement, reason=stage1.reason, model=self.name, cost=cost,
         )
-
-    def _cost_of(self, usage: Usage | None) -> Cost | None:
-        if usage is None:
-            return None
-        return Cost.of(usage, self._config.price_per_1m_input, self._config.price_per_1m_output)
 
     def _unavailable(self, stage1: Stage1Outcome, error: str) -> InspectOutcome:
         return InspectOutcome(

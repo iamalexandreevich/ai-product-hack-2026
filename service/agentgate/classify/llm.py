@@ -58,13 +58,8 @@ class LLMClassifier:
             suggest="" if allowed else output.suggest,
             model=self.name,
             raw_response=raw,
-            cost=self._cost_of(usage),
+            cost=Cost.for_model(usage, self._config),
         )
-
-    def _cost_of(self, usage: Usage | None) -> Cost | None:
-        if usage is None:
-            return None
-        return Cost.of(usage, self._config.price_per_1m_input, self._config.price_per_1m_output)
 
     def _unavailable(self, error: str, reason: str) -> Verdict:
         return Verdict(

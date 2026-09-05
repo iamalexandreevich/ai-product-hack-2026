@@ -100,3 +100,32 @@ async def test_cost_carries_amount_when_the_model_is_priced():
 async def test_cost_is_none_when_the_classifier_is_unavailable():
     res = await classifier(lambda r: httpx.Response(500)).classify(case())
     assert res.cost is None
+
+
+@pytest.mark.parametrize(
+    "usage",
+    [
+        {"prompt_tokens": "812", "completion_tokens": 41},
+        {"prompt_tokens": 812, "completion_tokens": None},
+        {"prompt_tokens": True, "completion_tokens": 41},
+    ],
+    ids=["prompt_not_int", "completion_not_int", "prompt_is_bool"],
+)
+async def test_a_malformed_token_count_never_surfaces_as_internal_error(usage):
+    res = await classifier(reply({"decision": "D", "reason": "why", "suggest": "alt"}, usage=usage)).classify(case())
+    assert res.decision is DecisionKind.deny
+    assert res.error is None
+    assert res.cost is None
+
+
+async def test_a_malformed_reasoning_token_count_still_prices_the_valid_counts():
+    usage = {
+        "prompt_tokens": 812, "completion_tokens": 41,
+        "completion_tokens_details": {"reasoning_tokens": "three"},
+    }
+    res = await classifier(reply({"decision": "D", "reason": "why", "suggest": "alt"}, usage=usage)).classify(case())
+    assert res.decision is DecisionKind.deny
+    assert res.error is None
+    assert res.cost.input_tokens == 812
+    assert res.cost.output_tokens == 41
+    assert res.cost.reasoning_tokens == 0

@@ -155,6 +155,16 @@ def test_openapi_inspect_examples_validate_against_the_models(committed_openapi)
             assert example["value"]["output"], name
 
 
+# `cost` is dropped from the wire form whenever stage 2 did not run
+# (`_drop_cost_when_stage2_did_not_run` pops it, never sends `null`), so a
+# stage-0/stage-1 example correctly omits the key instead of publishing
+# `"cost": null`, which the wire never emits. The per-field completeness
+# checks below exempt `cost` for that reason; `test_cost_examples_show_the_
+# field_as_the_wire_emits_it` below makes sure at least the stage-2
+# examples still show what the field looks like when it is present.
+_FIELDS_ABSENT_BY_DESIGN = {"cost"}
+
+
 def test_response_examples_show_every_response_field():
     """A response field missing from an example teaches an integrator that
     the field does not exist. Stricter than model_validate: pydantic accepts
@@ -162,8 +172,10 @@ def test_response_examples_show_every_response_field():
     from agentgate.api.examples import RESPONSE_EXAMPLES
     from agentgate.api.schemas import DecideResponse
 
+    required_fields = set(DecideResponse.model_fields) - _FIELDS_ABSENT_BY_DESIGN
     for name, example in RESPONSE_EXAMPLES.items():
-        assert set(example["value"]) == set(DecideResponse.model_fields), name
+        assert set(example["value"]) <= set(DecideResponse.model_fields), name
+        assert set(example["value"]) >= required_fields, name
 
 
 def test_inspect_response_examples_show_every_response_field():
@@ -172,8 +184,22 @@ def test_inspect_response_examples_show_every_response_field():
     from agentgate.api.examples import INSPECT_RESPONSE_EXAMPLES
     from agentgate.api.schemas import InspectResponse
 
+    required_fields = set(InspectResponse.model_fields) - _FIELDS_ABSENT_BY_DESIGN
     for name, example in INSPECT_RESPONSE_EXAMPLES.items():
-        assert set(example["value"]) == set(InspectResponse.model_fields), name
+        assert set(example["value"]) <= set(InspectResponse.model_fields), name
+        assert set(example["value"]) >= required_fields, name
+
+
+def test_cost_examples_show_the_field_as_the_wire_emits_it():
+    """At least one example must carry a real `cost` object -- otherwise
+    exempting `cost` from the completeness checks above would let every
+    example quietly omit it without anything catching that."""
+    from agentgate.api.examples import RESPONSE_EXAMPLES
+
+    priced = {name: e["value"]["cost"] for name, e in RESPONSE_EXAMPLES.items() if "cost" in e["value"]}
+    assert priced, "no RESPONSE_EXAMPLES example carries a cost object"
+    for name, cost in priced.items():
+        assert cost is not None, name
 
 
 def test_openapi_documents_every_v1_endpoint(committed_openapi):

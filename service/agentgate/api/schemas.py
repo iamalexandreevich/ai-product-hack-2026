@@ -13,9 +13,18 @@ import json
 from enum import Enum
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from agentgate.domain.usage import Usage, cost_amount
+from agentgate.profiles.schema import ModelConfig
 
 USER_REQUEST_MAX_CHARS = 2048
 RAW_MAX_BYTES = 32768
@@ -426,7 +435,7 @@ class Cost(BaseModel):
     )
 
     @model_serializer(mode="wrap")
-    def _drop_amount_when_unpriced(self, handler):
+    def _drop_amount_when_unpriced(self, handler: SerializerFunctionWrapHandler):
         data = handler(self)
         if self.amount is None:
             data.pop("amount", None)
@@ -441,6 +450,17 @@ class Cost(BaseModel):
             reasoning_tokens=usage.reasoning_tokens,
             currency=COST_CURRENCY if amount is not None else None, amount=amount,
         )
+
+    @classmethod
+    def for_model(cls, usage: Usage | None, model_config: ModelConfig) -> "Cost | None":
+        """The one place both classifiers turn a call's `Usage` into a `Cost`.
+
+        `usage` is `None` when the provider's response carried no usage
+        object at all -- there is nothing to report, not a free call.
+        """
+        if usage is None:
+            return None
+        return cls.of(usage, model_config.price_per_1m_input, model_config.price_per_1m_output)
 
 
 class DecideResponse(BaseModel):
@@ -505,7 +525,7 @@ class DecideResponse(BaseModel):
     )
 
     @model_serializer(mode="wrap")
-    def _drop_cost_when_stage2_did_not_run(self, handler):
+    def _drop_cost_when_stage2_did_not_run(self, handler: SerializerFunctionWrapHandler):
         data = handler(self)
         if self.cost is None:
             data.pop("cost", None)
@@ -659,7 +679,7 @@ class InspectResponse(BaseModel):
         return self
 
     @model_serializer(mode="wrap")
-    def _drop_cost_when_stage2_did_not_run(self, handler):
+    def _drop_cost_when_stage2_did_not_run(self, handler: SerializerFunctionWrapHandler):
         data = handler(self)
         if self.cost is None:
             data.pop("cost", None)

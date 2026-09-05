@@ -1,6 +1,6 @@
 # Ответ должен нести стоимость решения
 
-Дата: 4 сентября 2026. Статус: **реализовано в v3**, коммит `5c98309` (`service/agentgate/domain/usage.py`, `Cost` в `agentgate/api/schemas.py`, `price_per_1m_input`/`price_per_1m_output` в `ModelConfig`, миграция `0005_cost.py`).
+Дата: 4 сентября 2026. Статус: **реализовано в v3**, коммит `3bf81e5` (`service/agentgate/domain/usage.py`, `Cost` в `agentgate/api/schemas.py`, `price_per_1m_input`/`price_per_1m_output` в `ModelConfig`, миграция `0005_cost.py`).
 
 **Решено владельцем 4 сентября: стоимость отдаётся в API**, то есть в теле ответа `POST /v1/decide`, а не только сохраняется в ленте. Ниже это учтено; открытым остаётся вопрос «токены или деньги» из раздела «Решение, которое нужно принять».
 

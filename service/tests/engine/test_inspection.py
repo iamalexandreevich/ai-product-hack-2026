@@ -44,5 +44,4 @@ def test_a_cache_hit_carries_no_cost():
     original = inspection(stage=2, model="m", cost=Cost(input_tokens=100, output_tokens=20))
     hit = original.as_cached("01J1", inspect_request(), Latency(total_ms=0), "/w")
     assert hit.cost is None
-    assert hit.to_response().model_dump().get("cost") is None
     assert "cost" not in hit.to_response().model_dump()

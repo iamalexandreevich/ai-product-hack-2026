@@ -202,7 +202,6 @@ paths:
                     cached: false
                     decision_id: 01J8QZ4T7K3M9V2B5N6P0R1S2T
                     protocol: 1
-                    cost: null
                 deny_unknown_package:
                   summary: deny — HTTP 200, with reason and suggest
                   description: Answer to the `deny_unknown_package` request. Note the status
@@ -228,7 +227,7 @@ paths:
                       output_tokens: 41
                       reasoning_tokens: 0
                       currency: USD
-                      amount: 0.000147
+                      amount: 0.0001464
                 deny_history_reveals_the_injection:
                   summary: deny — the instruction came from a tool result, not the user
                   description: 'Answer to the `deny_history_reveals_the_injection` request.
@@ -249,7 +248,12 @@ paths:
                     cached: false
                     decision_id: 01J8QZ4W3D9J5F8B2E4G6H8K0M
                     protocol: 1
-                    cost: null
+                    cost:
+                      input_tokens: 600
+                      output_tokens: 100
+                      reasoning_tokens: 0
+                      currency: USD
+                      amount: 0.00015
                 ask_uncertain_db_cleanup:
                   summary: ask — the classifier was not confident
                   description: Answer to the `ask_uncertain_db_cleanup` request. `ask` means
@@ -271,7 +275,12 @@ paths:
                     cached: false
                     decision_id: 01J8QZ50B4N7Q9W2X4Y6Z8A0C2
                     protocol: 1
-                    cost: null
+                    cost:
+                      input_tokens: 1200
+                      output_tokens: 220
+                      reasoning_tokens: 0
+                      currency: USD
+                      amount: 0.000312
                 fail_closed_invalid_request:
                   summary: ask — fail-closed on a request the models rejected
                   description: 'There is no request example for this one: it is what an invalid
@@ -295,7 +304,6 @@ paths:
                     cached: false
                     decision_id: 01J8QZ51D6P0S2U4W6Y8A0C2E4
                     protocol: 1
-                    cost: null
         '401':
           description: |
             Missing or invalid bearer token. This is the only status the service returns
@@ -462,7 +470,6 @@ paths:
                     cached: false
                     decision_id: 01M1PJ8HBMHCX96BNY1W0TDXJK
                     protocol: 1
-                    cost: null
                 clean_git_status:
                   summary: pass — nothing to do
                   value:
@@ -480,7 +487,6 @@ paths:
                     cached: false
                     decision_id: 01M1PJ8J2K4M6N8P0Q2R4S6T8V
                     protocol: 1
-                    cost: null
         '401':
           description: |
             Missing or invalid bearer token. This is the only status the service returns

@@ -30,11 +30,19 @@ class Usage:
             return None
         prompt = usage.get("prompt_tokens")
         completion = usage.get("completion_tokens")
-        if not isinstance(prompt, int) or not isinstance(completion, int):
+        if not _is_token_count(prompt) or not _is_token_count(completion):
             return None
         details = usage.get("completion_tokens_details")
         reasoning = details.get("reasoning_tokens") if isinstance(details, dict) else None
-        return cls(input_tokens=prompt, output_tokens=completion, reasoning_tokens=reasoning or 0)
+        # A malformed reasoning_tokens does not invalidate prompt/completion,
+        # which are still real counts worth reporting -- treat the reasoning
+        # figure as unknown (0) rather than discarding the whole Usage.
+        reasoning_tokens = reasoning if _is_token_count(reasoning) else 0
+        return cls(input_tokens=prompt, output_tokens=completion, reasoning_tokens=reasoning_tokens)
+
+
+def _is_token_count(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
 
 
 def cost_amount(usage: Usage, price_per_1m_input: float | None, price_per_1m_output: float | None) -> float | None:
