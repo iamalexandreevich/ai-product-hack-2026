@@ -14,6 +14,8 @@ normalised from section 4.3. Nothing outside those two sections is assumed:
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from typing import Any, Self
 
@@ -29,6 +31,7 @@ from schemas.result import (
     ServiceResultType,
     Usage,
 )
+from schemas.rules import RuleSet
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +39,7 @@ logger = logging.getLogger(__name__)
 _RULE_PREFIX_COMPONENTS: tuple[tuple[str, str], ...] = (
     ("hard-deny.", "stage1_hard_deny"),
     ("profile.", "stage1_profile"),
+    ("client.", "stage1_client_rules"),
     ("allowlist.", "stage1_allowlist"),
     ("packages.", "stage1_packages"),
     ("escalation", "escalation"),
@@ -55,6 +59,8 @@ def build_decide_request(
     model: str | None = None,
     metadata: dict[str, Any] | None = None,
     history: list[HistoryTurn] | None = None,
+    rules: RuleSet | None = None,
+    call_id: str | None = None,
 ) -> dict[str, Any]:
     """Serialise the benchmark boundary into a ``/v1/decide`` request body."""
     args: dict[str, Any] = {"cwd": assistant_tool_call.arguments.cwd}
@@ -80,6 +86,10 @@ def build_decide_request(
         body["model"] = model
     if metadata:
         body["metadata"] = metadata
+    if rules is not None:
+        body["rules"] = rules.model_dump(mode="json")
+    if call_id is not None:
+        body["call_id"] = call_id
     if history:
         # Sent only when there is a dialogue to send, so a case written at the v1
         # boundary produces the v1 request byte for byte. ``protocol`` stays unsent:
@@ -148,6 +158,7 @@ def extract_usage_and_cost(
         input_tokens=_first_int(payload, config.input_token_paths),
         output_tokens=_first_int(payload, config.output_token_paths),
         total_tokens=_first_int(payload, config.total_token_paths),
+        reasoning_tokens=_first_int(payload, config.reasoning_token_paths),
     )
     if usage.total_tokens is None and None not in (usage.input_tokens, usage.output_tokens):
         usage.total_tokens = (usage.input_tokens or 0) + (usage.output_tokens or 0)
@@ -164,10 +175,7 @@ def extract_usage_and_cost(
             usage,
             None,
             CostSource.UNAVAILABLE,
-            (
-                "AgentGate /v1/decide does not report token usage (design spec 4.3), "
-                "so cost cannot be computed"
-            ),
+            ("This response does not include usable token usage, so cost cannot be computed"),
         )
 
     price = config.pricing.lookup(*model_names)
@@ -334,6 +342,8 @@ class SecurityServiceClient:
         session_id: str | None = None,
         metadata: dict[str, Any] | None = None,
         history: list[HistoryTurn] | None = None,
+        rules: RuleSet | None = None,
+        call_id: str | None = None,
     ) -> ServiceResponse:
         """Send one benchmark case to ``POST /v1/decide``."""
         body = build_decide_request(
@@ -345,6 +355,8 @@ class SecurityServiceClient:
             model=self.config.model,
             metadata=metadata,
             history=history,
+            rules=rules,
+            call_id=call_id,
         )
 
         try:
@@ -386,6 +398,24 @@ class SecurityServiceClient:
         except ValueError:
             payload = None
         return response.status_code == 200, payload if isinstance(payload, dict) else None
+
+    async def profile_snapshot(self) -> dict[str, Any] | None:
+        """Read the public profile; never persist credentials or the request token."""
+        try:
+            response = await self.client.get(
+                self.config.profile_url(self.config.profile_id or "default")
+            )
+            payload = response.json()
+        except (httpx.HTTPError, ValueError):
+            return None
+        return payload if response.status_code == 200 and isinstance(payload, dict) else None
+
+    async def profile_digest(self) -> str | None:
+        payload = await self.profile_snapshot()
+        if payload is None:
+            return None
+        encoded = json.dumps(payload, sort_keys=True, ensure_ascii=True).encode()
+        return hashlib.sha256(encoded).hexdigest()
 
     async def _enrich_model_metadata(self, response: ServiceResponse) -> None:
         """Resolve provider and concrete model id from ``GET /v1/profiles/{id}``.

@@ -126,9 +126,10 @@ DECISION_ALLOW_STAGE2: dict[str, Any] = {
 
 
 # The cost object the product owner approved on 4 September 2026
-# (docs/superpowers/service/specs/response-cost-reporting.md). The service does not send
-# it yet; the benchmark must read the price from it the day it does, instead of leaving
-# the price unavailable or computing one of its own.
+# (docs/superpowers/service/specs/response-cost-reporting.md), shipped with v3. The
+# benchmark reads the price from it rather than leaving the price unavailable or
+# computing one of its own. ``amount``/``currency`` appear only when the operator priced
+# the model, so a response carrying tokens and no amount is normal, not malformed.
 DECISION_ALLOW_STAGE2_WITH_COST: dict[str, Any] = DECISION_ALLOW_STAGE2 | {
     "cost": {
         "input_tokens": 812,

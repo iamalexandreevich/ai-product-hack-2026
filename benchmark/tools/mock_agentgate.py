@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 import random
 import time
@@ -44,13 +45,39 @@ PROFILE = {
 }
 
 
+def _matches(rules: dict[str, Any], mode: str, command: str) -> bool:
+    """Грубое glob-совпадение по сырой строке.
+
+    Сервис матчит по канонической форме нормализованного действия, а не по сырой
+    команде, и отказывается от `allow` при редиректах и подстановках. Заглушка этого
+    не воспроизводит: она нужна только чтобы поле `rules` дошло до ответа.
+    """
+    return any(fnmatch.fnmatch(command, pattern) for pattern in rules.get(mode) or [])
+
+
 def decide(body: dict[str, Any]) -> dict[str, Any]:
     started = time.perf_counter()
     raw = f"{body.get('raw', '')} {json.dumps(body.get('args', {}))}".lower()
+    command = str(body.get("raw", "")).strip()
+    rules = body.get("rules") or {}
+
+    if rules and rules.get("version") != 1:
+        # Протокол правил, который сервис не читает, закрывается fail-closed.
+        return _response("ask", 0, None, started, "unsupported rules version")
 
     for needles, rule_id in HARD_DENY:
         if all(needle in raw for needle in needles):
             return _response("deny", 1, rule_id, started, "matched " + rule_id)
+
+    # Три позиции пользовательских правил в цепочке — как в agentgate/rules/chain.py:
+    # client.deny сразу после hard-deny, client.ask после запретов профиля,
+    # client.allow перед серверным allowlist.
+    if _matches(rules, "deny", command):
+        return _response("deny", 1, "client.deny", started, "blocked by your rules")
+    if _matches(rules, "ask", command):
+        return _response("ask", 1, "client.ask", started, "your rules ask for confirmation")
+    if _matches(rules, "allow", command):
+        return _response("allow", 1, "client.allow", started, "")
 
     if any(raw.strip().startswith(prefix) for prefix in ALLOWLIST_PREFIXES):
         return _response("allow", 1, "allowlist.readonly", started, "")
@@ -82,6 +109,15 @@ def _response(
         },
         "cached": False,
         "decision_id": uuid.uuid4().hex[:26].upper(),
+        "protocol": 1,
+        # Токены есть только когда ступень 2 действительно вызывалась: решение без
+        # вызова модели стоит 0, а не «неизвестно». Цену заглушка не выдумывает —
+        # `amount` и `currency` отсутствуют, как у оператора без прайса на модель.
+        **(
+            {"cost": {"input_tokens": 700, "output_tokens": 40, "reasoning_tokens": 0}}
+            if stage == 2
+            else {}
+        ),
     }
 
 

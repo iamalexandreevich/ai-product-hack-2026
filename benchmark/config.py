@@ -134,6 +134,7 @@ class ServiceConfig:
     input_token_paths: tuple[str, ...] = DEFAULT_INPUT_TOKEN_PATHS
     output_token_paths: tuple[str, ...] = DEFAULT_OUTPUT_TOKEN_PATHS
     total_token_paths: tuple[str, ...] = DEFAULT_TOTAL_TOKEN_PATHS
+    reasoning_token_paths: tuple[str, ...] = ("cost.reasoning_tokens",)
     cost_paths: tuple[str, ...] = DEFAULT_COST_PATHS
     currency_paths: tuple[str, ...] = DEFAULT_CURRENCY_PATHS
     pricing: PricingTable = field(default_factory=PricingTable)

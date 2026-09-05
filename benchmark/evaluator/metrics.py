@@ -240,6 +240,7 @@ def cost_metrics(results: Iterable[BenchmarkResult]) -> dict[str, Any]:
         "requests_with_token_usage": sum(1 for r in materialised if r.total_tokens is not None),
         "input_tokens_total": _sum_or_none([r.input_tokens for r in materialised]),
         "output_tokens_total": _sum_or_none([r.output_tokens for r in materialised]),
+        "reasoning_tokens_total": _sum_or_none([r.reasoning_tokens for r in materialised]),
     }
 
 
