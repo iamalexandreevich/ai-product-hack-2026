@@ -65,6 +65,14 @@ class DecisionKind(str, Enum):
     ask = "ask"
 
 
+class InspectVerdict(str, Enum):
+    """`pass` reaches the model untouched; `mask` — the caller substitutes `output`; `drop` — the result is withheld and `reason` shown instead."""
+
+    pass_ = "pass"
+    mask = "mask"
+    drop = "drop"
+
+
 class TurnRole(str, Enum):
     """What kind of dialogue turn this is."""
 
