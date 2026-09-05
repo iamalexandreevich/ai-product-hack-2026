@@ -163,9 +163,17 @@ class RuleSet(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    version: int = Field(description=f"Shape version. This service reads `{RULES_VERSION}`; any other value is refused as `ask`.")
-    level: str = Field(default="custom", max_length=32, description="`low`, `medium`, `high`, or `custom` once edited. Recorded with the decision, not interpreted.")
-    allow: list[str] = Field(default_factory=list, description="Runs without asking, unless hard-deny or the profile forbids it.")
+    version: int = Field(
+        description=f"Shape version. This service reads `{RULES_VERSION}`; any other value is refused as `ask`."
+    )
+    level: str = Field(
+        default="custom",
+        max_length=32,
+        description="`low`, `medium`, `high`, or `custom` once edited. Recorded with the decision, not interpreted.",
+    )
+    allow: list[str] = Field(
+        default_factory=list, description="Runs without asking, unless hard-deny or the profile forbids it."
+    )
     ask: list[str] = Field(default_factory=list, description="Goes to the human.")
     deny: list[str] = Field(default_factory=list, description="Never runs.")
 
@@ -177,7 +185,7 @@ class RuleSet(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def _size(self) -> "RuleSet":
+    def _rules_size(self) -> "RuleSet":
         patterns = [*self.allow, *self.ask, *self.deny]
         if len(patterns) > RULES_MAX_PATTERNS:
             raise RulesTooLarge(f"rules exceed {RULES_MAX_PATTERNS} patterns")

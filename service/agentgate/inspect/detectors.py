@@ -24,15 +24,26 @@ class Action(Enum):
 
 @dataclass(frozen=True)
 class Detector:
+    """A rule id, its patterns, and the cheap tests that gate them.
+
+    `hints` and `precheck` are both prechecks run before the regex table.
+    Invariant: either may only rule out a line the patterns provably cannot
+    match, never the reverse -- a hint may only exclude lines none of the
+    detector's patterns can match. `hints` covers the common case: casefolded
+    substrings, and a line whose casefolded form contains none of them is
+    skipped. `precheck` covers what a substring test cannot express (length,
+    character class).
+    """
+
     id: str
     patterns: tuple[re.Pattern[str], ...]
     action: Action
+    hints: tuple[str, ...] = ()
     precheck: Callable[[str], bool] = field(default=lambda line: True)
-    """Cheap test run before the regex table. Must return True whenever the
-    regexes could possibly match -- it may only rule out lines the regexes
-    provably cannot match, never the reverse."""
 
     def matches(self, line: str) -> bool:
+        if self.hints and not any(hint in line.casefold() for hint in self.hints):
+            return False
         if not self.precheck(line):
             return False
         return any(p.search(line) for p in self.patterns)
@@ -40,28 +51,11 @@ class Detector:
 
 @dataclass(frozen=True)
 class Finding:
+    """One flagged line. `line` is a 0-based index into `output.split("\\n")`."""
+
     line: int
     rule_id: str
     action: Action
-
-
-_INJECTION_HINTS = (
-    "ignor",
-    "instruction",
-    "disregard",
-    "mode",
-    "user",
-    "system",
-    "assistant",
-    "<!--",
-    "инструкци",
-    "сообщай",
-)
-
-
-def _has_injection_hint(line: str) -> bool:
-    lowered = line.casefold()
-    return any(hint in lowered for hint in _INJECTION_HINTS)
 
 
 INJECTION = Detector(
@@ -79,14 +73,25 @@ INJECTION = Detector(
         re.compile(r"не\s+сообщай\s+(об\s+этом\s+)?пользователю", re.I),
     ),
     action=Action.mask,
-    precheck=_has_injection_hint,
+    hints=(
+        "ignor",
+        "instruction",
+        "disregard",
+        "mode",
+        "user",
+        "system",
+        "assistant",
+        "<!--",
+        "инструкци",
+        "сообщай",
+    ),
 )
 
 PIPE_EXEC = Detector(
     id="inspect.pipe-exec",
     patterns=(re.compile(r"\b(curl|wget)\b[^|\n]*\|\s*(sudo\s+)?(sh|bash|zsh|python3?|node)\b", re.I),),
     action=Action.mask,
-    precheck=lambda line: "|" in line,
+    hints=("|",),
 )
 
 ENCODED = Detector(
@@ -100,18 +105,16 @@ ENCODED = Detector(
 # (U+202A-U+202E), word joiner and invisible operators (U+2060-U+2064),
 # a stray BOM (U+FEFF), bidi isolates (U+2066-U+2069), soft hyphen
 # (U+00AD), and Unicode tag characters (U+E0000-U+E007F).
+INVISIBLE_CHARS = re.compile(
+    "[­​-‏‪-‮⁠-⁩﻿\U000e0000-\U000e007f]"
+)
+
 INVISIBLE = Detector(
     id="inspect.invisible",
-    patterns=(
-        re.compile(
-            "[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff\U000e0000-\U000e007f]"
-        ),
-    ),
+    patterns=(INVISIBLE_CHARS,),
     action=Action.clean,
     precheck=lambda line: not line.isascii(),
 )
-
-INVISIBLE_CHARS = INVISIBLE.patterns[0]
 
 
 def scan(output: str, detectors: tuple[Detector, ...]) -> list[Finding]:
