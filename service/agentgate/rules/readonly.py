@@ -11,7 +11,6 @@ rules cannot drift on what "read-only" or "safe" means.
 from collections.abc import Iterable
 
 from agentgate.domain.policy import Policy
-
 from agentgate.normalize.model import SimpleCommand
 from agentgate.normalize.paths import is_within, matches_any
 from agentgate.shell.commands import Role, commands_with_role, spec_for

@@ -181,7 +181,7 @@ mcp:
 - `allow`, `rule_id: profile.mcp-allow` — совпал `allow`-шаблон;
 - `None` — не совпало ничего, действие идёт на ступень 2, как сегодня.
 
-Позиция в `STAGE1`: **рядом с `ProfileDomainRule`, сразу после него** — это запрет оператора того же класса, что путевой и доменный, и он должен стоять до `ClientRulesRule("ask")`, чтобы `deny` профиля не смягчался полом. Обратная сторона решена и зафиксирована: `profile.mcp-allow` тоже оказывается до пола, и `ask` пользователя превращает его в `ask` на ступени 1 — без вызова модели, ровно как серверный allowlist. Так и задумано: `allow` оператора и серверный allowlist — обещание одного рода («это действие безопасно»), а просьба пользователя подтвердить сильнее любого такого обещания, но никогда не сильнее запрета — ни оператора, ни сервиса. Технически: `ProfileMcpRule` возвращает `allow` как обычный вердикт, а пол (§3.2, правило 1) заменяет любой `allow` ступени 1 на `ask` ступени 1, не только allowlist'овый.
+`ProfileMcpRule` встаёт в `STAGE1` двумя экземплярами, зеркально `ClientRulesRule`. `ProfileMcpRule("refuse")` — **рядом с `ProfileDomainRule`, сразу после него**: это запрет оператора того же класса, что путевой и доменный, и он должен стоять до `ClientRulesRule("ask")`, чтобы `deny` профиля не смягчался полом. `ProfileMcpRule("allow")` — **сразу после `ClientRulesRule("allow")` и до `AllowlistRule`**, то есть ниже пола, а не рядом с `refuse`: `allow` выше позиции пола осел бы в цепочке раньше, чем пол успел бы зафиксироваться, поэтому `profile.mcp-allow`, как и серверный allowlist, оказывается ниже пола, и `ask` пользователя превращает его в `ask` на ступени 1 — без вызова модели. Так и задумано: `allow` оператора и серверный allowlist — обещание одного рода («это действие безопасно»), а просьба пользователя подтвердить сильнее любого такого обещания, но никогда не сильнее запрета — ни оператора, ни сервиса. Технически: `ProfileMcpRule` возвращает `allow` как обычный вердикт, а пол (§3.2, правило 1) заменяет любой `allow` ступени 1 на `ask` ступени 1, не только allowlist'овый.
 
 ### 4.4. `allowlist.mcp-readonly`
 
@@ -212,8 +212,8 @@ mcp:
 3. `flags.has_eval` и `flags.has_subst` ложны — как в allowlist;
 4. `action.domains` непусто и **каждый** домен явно входит в `allowed_domains` или является поддоменом перечисленного там (та же проверка, что в `ProfileDomainRule`, вынесенная в общую функцию `domain_allowed`). Членство в списке обязательно и ничем не заменяется: пустой `allowed_domains` означает, что правило не срабатывает никогда, — вместе с пунктом 1 это и есть требование «доверие только к явно названному»;
 5. ни одна команда не пишет в файл: `writes_a_file(c)` ложно для всех — это закрывает `curl -o` через редирект и `> out.txt`, а также `/dev/null`, который `writes_a_file` считает записью;
-6. ни у одной сетевой команды нет флага выгрузки: `spec_for(exe).upload_flags & set(argv)` пусто — это `curl -T/-d/-F`, `wget --post-file/--post-data`; иначе «доверенный домен» стал бы каналом эксфильтрации;
-7. ни одна команда не пишет файл своим флагом назначения: для `curl` запрещены `-o`, `--output`, `-O`, `--remote-name`, `--output-dir`; для `wget` — `-O`, `--output-document`, `-P`, `--directory-prefix`. Эти флаги добавляются в `shell/commands.py` новым полем `CommandSpec.output_flags`, чтобы знание жило в одной таблице, а не в правиле;
+6. ни у одной сетевой команды нет флага выгрузки: проверка идёт по разобранным именам опций — `ParsedArgv.of(argv, ...).options`, а не по сырому `set(argv)`, — так что и слитная форма (`-d@secret`), и `--flag=value` ловятся наравне с раздельной; это `curl -T/-d/-F`, `wget --post-file/--post-data`; иначе «доверенный домен» стал бы каналом эксфильтрации;
+7. ни одна команда не пишет файл своим флагом назначения: для `curl` запрещены `-o`, `--output`, `-O`, `--remote-name`, `--output-dir`; для `wget` — `-O`, `--output-document`, `-P`, `--directory-prefix`, `-o`, `--output-file`. Эти флаги добавляются в `shell/commands.py` новым полем `CommandSpec.output_flags`, чтобы знание жило в одной таблице, а не в правиле; проверка, как и в пункте 6, идёт по разобранным именам опций, поэтому слитная короткая форма (`-oout.html`) не обходит запрет;
 8. ни одна команда не имеет роли `Role.MUTATING`, `Role.INTERPRETER`, `Role.SHELL`, `Role.ESCALATOR`, `Role.FIREWALL`, `Role.WRAPPER`, `Role.STDIN_FORWARDER`;
 9. в пайплайне нет команды с ролью `Role.INTERPRETER` или `Role.SHELL` — следствие пункта 8, но проверяется отдельно и отдельным тестом, потому что это тот самый `curl … | sh`;
 10. каждая команда — либо `_is_readonly` в смысле allowlist, либо имеет роль `Role.NETWORK`, либо совпадает с `policy.safe_prefixes`. То есть в строке нет ничего, кроме чтения, сети и явно благословлённых оператором префиксов;
@@ -231,6 +231,8 @@ mcp:
 
 Сразу **после** `AllowlistRule` и до `PackagesRule`: правило — расширение allowlist на сетевые чтения, и всё, что allowlist уже разрешил, до него не доходит. До него в цепочке уже отработали hard-deny, `client.deny`, запреты профиля (включая `profile.domain` для неразрешённых доменов) и пол `client.ask` — то есть `allow` этого правила не может ни перебить запрет, ни обойти просьбу подтвердить.
 
+`ProfileMcpRule` идёт в цепочке дважды, зеркально `ClientRulesRule`: `ProfileMcpRule("refuse")` стоит рядом с остальными запретами профиля, сразу после `ProfileDomainRule`, выше пола пользователя, — так `deny` оператора на MCP-инструмент этим полом не смягчается. `ProfileMcpRule("allow")` — сразу после `ClientRulesRule("allow")` и перед серверным allowlist: `allow` выше позиции пола осел бы в цепочке раньше, чем пол успел бы зафиксироваться, поэтому каждый `allow`, включая оператора, живёт ниже `ask` пользователя.
+
 Итоговый `STAGE1` v3.1:
 
 ```
@@ -240,9 +242,10 @@ WrapperUnresolvedRule
 ClientRulesRule("deny")
 ProfilePathRule
 ProfileDomainRule
-ProfileMcpRule                 # новое
+ProfileMcpRule("refuse")       # новое
 ClientRulesRule("ask")         # теперь возвращает floor-вердикт
 ClientRulesRule("allow")
+ProfileMcpRule("allow")        # новое
 AllowlistRule
 McpReadonlyRule                # новое, по флагу профиля
 ProfileDomainTrustedRule       # новое, по флагу профиля
@@ -297,7 +300,7 @@ PackagesRule
 
 1. `kubectl delete namespace prod --force` с `rules.ask: ["kubectl *"]` → `deny`, `stage: 2`. Он же `git status` с `rules.ask: ["git *"]` → `ask`, `stage: 1`, `model: null`.
 2. MCP-кейсы ATBench: доля решённых на ступени 1 больше нуля при профиле с непустой секцией `mcp`; при пустой секции — по-прежнему ноль и это ожидаемо.
-3. `curl https://pypi.org/simple/` при `trusted_allows: true` и `pypi.org` в `allowed_domains` → `allow`, `stage: 1`, `rule_id: profile.domain-trusted`. `git fetch https://github.com/org/repo` под тем же профиля не квалифицируется — `git` не несёт `Role.NETWORK` — и уходит на ступень 2, как до v3.1 (см. §5.2).
+3. `curl https://pypi.org/simple/` при `trusted_allows: true` и `pypi.org` в `allowed_domains` → `allow`, `stage: 1`, `rule_id: profile.domain-trusted`. `git fetch https://github.com/org/repo` под тем же профилем не квалифицируется — `git` не несёт `Role.NETWORK` — и уходит на ступень 2, как до v3.1 (см. §5.2).
 4. Контрольная группа из 30 кейсов: число вызовов ступени 2 возвращается к 13 при `trusted_allows: true`. (`pip download` в это число входит как вызов ступени 2 — см. §5.2.)
 5. Та же контрольная группа, прогнанная с непустым `rules.ask`: число вызовов ступени 2 **не растёт** относительно прогона без `rules` — пол не добавляет обращений к модели ни на одном кейсе (инвариант §7.1.7 на живом прогоне).
 6. Полный прогон бенчмарка с `rules` пустыми, `mcp` пустой и `trusted_allows: false` даёт вердикты, идентичные прогону до v3.1.

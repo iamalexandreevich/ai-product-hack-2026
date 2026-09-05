@@ -83,7 +83,8 @@ class ProfileDomainTrustedRule:
         if writes_a_file(command):
             return False
         spec = spec_for(command.argv[0])
-        option_names = {o.name for o in ParsedArgv.of(command.argv, spec.value_flags).options}
+        value_flags = spec.value_flags | spec.upload_flags | spec.output_flags
+        option_names = {o.name for o in ParsedArgv.of(command.argv, value_flags).options}
         if spec.upload_flags & option_names or spec.output_flags & option_names:
             return False
         if _FORBIDDEN_ROLES & spec.roles:
