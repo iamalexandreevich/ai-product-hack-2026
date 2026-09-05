@@ -33,7 +33,9 @@ def extract_domains(argv: Sequence[str]) -> list[str]:
                 # still makes the whole action unparseable).
                 host = None
         else:
-            m = _SCP_LIKE.match(token)
+            # A remote never contains whitespace; "Accept: text/html" or a
+            # commit message with a colon is prose, not a host:path.
+            m = None if any(c.isspace() for c in token) else _SCP_LIKE.match(token)
             if m and ("/" in token or "@" in token):
                 host = m.group(1)
             elif cmd in _REMOTE_CMDS:
