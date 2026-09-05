@@ -12,11 +12,19 @@ on an error path.
 
 Neither persistence nor how a classifier talks to a model is this module's
 concern -- see agentgate.store.writer and agentgate.classify.llm.
+
+A floor is the one thing between stage 1 and stage 2 that is not a
+decision: the user asked to confirm a class of actions, so the outcome may
+not end up softer than `ask`. It never buys a call to the model. Where
+stage 1 already answered `allow`, the deterministic layer has proved the
+action safe and a floor simply settles it as `ask` at stage 1; where stage
+1 said nothing, stage 2 runs exactly as it would have, and the floor is
+applied to its verdict afterwards.
 """
 
 import logging
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 
 from ulid import ULID
@@ -34,7 +42,7 @@ from agentgate.normalize import normalize
 from agentgate.normalize.model import NormalizedAction
 from agentgate.profiles.loader import detect_workspace
 from agentgate.profiles.schema import Profile
-from agentgate.rules.base import RuleChain
+from agentgate.rules.base import ChainOutcome, RuleChain
 from agentgate.session.cache_key import NO_RULES_DIGEST, allow_cache_key
 from agentgate.session.escalation import should_escalate
 
@@ -144,15 +152,17 @@ class Gate:
     ) -> tuple[Verdict, Dialogue | None]:
         """The verdict, and the dialogue the classifier saw -- None when stage 1 settled it."""
         with timings.stage(1):
-            verdict = self._rules.evaluate(action, context.policy)
-        if verdict is not None:
-            return verdict, None
+            outcome = self._rules.run(action, context.policy)
+        settled = _settled_at_stage1(outcome)
+        if settled is not None:
+            return settled, None
         with timings.stage(2):
             case = ReviewCase.build(action, request.user_request, dialogue, context.policy, STAGE1_PASSED)
-            return await context.classifier.classify(case), case.dialogue
+            verdict = await context.classifier.classify(case)
+        return _under_floor(verdict, outcome.floor), case.dialogue
 
     def _escalate(self, state: SessionState | None, policy: Policy, verdict: Verdict) -> Verdict:
-        if state is None or verdict.hard or verdict.decision is DecisionKind.ask:
+        if state is None or not verdict.escalatable or verdict.decision is DecisionKind.ask:
             return verdict
         if not should_escalate(state, policy.escalation):
             return verdict
@@ -184,3 +194,34 @@ class Gate:
             action=action, state=state, cache_key=cache_key, cached=cached,
             history_digest=history_digest, dialogue=dialogue,
         )
+
+
+def _settled_at_stage1(outcome: ChainOutcome) -> Verdict | None:
+    """What stage 1 answers once its floor is taken into account.
+
+    A stage-1 verdict at least as strict as the floor stands as it is --
+    that is every denial, all of which sit above the floor in the chain. An
+    `allow` under a floor becomes the floor itself, at stage 1 and with no
+    model call: the deterministic layer has already proved the action safe,
+    so nothing stricter than `ask` could honestly come back from stage 2.
+    """
+    if outcome.verdict is None:
+        return None
+    if outcome.floor is None or outcome.verdict.strictness >= outcome.floor.strictness:
+        return outcome.verdict
+    return replace(outcome.floor, floor=False)
+
+
+def _under_floor(verdict: Verdict, floor: Verdict | None) -> Verdict:
+    """A stage-2 verdict raised to the floor, keeping everything the model
+    actually produced.
+
+    Only the decision and the rule_id move: the reason, the model, the
+    stage-2 latency and the cost belong to the call that was made and paid
+    for. A verdict that failed closed keeps its own identity -- it is
+    already an `ask`, and relabelling it `client.ask` would hide that the
+    classifier never answered.
+    """
+    if floor is None or verdict.error is not None or verdict.strictness > floor.strictness:
+        return verdict
+    return replace(verdict, decision=floor.decision, rule_id=floor.rule_id)
