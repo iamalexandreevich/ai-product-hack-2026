@@ -5,7 +5,7 @@ each other -- renaming a test module must not break three others.
 from collections.abc import Callable
 from datetime import datetime, timezone
 
-from agentgate.api.schemas import DecideRequest, DecisionKind, Turn
+from agentgate.api.schemas import DecideRequest, DecisionKind, RuleSet, Turn
 from agentgate.classify.base import Classifier, ReviewCase
 from agentgate.domain.dialogue import Dialogue
 from agentgate.domain.policy import Policy
@@ -55,6 +55,12 @@ def minimal_profile_data(**overrides) -> dict:
     }
     data.update(overrides)
     return data
+
+
+def rule_set(**overrides) -> RuleSet:
+    data = dict(version=1, level="medium", allow=["git status", "git diff*"], ask=["curl *"], deny=["sudo *", "**/.env"])
+    data.update(overrides)
+    return RuleSet.model_validate(data)
 
 
 def policy(**overrides) -> Policy:
