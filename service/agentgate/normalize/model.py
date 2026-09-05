@@ -64,6 +64,13 @@ class NormalizedAction:
     def executables(self) -> list[str]:
         return [c.argv[0] for c in self.commands if c.argv]
 
+    @property
+    def mcp_name(self) -> str | None:
+        """`server.tool` of an MCP call (`github.get_issue`), or None for anything else."""
+        if self.tool is not Tool.mcp_call or self.mcp is None:
+            return None
+        return f"{self.mcp.server}.{self.mcp.tool}"
+
     def to_dict(self) -> dict:
         data = asdict(self)
         data["tool"] = self.tool.value

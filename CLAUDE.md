@@ -4,7 +4,7 @@
 
 Дорожная карта версий (v1→v5: контекст на v1–v4, независимость от провайдера модели на v5), принятая владельцем продукта: `docs/superpowers/service/specs/context-versions-roadmap.md`. Стоимость решения в ответе (из трёх запрошенных полей два уже есть, нужна только цена): `docs/superpowers/service/specs/response-cost-reporting.md`. Спека API-ключей: `docs/superpowers/service/specs/api-keys.md`. Спека деплоя: `docs/superpowers/service/specs/deploy.md`. Деплой v1.5 за HTTPS и подключение команды: `docs/superpowers/service/specs/2026-09-04-deploy-public-endpoint-design.md`, страница интегратора — `docs/connect.md`. Сверка с контрактом адаптера (Gate↔Guard) и расхождение по fail-open/fail-closed: `docs/superpowers/service/specs/adapter-contract-gap-analysis.md`. Спека v2 (история диалога, идемпотентность, `protocol`): `docs/superpowers/service/specs/2026-09-04-agentgate-v2-design.md`, план — `docs/superpowers/service/plans/2026-09-04-agentgate-v2-dialogue-context.md`. Спека v3 (правила пользователя, `/v1/inspect`): `docs/superpowers/service/specs/2026-09-04-agentgate-v3-rules-and-inspect-design.md`, план — `docs/superpowers/service/plans/2026-09-04-agentgate-v3-rules-and-inspect.md`, отчёт — `docs/reports/task-22-v3-rules-and-inspect.md`. Спека v3.1 (упорядочение строгости клиентских правил, MCP на ступени 1, доверенные домены): `docs/superpowers/service/specs/2026-09-05-agentgate-v3.1-rule-strictness-mcp-domains-design.md`. Спека v4 (Context Guard: спаны от модели, маскирование секретов): `docs/superpowers/service/specs/2026-09-05-agentgate-v4-context-guard-design.md`.
 
-## Что построено (v3 по функциям, v1.5 по форме кода)
+## Что построено (v3.1 по функциям, v1.5 по форме кода)
 
 Отдельный сервис между кодинг-агентом и ОС. `POST /v1/decide` получает одно действие плюс последний запрос пользователя и возвращает `allow | deny(reason, suggest) | ask`. Каскад: нормализация по AST → ступень 1 (hard-deny, профиль, allowlist, без LLM) → ступень 2 (LLM через OpenAI-совместимый API, structured output) → эскалация. Решения пишутся в Postgres и в JSONL после отправки ответа. С v2 запрос несёт `history` (ходы диалога с `role` и `author`), ответ и `/healthz` — `protocol`, заголовок `Idempotency-Key` даёт повтор решения без второй строки и без сдвига счётчиков.
 
@@ -20,15 +20,17 @@
 - **Одна таблица знаний о командах.** `agentgate/shell/commands.py` (`CommandSpec`, `COMMANDS`) вместо одиннадцати множеств в пяти файлах: добавить команду — одна строка.
 - **`contracts/openapi.yaml` порождается приложением** (`service/scripts/export_openapi.py`, 96 строк вместо 886 рукописных); `tests/test_contracts.py` падает, если документ разошёлся с тем, что сервис реально отдаёт.
 
+С v3.1 упорядочена строгость. Клиентский `ask` больше не вердикт ступени 1, а **пол**: `Verdict.floor`, `ChainOutcome` (`rules/base.py`), применение в `Gate._evaluate`. Пол не даёт исходу быть мягче `ask` и при этом не добавляет ни одного вызова модели: `allow` ступени 1 под полом становится `ask` на ступени 1 с `model: null`, а там, где ступень 2 и так вызывалась, пол применяется к её вердикту (`deny` побеждает, `allow` поднимается, при равенстве в ответ идёт `rule_id: client.ask`, а `reason`/`model`/`latency`/`cost` — от классификатора). `client.deny` освобождён от эскалации свойством `Verdict.escalatable`. Ступень 1 научилась судить `mcp_call`: канонический вид `server.tool` в клиентских правилах, `ProfileMcpRule` (`mcp: {allow, ask, deny}` профиля) рядом с запретами профиля и `McpReadonlyRule` по префиксам имени под флагом `mcp.readonly_prefixes_allow`. Разрешённый домен может дать `allow` — но только через отдельное правило `ProfileDomainTrustedRule` под `network.trusted_allows: true` и только при выполнении всех одиннадцати условий §5.2 спеки; `allowed_domains` остаётся запретительными воротами.
+
 Реализованные HTTP-эндпоинты: `POST /v1/decide`, `POST /v1/inspect`, `GET /v1/decisions` (с фильтром `?kind=decide|inspect`), `GET /v1/profiles/{profile_id}`, `GET /healthz` (см. `service/agentgate/api/app.py`). Аутентификация: статический токен (`AGENTGATE_TOKEN`) и/или выданные API-ключи — см. «API-ключи» ниже.
 
 ## Папки и кто в них пишет
 
 - `service/` — ядро сервиса (направление 2). Подробные правила и карта модулей — `service/CLAUDE.md`. Коротко, пакеты `service/agentgate/`:
-  - `domain/` — чистые типы без I/O: `verdict.py`, `policy.py` (`Profile` ⊗ workspace), `session.py`, `dialogue.py`, `replay.py`. Единственный ход против «сверху вниз» здесь намеренный: `domain/replay.py` импортирует `engine.decision`, потому что повтор строится из сохранённой формы решения (`DecisionRecord`), а не из чего-то более раннего.
+  - `domain/` — чистые типы без I/O: `verdict.py`, `domains.py` (`domain_allowed`, одна проверка домена на два правила), `policy.py` (`Profile` ⊗ workspace), `session.py`, `dialogue.py`, `replay.py`. Единственный ход против «сверху вниз» здесь намеренный: `domain/replay.py` импортирует `engine.decision`, потому что повтор строится из сохранённой формы решения (`DecisionRecord`), а не из чего-то более раннего.
   - `shell/` — синтаксис и семантика shell без политики: `commands.py`, `argv.py`, `wrappers.py`, `paths.py`, `secrets.py`.
   - `normalize/` — `DecideRequest` → `NormalizedAction`.
-  - `rules/` — ступень 1: `base.py` (`Rule`, `RuleChain`), `chain.py` (`STAGE1`), по модулю на правило, включая `client_rules.py`.
+  - `rules/` — ступень 1: `base.py` (`Rule`, `RuleChain`), `chain.py` (`STAGE1`), по модулю на правило, включая `client_rules.py`, `profile_mcp.py`, `mcp_readonly.py`, `profile_domain_trusted.py`.
   - `classify/` — ступень 2: `base.py` (`Classifier`), `llm.py`, `prompt.py`, `render.py`, `schema.py`, `client.py`.
   - `inspect/` — каскад inspect: `detectors.py`, `chain.py` (`INSPECT_STAGE1`), `mask.py`, `classify.py`.
   - `engine/` — оркестрация: `gate.py`, `decision.py`, `inspector.py`, `inspection.py`, `timings.py`.
@@ -52,6 +54,7 @@
 - Только Postgres (asyncpg). SQLite не поддерживается.
 - Ретраев к LLM нет: один вызов, один таймаут.
 - Не в v1: PostToolUse/observe, история диалога (с v2 есть), модуль пакетов, ступень 3, override, панель, обучение. Дорожная карта по истории — `context-versions-roadmap.md`.
+- Клиентские правила поднимают пол и никогда не опускают потолок: `client.deny` строже любого запрета сервиса, `client.ask` не отменяет ни один `deny`.
 
 ## API-ключи
 
@@ -85,7 +88,12 @@
 - **`mask` — построчная замена.** Флагованная строка заменяется целиком; перефразированные инъекции, которые не ловятся регуляркой, детекторами не берутся — это семантика, то есть v4.
 - **Вердикт ступени 2 inspect кэшируется по содержимому**, как прямо требует §5.5 спеки («кэшируются все три вердикта»), хотя он зависит от `[TASK]` и `[HISTORY]` и потому не детерминирован по одному лишь содержимому. Расхождение вынесено владельцу как открытый вопрос, поведение оставлено по спеке.
 - **`$(…)` в argv не раскрывается на ступени 1.** `$(echo rm) -rf ./dist` не получает вердикта ступени 1: флаг `has_subst` уводит действие на ступень 2. Поведение нормализатора до v3, спека v3 его не меняет.
-- **`client.deny` может быть поднят эскалацией до `ask`** — так же, как сегодня `profile.path`. От эскалации спека защищает только hard-deny.
+- **`git fetch` и хосты без схемы уходят на ступень 2 даже под `trusted_allows`.** `ProfileDomainTrustedRule` требует `Tool.shell` с распознанными доменами в `action.domains`; хост без явной схемы (`git@github.com:org/repo.git`, голый `example.com` без `http(s)://`) нормализатор в `action.domains` не кладёт, поэтому правило молчит и решение принимает классификатор — это не баг правила, а следствие того, что домен без схемы неоднозначен.
+- **Клиентское правило не может назвать MCP-сервер с `/` в имени.** `is_path_pattern` (`domain/client_rules.py`) читает `/` как признак пути, поэтому шаблон `org/github.*` в `rules` уходит в путевые и никогда не сопоставится с MCP-вызовом; валидации на это нет, ограничение только описано в `contracts/README.md` и `docs/connect.md`.
+- **Read-only префиксы MCP — константа модуля, не поле профиля.** `READONLY_PREFIXES` в `agentgate/rules/mcp_readonly.py` (`get_`, `list_`, `search_`, `read_`, `describe_`) нельзя расширить через YAML; свой список выражается через `mcp.allow` с глобами.
+- **`trusted_allows` покрывает только `curl`/`wget -O -` с read-only флагами.** `profile.domain-trusted` проверяет каждую опцию сетевой команды закрытым списком (`CommandSpec.read_only_flags`, заполнен только для `curl` и `wget`); всё остальное — любой другой сетевой инструмент, `wget` без явного вывода в stdout, любой неразобранный флаг — уходит на ступень 2, а не получает `allow`. `McpReadonlyRule` сопоставляет только имя MCP-инструмента (`get_`/`list_`/`search_`/`read_`/`describe_`) — сервер, на котором инструмент вызывается, не проверяется: `evil-mcp.get_all_secrets` квалифицируется наравне с `github.get_issue`.
+- **`profile_hash` изменился у всех профилей в v3.1** из-за новых полей `network.trusted_allows` и `mcp` с умолчаниями — allow-кэш прогревается заново, старые записи в ленте отличаются хэшем от новых, миграции данных это не требует.
+- **`profile.domain` в `network.mode: ask` по-прежнему закрывает цепочку до ступени 2.** В отличие от `client.ask` и (с этого раунда) `profile.mcp-ask`, доменное правило профиля в режиме `ask` остаётся settling-вердиктом, а не полом — поведение до v3.1, сознательно не тронуто.
 - **CRLF-нормализация замаскированных строк.** Замаскированная строка подставляется целиком, поэтому строка, оканчивавшаяся `\r\n`, возвращается с обычным `\n`. Незамаскированные строки не трогаются.
 - **Латентность детекторов на плотном по подсказкам тексте ~15 мс при бюджете 20 мс на 256 КБ** (обычный лог — ~3,3 мс). Запас 1,3×; новый детектор с широкими `hints` его съест.
 - **Маскирование секретов и маскирование по спанам от модели — v4.** Сейчас ступень 2 отвечает одной буквой (`P`/`M`/`D`), а не диапазонами текста, и `.env`-подобные значения в выводе инструмента не маскируются.

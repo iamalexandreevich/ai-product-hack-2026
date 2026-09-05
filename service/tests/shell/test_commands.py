@@ -43,6 +43,27 @@ def test_an_unknown_commands_arguments_are_not_declared_paths():
     assert spec.path_arguments is PathArguments.UNDECLARED
 
 
+def test_curl_declares_the_flags_that_write_a_file():
+    flags = spec_for("curl").output_flags
+    assert {"-o", "--output", "-O", "--remote-name", "--output-dir"} <= flags
+
+
+def test_wget_declares_the_flags_that_write_a_file():
+    flags = spec_for("wget").output_flags
+    assert {
+        "-O", "--output-document", "-P", "--directory-prefix",
+        "-o", "--output-file",
+    } <= flags
+
+
+def test_a_command_with_no_row_declares_no_output_flags():
+    assert spec_for("definitely-not-a-command").output_flags == frozenset()
+
+
+def test_a_reading_command_declares_no_output_flags():
+    assert spec_for("cat").output_flags == frozenset()
+
+
 def test_a_new_command_is_one_row():
     table = {**COMMANDS, "shred-plus": CommandSpec(
         name="shred-plus",

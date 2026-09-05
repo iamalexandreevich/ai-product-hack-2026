@@ -17,9 +17,16 @@ can even disagree about family: GitForceRule is `hard-deny.git-force`
 with `hard = True`, yet emits `ambiguous.git-force` when it recognizes a
 force push whose target it cannot pin down. Match on `rule_id` to
 identify an outcome, on `id` to identify a rule.
+
+A rule may also answer with a floor -- a verdict carrying `floor=True`.
+That is not a decision: the chain records the first one it is given and
+keeps running, so a floor can never switch off a stricter rule below it.
+`run` returns both halves; `evaluate` is the projection for callers that
+only care what the chain decided.
 """
 
 from collections.abc import Sequence
+from dataclasses import dataclass, replace
 from typing import Protocol
 
 from agentgate.domain.policy import Policy
@@ -34,6 +41,32 @@ class Rule(Protocol):
     def evaluate(self, action: NormalizedAction, policy: Policy) -> Verdict | None: ...
 
 
+@dataclass(frozen=True)
+class ChainOutcome:
+    """What one pass of the chain produced: at most one decision, and at
+    most one lower bound on strictness for whatever decides next."""
+
+    verdict: Verdict | None = None
+    floor: Verdict | None = None
+
+    def settled(self) -> Verdict | None:
+        """What stage 1 answers once its own floor is taken into account.
+
+        A stage-1 verdict at least as strict as the floor stands as it
+        is -- that covers every denial, all of which sit above the floor
+        in the chain, and a tie keeps the rule that actually answered.
+        An `allow` under a floor becomes the floor itself, settled at
+        stage 1 with no model call: the deterministic layer has already
+        proved the action safe, so nothing stricter than `ask` could
+        honestly come back from stage 2.
+        """
+        if self.verdict is None:
+            return None
+        if self.floor is None or self.verdict.strictness >= self.floor.strictness:
+            return self.verdict
+        return replace(self.floor, floor=False)
+
+
 class RuleChain:
     """Runs rules in order and returns the first verdict; the order the
     chain is built in is the whole of stage 1's priority policy.
@@ -42,9 +75,19 @@ class RuleChain:
     def __init__(self, rules: Sequence[Rule]) -> None:
         self._rules = tuple(rules)
 
-    def evaluate(self, action: NormalizedAction, policy: Policy) -> Verdict | None:
+    def run(self, action: NormalizedAction, policy: Policy) -> ChainOutcome:
+        floor: Verdict | None = None
         for rule in self._rules:
             verdict = rule.evaluate(action, policy)
-            if verdict is not None:
-                return verdict
-        return None
+            if verdict is None:
+                continue
+            if verdict.floor:
+                # The first floor is the strictest by position, so a later
+                # one never replaces it.
+                floor = floor if floor is not None else verdict
+                continue
+            return ChainOutcome(verdict=verdict, floor=floor)
+        return ChainOutcome(verdict=None, floor=floor)
+
+    def evaluate(self, action: NormalizedAction, policy: Policy) -> Verdict | None:
+        return self.run(action, policy).verdict

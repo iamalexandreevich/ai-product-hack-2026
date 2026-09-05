@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from agentgate.profiles.schema import DenyWindow, History, InspectSettings, ModelConfig, NetworkMode, PerTurnChars, Profile
+from agentgate.profiles.schema import DenyWindow, History, InspectSettings, McpPolicy, ModelConfig, NetworkMode, PerTurnChars, Profile
 from tests.factories import minimal_profile_data, profile
 
 
@@ -119,3 +119,43 @@ def test_model_config_rejects_only_input_price():
 def test_model_config_rejects_only_output_price():
     with pytest.raises(ValueError):
         ModelConfig(base_url="http://x/v1", model="q", price_per_1m_output=0.60)
+
+
+def test_trusted_allows_defaults_to_false():
+    p = Profile.model_validate(minimal_profile_data())
+    assert p.network.trusted_allows is False
+
+
+def test_trusted_allows_is_read_from_the_profile():
+    p = Profile.model_validate(minimal_profile_data(
+        network={"mode": "allowlist", "allowed_domains": ["pypi.org"], "trusted_allows": True}
+    ))
+    assert p.network.trusted_allows is True
+
+
+def test_mcp_section_defaults_to_empty_and_off():
+    p = Profile.model_validate(minimal_profile_data())
+    assert p.mcp == McpPolicy()
+    assert p.mcp.allow == []
+    assert p.mcp.ask == []
+    assert p.mcp.deny == []
+    assert p.mcp.readonly_prefixes_allow is False
+
+
+def test_mcp_section_is_read_from_the_profile():
+    p = Profile.model_validate(minimal_profile_data(mcp={
+        "allow": ["github.get_*"], "ask": ["github.create_*"],
+        "deny": ["*.delete_*"], "readonly_prefixes_allow": True,
+    }))
+    assert p.mcp.allow == ["github.get_*"]
+    assert p.mcp.deny == ["*.delete_*"]
+    assert p.mcp.readonly_prefixes_allow is True
+
+
+def test_the_new_fields_enter_the_profile_hash():
+    plain = Profile.model_validate(minimal_profile_data())
+    with_mcp = Profile.model_validate(minimal_profile_data(mcp={"deny": ["*.delete_*"]}))
+    trusted = Profile.model_validate(minimal_profile_data(
+        network={"mode": "allowlist", "allowed_domains": ["pypi.org"], "trusted_allows": True}
+    ))
+    assert len({plain.profile_hash(), with_mcp.profile_hash(), trusted.profile_hash()}) == 3

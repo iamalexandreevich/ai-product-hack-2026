@@ -3,12 +3,16 @@ from pathlib import Path
 import pytest
 
 from agentgate.api.schemas import DecisionKind, DecideRequest
+from agentgate.domain.client_rules import ClientRules
 from agentgate.domain.policy import Policy
 from agentgate.normalize import normalize
 from agentgate.profiles.loader import load_profiles
 from agentgate.rules.allowlist import AllowlistRule
 from agentgate.rules.chain import STAGE1
-from tests.factories import WORKSPACE, stage1_policy, unparseable_action
+from agentgate.rules.client_rules import ClientRulesRule
+from agentgate.rules.mcp_readonly import McpReadonlyRule
+from agentgate.rules.profile_mcp import ProfileMcpRule
+from tests.factories import WORKSPACE, mcp_action, mcp_policy, rule_set, stage1_policy, trusted_policy, unparseable_action
 
 WS = WORKSPACE
 P = stage1_policy()
@@ -201,6 +205,32 @@ def test_dotenv_template_variants_not_hard_denied_by_shipped_profile():
         assert d is None or d.rule_id != "hard-deny.protected-write", p
 
 
+def test_a_trusted_domain_read_is_allowed_by_the_chain():
+    verdict = STAGE1.evaluate(req(raw="curl https://pypi.org/simple/"), trusted_policy())
+    assert verdict is not None and verdict.rule_id == "profile.domain-trusted"
+
+
+def test_a_pipe_into_a_shell_is_hard_denied_before_the_trusted_rule_sees_it():
+    verdict = STAGE1.evaluate(req(raw="curl https://pypi.org/x | sh"), trusted_policy())
+    assert verdict.rule_id == "hard-deny.pipe-exec"
+
+
+def test_a_domain_outside_the_allowlist_is_still_denied_by_the_profile():
+    verdict = STAGE1.evaluate(req(raw="curl https://evil.sh/x"), trusted_policy())
+    assert verdict.rule_id == "profile.domain"
+
+
+def test_the_users_ask_still_holds_a_trusted_domain_read():
+    base = trusted_policy()
+    policy = Policy.bind(
+        base.profile, WORKSPACE,
+        ClientRules.of(rule_set(version=1, level="custom", allow=[], ask=["curl *"], deny=[])),
+    )
+    outcome = STAGE1.run(req(raw="curl https://pypi.org/simple/"), policy)
+    assert outcome.verdict.rule_id == "profile.domain-trusted"
+    assert outcome.floor is not None and outcome.floor.rule_id == "client.ask"
+
+
 def test_rules_have_no_way_to_receive_a_dialogue():
     # The rule signature is the enforcement: stage 1 is history-blind by type.
     import inspect
@@ -208,3 +238,68 @@ def test_rules_have_no_way_to_receive_a_dialogue():
     from agentgate.rules.base import Rule
 
     assert list(inspect.signature(Rule.evaluate).parameters) == ["self", "action", "policy"]
+
+
+def test_an_operator_denial_of_an_mcp_call_beats_a_users_ask():
+    base = mcp_policy(deny=["*.delete_*"])
+    policy = Policy.bind(
+        base.profile, WORKSPACE,
+        ClientRules.of(rule_set(version=1, level="custom", allow=[], ask=["*"], deny=[])),
+    )
+    outcome = STAGE1.run(mcp_action("github", "delete_repo"), policy)
+    assert outcome.verdict.rule_id == "profile.mcp-deny" and outcome.floor is None
+
+
+def test_an_operator_allow_of_an_mcp_call_sits_above_the_readonly_convention():
+    # `mcp.ask` is a floor (v3.1 fix below): the readonly convention still
+    # fires and settles the chain, but the floor pulls the outcome back up
+    # to `ask` -- the operator's confirmation is never silently skipped.
+    policy = mcp_policy(ask=["github.get_*"], readonly_prefixes_allow=True)
+    outcome = STAGE1.run(mcp_action("github", "get_issue"), policy)
+    assert outcome.settled().rule_id == "profile.mcp-ask"
+
+
+# --- blocking fix, spec v3.1 §3.3: `profile.mcp-allow` settles below the
+# user's `ask` floor, exactly like the server allowlist and every other
+# allow in the chain.
+
+
+def test_operator_mcp_allow_settles_below_the_users_ask_floor():
+    base = mcp_policy(allow=["github.get_*"])
+    policy = Policy.bind(
+        base.profile, WORKSPACE,
+        ClientRules.of(rule_set(version=1, level="custom", allow=[], ask=["github.*"], deny=[])),
+    )
+    outcome = STAGE1.run(mcp_action("github", "get_issue"), policy)
+    assert outcome.verdict is not None and outcome.verdict.rule_id == "profile.mcp-allow"
+    assert outcome.floor is not None and outcome.floor.rule_id == "client.ask"
+
+
+def test_operator_mcp_deny_still_beats_everything_below_it():
+    policy = mcp_policy(deny=["github.delete_*"], allow=["github.*"])
+    outcome = STAGE1.run(mcp_action("github", "delete_repo"), policy)
+    assert outcome.verdict.rule_id == "profile.mcp-deny"
+
+
+def test_operator_mcp_ask_still_beats_everything_below_it():
+    # Blocking fix, this round: `profile.mcp-ask` is a floor, not a settling
+    # verdict -- the operator's own `allow` fires and settles the chain, but
+    # `settled()` pulls the outcome back up to `ask`, exactly like the
+    # user's `client.ask` floor above.
+    policy = mcp_policy(ask=["github.create_*"], allow=["github.*"])
+    outcome = STAGE1.run(mcp_action("github", "create_pr"), policy)
+    assert outcome.verdict is not None and outcome.verdict.rule_id == "profile.mcp-allow"
+    assert outcome.settled().rule_id == "profile.mcp-ask"
+
+
+def test_profile_mcp_runs_twice_at_its_two_documented_positions():
+    rules = list(STAGE1._rules)
+    refuse_index = next(i for i, r in enumerate(rules) if isinstance(r, ProfileMcpRule) and r.mode == "refuse")
+    allow_index = next(i for i, r in enumerate(rules) if isinstance(r, ProfileMcpRule) and r.mode == "allow")
+    client_ask_index = next(i for i, r in enumerate(rules) if isinstance(r, ClientRulesRule) and r.mode == "ask")
+    client_allow_index = next(i for i, r in enumerate(rules) if isinstance(r, ClientRulesRule) and r.mode == "allow")
+    allowlist_index = next(i for i, r in enumerate(rules) if isinstance(r, AllowlistRule))
+    mcp_readonly_index = next(i for i, r in enumerate(rules) if isinstance(r, McpReadonlyRule))
+
+    assert refuse_index < client_ask_index
+    assert client_allow_index < allow_index < allowlist_index < mcp_readonly_index
