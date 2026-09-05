@@ -193,3 +193,59 @@ def test_scan_p50_under_20ms_for_256kb_corpus(corpus_factory):
         assert scan(text, INSPECT_STAGE1) == []
     p50 = _p50_ms(text)
     assert p50 <= 20.0, f"p50={p50:.3f}ms"
+
+
+def _single_line_of_at_least(unit: str, total_bytes: int = 262_144) -> str:
+    repeats = total_bytes // len(unit.encode()) + 1
+    return unit * repeats
+
+
+def _open_html_comments_corpus() -> str:
+    # Many `<!--` openers, each followed by a hint word, none ever closed:
+    # the pattern this defends against is a single greedy `<!--.*hint.*-->`
+    # retrying its `.*` at every opener and re-scanning to end of line.
+    return _single_line_of_at_least("<!-- ignore instructions ")
+
+
+def _unclosed_pipe_exec_corpus() -> str:
+    # Many `curl ... |` starts with no interpreter ever following the pipe.
+    return _single_line_of_at_least("curl http://example/x | ")
+
+
+def _near_base64_run_corpus() -> str:
+    # Runs of 512 base64-alphabet characters (one short of the 513
+    # threshold), each broken by a non-matching character.
+    return _single_line_of_at_least("A" * 512 + "#")
+
+
+def _hint_dense_prose_single_line_corpus() -> str:
+    return _single_line_of_at_least(
+        "the user asked the system about developer mode instructions and to ignore or disregard them, "
+    )
+
+
+def _many_empty_lines_corpus() -> str:
+    return "\n" * 262_144
+
+
+@pytest.mark.parametrize(
+    "corpus_factory",
+    [
+        _open_html_comments_corpus,
+        _unclosed_pipe_exec_corpus,
+        _near_base64_run_corpus,
+        _hint_dense_prose_single_line_corpus,
+        _many_empty_lines_corpus,
+    ],
+    ids=[
+        "open_html_comments",
+        "unclosed_pipe_exec",
+        "near_base64_run",
+        "hint_dense_prose_single_line",
+        "many_empty_lines",
+    ],
+)
+def test_scan_p50_under_20ms_for_adversarial_single_line_corpus(corpus_factory):
+    text = corpus_factory()
+    p50 = _p50_ms(text)
+    assert p50 <= 20.0, f"p50={p50:.3f}ms"
