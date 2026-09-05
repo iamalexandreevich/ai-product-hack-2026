@@ -15,7 +15,7 @@ def test_inspection_response_and_record_share_one_source():
     assert record.raw == i.request.output
     assert record.call_id == "c1"
     assert record.provenance == {"kind": "shell", "command": "git status"}
-    assert record.normalized == {"tool_name": "bash", "status": "completed", "provenance": record.provenance}
+    assert record.normalized == {"tool_name": "bash", "status": "completed"}
 
 
 def test_pass_has_no_output_and_empty_reason():

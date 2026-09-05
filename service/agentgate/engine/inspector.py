@@ -12,14 +12,13 @@ classifier only ever re-judges it.
 import hashlib
 import logging
 from collections.abc import Mapping
-from dataclasses import replace
 from datetime import datetime, timezone
 
 from ulid import ULID
 
 from agentgate.api.schemas import InspectRequest, InspectVerdict
 from agentgate.domain.dialogue import Dialogue
-from agentgate.domain.inspect_cache import InspectCache, inspect_cache_key
+from agentgate.domain.inspect_cache import InspectCache
 from agentgate.domain.policy import Policy
 from agentgate.engine.inspection import Inspection
 from agentgate.engine.timings import Timings
@@ -28,6 +27,7 @@ from agentgate.inspect.detectors import Detector, Finding, scan
 from agentgate.inspect.mask import Stage1Outcome, apply
 from agentgate.profiles.loader import detect_workspace
 from agentgate.profiles.schema import Profile
+from agentgate.session.cache_key import inspect_cache_key
 
 log = logging.getLogger(__name__)
 
@@ -40,7 +40,7 @@ class Inspector:
         profiles: Mapping[str, Profile],
         default_profile: str,
         detectors: tuple[Detector, ...],
-        cache: InspectCache,
+        cache: InspectCache[Inspection],
         ttl_seconds: int = 86400,
         classifiers: Mapping[str, Mapping[str, InspectClassifier]] | None = None,
     ) -> None:
@@ -55,21 +55,25 @@ class Inspector:
         timings = Timings()
         inspection_id = str(ULID())
         profile_id = request.profile_id or self._default_profile
-        profile = self._profiles.get(profile_id)
-        if profile is None:
+        try:
+            profile = self._profiles.get(profile_id)
+            if profile is None:
+                return self._refuse(
+                    inspection_id, request, timings, profile_id, "", "api.unknown-profile",
+                    f"unknown profile '{profile_id}'",
+                )
+            policy = Policy.bind(profile, detect_workspace(request.args.cwd))
+            key = inspect_cache_key(policy.profile_hash, request.provenance.kind, _digest(request.output))
+        except Exception:  # noqa: BLE001 - a bug resolving the policy must read as drop, never as pass
+            log.exception("inspect prelude raised")
             return self._refuse(
-                inspection_id, request, timings, profile_id, "", "api.unknown-profile",
-                f"unknown profile '{profile_id}'",
+                inspection_id, request, timings, profile_id, "", "api.internal-error", "internal error",
+                error="unexpected",
             )
-        policy = Policy.bind(profile, detect_workspace(request.args.cwd))
-        key = inspect_cache_key(policy.profile_hash, request.provenance.kind, _digest(request.output))
 
         hit = await self._cached(key)
         if hit is not None:
-            return replace(
-                hit, id=inspection_id, ts=datetime.now(timezone.utc), request=request,
-                cached=True, latency=timings.finish(),
-            )
+            return self._from_cache(hit, inspection_id, request, timings)
 
         try:
             with timings.stage(1):
@@ -102,6 +106,27 @@ class Inspector:
         )
         await self._remember(key, inspection)
         return inspection
+
+    def _from_cache(
+        self, hit: Inspection, inspection_id: str, request: InspectRequest, timings: Timings,
+    ) -> Inspection:
+        """Rebuild a cache hit as its own answer, at stage 0 (spec 5.5).
+
+        Only the verdict-bearing fields of `hit` survive: what content was
+        judged and how. Everything specific to the call that produced it --
+        `error`, `raw_response`, `idempotency_key` -- is dropped rather than
+        copied, since this call had none of those; carrying them forward
+        would misreport this call as having failed, produced a raw model
+        response, or been submitted under someone else's idempotency key.
+        `model` and `findings` stay: the verdict is deterministic on
+        content, so they still describe why it was reached.
+        """
+        return Inspection(
+            id=inspection_id, ts=datetime.now(timezone.utc), request=request, verdict=hit.verdict,
+            latency=timings.finish(), profile_id=hit.profile_id, profile_hash=hit.profile_hash,
+            replacement=hit.replacement, reason=hit.reason, suggest=hit.suggest, stage=0,
+            rule_id=hit.rule_id, model=hit.model, cached=True, findings=hit.findings,
+        )
 
     def _should_classify(self, policy: Policy, outcome: Stage1Outcome, findings: list[Finding]) -> bool:
         if policy.inspect.classifier != "on-flag":

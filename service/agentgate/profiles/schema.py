@@ -97,7 +97,7 @@ class History(BaseModel):
         }[role]
 
 
-class Inspect(BaseModel):
+class InspectSettings(BaseModel):
     """How the inspect route judges a tool result beyond stage 1."""
 
     classifier: Literal["off", "on-flag"] = "off"
@@ -119,7 +119,7 @@ class Profile(BaseModel):
     prose: Prose = Field(default_factory=Prose)
     history: History = Field(default_factory=History)
     rules: list[dict[str, Any]] = Field(default_factory=list)
-    inspect: Inspect = Field(default_factory=Inspect)
+    inspect: InspectSettings = Field(default_factory=InspectSettings)
 
     @cached_property
     def _hash(self) -> str:

@@ -30,7 +30,7 @@ async def test_an_expired_entry_is_swept_without_ever_being_read():
     clock.advance(11)
     for i in range(SWEEP_EVERY):
         await cache.put(f"k{i}", inspection(), 60)
-    assert "stale" not in cache._items
+    assert await cache.get("stale") is None
 
 
 async def test_the_oldest_entry_is_evicted_when_the_cap_is_reached():

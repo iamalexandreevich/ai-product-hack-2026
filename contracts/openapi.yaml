@@ -1109,7 +1109,7 @@ components:
         is already budgeted in characters. `budget_chars` is measured on the
         JSON-escaped content the prompt emits, so control-heavy tool output
         counts at its rendered size; `per_turn_chars` caps raw characters.
-    Inspect:
+    InspectSettings:
       properties:
         classifier:
           type: string
@@ -1119,7 +1119,7 @@ components:
           title: Classifier
           default: 'off'
       type: object
-      title: Inspect
+      title: InspectSettings
       description: How the inspect route judges a tool result beyond stage 1.
     InspectVerdict:
       type: string
@@ -1303,7 +1303,7 @@ components:
           type: array
           title: Rules
         inspect:
-          $ref: '#/components/schemas/Inspect'
+          $ref: '#/components/schemas/InspectSettings'
       type: object
       required:
       - id

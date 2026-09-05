@@ -1,9 +1,11 @@
 from datetime import datetime, timezone
 
+import pytest
+
 from agentgate.api.schemas import PROTOCOL, DecisionKind
 from agentgate.domain.dialogue import Dialogue
 from agentgate.domain.verdict import Verdict
-from agentgate.engine.decision import Decision
+from agentgate.engine.decision import Decision, WrongRecordKind
 from agentgate.engine.timings import Latency
 from tests.factories import decide_request, dialogue, rule_set, session_state, turn
 
@@ -32,12 +34,14 @@ def test_response_decision_id_is_the_decision_id():
 
 def test_response_latency_comes_from_the_measured_stages():
     response = decision().to_response()
-    assert response.latency_ms.stage1 == 1 and response.latency_ms.stage2 is None
+    assert response.latency_ms.stage1 == 1
+    assert response.latency_ms.stage2 is None
 
 
 def test_record_exposes_both_id_and_decision_id():
     dumped = decision().to_record().model_dump(mode="json")
-    assert dumped["id"] == "01J0" and dumped["decision_id"] == "01J0"
+    assert dumped["id"] == "01J0"
+    assert dumped["decision_id"] == "01J0"
 
 
 def test_record_normalized_is_empty_when_nothing_was_normalized():
@@ -51,12 +55,15 @@ def test_record_does_not_smuggle_the_cache_key_into_normalized():
 
 def test_record_ts_serializes_as_an_iso_string():
     dumped = decision().to_record().model_dump(mode="json")
-    assert isinstance(dumped["ts"], str) and dumped["ts"].startswith(str(datetime.now(timezone.utc).year))
+    assert isinstance(dumped["ts"], str)
+    assert dumped["ts"].startswith(str(datetime.now(timezone.utc).year))
 
 
 def test_record_carries_protocol_history_digest_and_idempotency_key():
     record = decision(history_digest="d" * 64, idempotency_key="k1").to_record()
-    assert record.protocol == PROTOCOL and record.history_digest == "d" * 64 and record.idempotency_key == "k1"
+    assert record.protocol == PROTOCOL
+    assert record.history_digest == "d" * 64
+    assert record.idempotency_key == "k1"
 
 
 def test_record_history_is_the_fitted_dialogue_the_model_saw():
@@ -95,10 +102,22 @@ def test_response_carries_the_protocol():
 
 def test_record_kind_defaults_to_decide_and_carries_call_id_and_rules():
     record = decision(request=decide_request("ls -la", call_id="c9", rules=rule_set().model_dump())).to_record()
-    assert record.kind == "decide" and record.call_id == "c9"
-    assert record.rules_level == "medium" and len(record.rules_digest) == 64
+    assert record.kind == "decide"
+    assert record.call_id == "c9"
+    assert record.rules_level == "medium"
+    assert len(record.rules_digest) == 64
     plain = decision().to_record()
-    assert plain.rules_level is None and plain.rules_digest is None and plain.provenance is None and plain.replacement is None
+    assert plain.rules_level is None
+    assert plain.rules_digest is None
+    assert plain.provenance is None
+    assert plain.replacement is None
+
+
+def test_to_inspect_response_on_a_decide_record_raises_wrong_record_kind():
+    record = decision().to_record()
+    assert record.kind == "decide"
+    with pytest.raises(WrongRecordKind):
+        record.to_inspect_response()
 
 
 def test_allow_cache_entry_is_the_session_and_key_of_a_fresh_allow_only():

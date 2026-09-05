@@ -48,9 +48,7 @@ class Inspection:
         return DecisionRecord(
             id=self.id, session_id=self.request.session_id, ts=self.ts, harness=self.request.harness,
             tool=self.request.tool, raw=self.request.output,
-            normalized={
-                "tool_name": self.request.tool_name, "status": self.request.status.value, "provenance": provenance,
-            },
+            normalized={"tool_name": self.request.tool_name, "status": self.request.status.value},
             user_request=self.request.user_request, profile_id=self.profile_id, profile_hash=self.profile_hash,
             decision=self.verdict, reason=self.reason, suggest=self.suggest, stage=self.stage, rule_id=self.rule_id,
             model=self.model, model_raw_response=self.raw_response,

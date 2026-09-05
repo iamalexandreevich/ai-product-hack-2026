@@ -1,63 +1,44 @@
 """In-memory replay store, and the one that restores itself from Postgres.
 
-TTL runs on a monotonic clock, like the allow cache. Restoring reads the
-keyed decisions younger than the TTL and puts each back with whatever of
-its TTL remains; a restore that fails leaves the store empty and says so
-in the log -- a duplicate after a failed restore costs one extra decision,
-never a wrong one.
+TTL runs on a monotonic clock, like the allow cache; the sweep/cap/evict
+mechanics live in `TtlStore` and are shared with the inspect cache.
+Restoring reads the keyed decisions younger than the TTL and puts each
+back with whatever of its TTL remains; a restore that fails leaves the
+store empty and says so in the log -- a duplicate after a failed restore
+costs one extra decision, never a wrong one.
 
 An idempotency key is read at most once, so nothing but a `put` ever
-notices that an entry has expired. Two bounds keep the store from growing
-for a whole TTL of traffic: every `SWEEP_EVERY` puts drop everything past
-its expiry, and `max_entries` caps what is left, evicting in insertion
-order.
+notices that an entry has expired.
 """
 
 import logging
 import time
-from collections import OrderedDict
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import Protocol
 
 from agentgate.domain.replay import Replay, ReplayStore
 from agentgate.engine.decision import DecisionRecord
+from agentgate.session.ttl_store import SWEEP_EVERY, TtlStore
 
 log = logging.getLogger(__name__)
 
-SWEEP_EVERY = 256
+__all__ = ["SWEEP_EVERY", "InMemoryReplayStore", "PersistentReplayStore", "ReplayRecords"]
 
 
 class InMemoryReplayStore:
     def __init__(self, now: Callable[[], float] = time.monotonic, max_entries: int = 100_000) -> None:
-        self._now = now
-        self._max_entries = max_entries
-        self._puts = 0
-        self._items: OrderedDict[str, tuple[Replay, float]] = OrderedDict()
+        self._store: TtlStore[Replay] = TtlStore(now=now, max_entries=max_entries)
+
+    @property
+    def _items(self):
+        return self._store._items
 
     async def get(self, key: str) -> Replay | None:
-        item = self._items.get(key)
-        if item is None:
-            return None
-        replay, expires = item
-        if self._now() >= expires:
-            del self._items[key]
-            return None
-        return replay
+        return await self._store.get(key)
 
     async def put(self, key: str, replay: Replay, ttl_seconds: int) -> None:
-        self._puts += 1
-        if self._puts % SWEEP_EVERY == 0:
-            self._sweep()
-        self._items.pop(key, None)
-        self._items[key] = (replay, self._now() + ttl_seconds)
-        while len(self._items) > self._max_entries:
-            self._items.popitem(last=False)
-
-    def _sweep(self) -> None:
-        now = self._now()
-        for key in [k for k, (_, expires) in self._items.items() if now >= expires]:
-            del self._items[key]
+        await self._store.put(key, replay, ttl_seconds)
 
 
 class ReplayRecords(Protocol):

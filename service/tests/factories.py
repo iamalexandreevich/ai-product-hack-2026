@@ -4,10 +4,12 @@ each other -- renaming a test module must not break three others.
 
 from collections.abc import Callable
 from datetime import datetime, timezone
+from typing import Any
 
 from agentgate.api.schemas import DecideRequest, DecisionKind, InspectRequest, InspectVerdict, RuleSet, Turn
 from agentgate.classify.base import Classifier, ReviewCase
 from agentgate.domain.dialogue import Dialogue
+from agentgate.domain.inspect_cache import InspectCache
 from agentgate.domain.policy import Policy
 from agentgate.domain.session import SessionState, SessionStateStore
 from agentgate.domain.verdict import Verdict
@@ -18,6 +20,7 @@ from agentgate.engine.inspector import Inspector
 from agentgate.engine.timings import Latency
 from agentgate.inspect.chain import INSPECT_STAGE1
 from agentgate.inspect.classify import InspectCase, InspectClassifier, InspectVerdictOutcome
+from agentgate.inspect.detectors import Detector
 from agentgate.normalize import normalize
 from agentgate.normalize.model import NormalizedAction
 from agentgate.profiles.schema import Profile
@@ -403,7 +406,12 @@ class FakeInspectClassifier:
         )
 
 
-def inspector(cache=None, detectors=INSPECT_STAGE1, classifier: InspectClassifier | None = None, **profile_overrides) -> Inspector:
+def inspector(
+    cache: InspectCache[Inspection] | None = None,
+    detectors: tuple[Detector, ...] = INSPECT_STAGE1,
+    classifier: InspectClassifier | None = None,
+    **profile_overrides: Any,
+) -> Inspector:
     """An Inspector over "default" and "other" profiles, both sharing the given classifier."""
     classifiers = None
     if classifier is not None:

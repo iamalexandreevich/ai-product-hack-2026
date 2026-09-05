@@ -44,6 +44,11 @@ from agentgate.engine.timings import Latency
 from agentgate.normalize.model import NormalizedAction
 
 
+class WrongRecordKind(ValueError):
+    """Raised when a projection is asked of a `DecisionRecord` whose `kind`
+    does not support it -- e.g. `to_inspect_response` on a `decide` record."""
+
+
 class DecisionRecord(BaseModel):
     """One stored decision, as returned in the `/v1/decisions` items array.
     Everything a `DecideResponse` carries is here, plus the request it
@@ -140,21 +145,26 @@ class DecisionRecord(BaseModel):
         decision and the one replayed for a repeated `Idempotency-Key` alike."""
         return DecideResponse(
             decision=self.decision, reason=self.reason, suggest=self.suggest, stage=self.stage,
-            rule_id=self.rule_id, model=self.model,
-            latency_ms=LatencyMs(
-                stage1=self.latency_stage1_ms, stage2=self.latency_stage2_ms, total=self.latency_total_ms
-            ),
+            rule_id=self.rule_id, model=self.model, latency_ms=self._latency_ms(),
             cached=self.cached, decision_id=self.id, protocol=self.protocol,
         )
 
     def to_inspect_response(self) -> InspectResponse:
+        """The wire answer for the inspect route. Only defined for a record
+        of `kind == "inspect"` -- calling it on a `decide` record would cast
+        a `DecisionKind` into `InspectVerdict`, which is not a valid verdict
+        on either side."""
+        if self.kind != "inspect":
+            raise WrongRecordKind(f"to_inspect_response() called on a {self.kind!r} record")
         return InspectResponse(
             verdict=InspectVerdict(self.decision), output=self.replacement, reason=self.reason, suggest=self.suggest,
-            stage=self.stage, rule_id=self.rule_id, model=self.model,
-            latency_ms=LatencyMs(
-                stage1=self.latency_stage1_ms, stage2=self.latency_stage2_ms, total=self.latency_total_ms
-            ),
+            stage=self.stage, rule_id=self.rule_id, model=self.model, latency_ms=self._latency_ms(),
             cached=self.cached, decision_id=self.id, protocol=self.protocol,
+        )
+
+    def _latency_ms(self) -> LatencyMs:
+        return LatencyMs(
+            stage1=self.latency_stage1_ms, stage2=self.latency_stage2_ms, total=self.latency_total_ms
         )
 
 
