@@ -15,8 +15,11 @@ Neighbor: feat/v3.1-strictness-mcp-domains runs in the main checkout (another se
 | 1 | 7 spans | e2c9627 | 5cc1532 | sonnet DONE | wave review pending | merged be5d3ea |
 | 1 | 9 cache key | e2c9627 | a43b718 | sonnet DONE_W_CONCERNS: shared-DB flakiness only | wave review pending | merged be5d3ea |
 | 1 | 10 storage | e2c9627 | d7f73e0 | sonnet DONE | wave review pending | merged be5d3ea |
-| 2 | 8 cascade + acceptance | be5d3ea | | opus, wt v4-t8 | | running |
-| 3 | 12 docs + report | | | | | |
+| 2 | 8 cascade + acceptance | 86a4aa0 | ab800a5 | opus DONE, wt v4-t8 | final spec + quality reviews → fix rounds 2, 3 | **done**, merged 7840c7b |
+| — | fix round 1 (wave-1 reviews) | 7840c7b | 2e0ebd7 | opus DONE, wt v4-fix1 | — | **done**, merged 562aa75 |
+| — | fix round 2 (final quality review) | 562aa75 | 51fb9ab | opus DONE, wt v4-fix2 | — | **done**, merged 5b7ca44 |
+| — | fix round 3 (final spec review) | 5b7ca44 | 35c697e | controller | — | **done** |
+| 3 | 12 docs + report | 383e59d | 35c697e | controller | — | **done**: docs/reports/task-24-v4-context-guard.md |
 
 ## Cadence
 
@@ -24,3 +27,5 @@ Wave 1 runs seven implementers in parallel worktrees; reviews (spec, then qualit
 Known merge points inside wave 1: tasks 2 and 7 each add one constant to `inspect/mask.py` that task 1 also adds — identical lines, resolved by taking task 1's file.
 
 Wave 1 merged as be5d3ea: 1140 tests green on agentgate_test_v4, contracts clean. Reviews of the merged wave run in the background while task 8 starts.
+
+Final: 35c697e, 1215 tests green on agentgate_test_v4, contracts clean. Wave-1 reviews: spec ЕСТЬ РАСХОЖДЕНИЯ (1 crit, fixed by task 8 + pinned), quality NEEDS FIXES (1 crit cache key, fixed). Final reviews: quality NEEDS FIXES (1 crit cache key provenance digest, fixed), spec ЕСТЬ РАСХОЖДЕНИЯ (0 crit, 1 important encoded lift, fixed).
