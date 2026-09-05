@@ -14,6 +14,7 @@ from httpx import ASGITransport
 from agentgate.api.app import create_app
 from agentgate.api.schemas import HISTORY_MAX_TURNS, PROTOCOL, DecisionKind
 from agentgate.config import Settings
+from agentgate.domain.replay import ReplayKey
 from agentgate.engine.gate import Gate
 from agentgate.log.jsonl import JsonlLogger
 from agentgate.rules.chain import STAGE1
@@ -542,7 +543,7 @@ async def test_a_replay_store_given_to_the_app_is_the_one_used(tmp_path):
     replay = InMemoryReplayStore()
     app, _, _, _ = build(tmp_path, replay=replay)
     await call(app, "POST", "/v1/decide", json=body(), headers={"idempotency-key": "seen"})
-    assert (await replay.get("token:seen")) is not None
+    assert (await replay.get(ReplayKey.of(None, "s1", "seen").storage_key())) is not None
 
 
 async def test_a_colliding_key_from_another_session_never_replays_and_hard_deny_still_wins(tmp_path):
@@ -763,7 +764,7 @@ async def test_an_inspect_verdict_records_the_key_id_too(tmp_path):
     assert drepo.rows[-1].to_record().key_id == "key-9"
 
 
-# --- replay namespaced by principal ------------------------------------------
+# --- replay namespaced by principal and session ------------------------------
 
 
 async def test_a_repeat_under_another_key_is_decided_afresh(tmp_path):
@@ -792,3 +793,39 @@ async def test_a_repeat_under_the_same_key_is_still_replayed(tmp_path):
     second = await call(app, "POST", "/v1/decide", json=body(), headers=headers)
 
     assert first.json()["decision_id"] == second.json()["decision_id"]
+
+
+async def test_the_same_key_in_another_session_is_decided_afresh(tmp_path):
+    app, drepo, _, _ = build(tmp_path)
+    headers = {"idempotency-key": "shared"}
+
+    first = await call(app, "POST", "/v1/decide", json=body(session_id="s1"), headers=headers)
+    second = await call(app, "POST", "/v1/decide", json=body(session_id="s2"), headers=headers)
+
+    assert first.json()["decision_id"] != second.json()["decision_id"]
+    assert len(drepo.rows) == 2
+
+
+async def test_the_same_key_in_the_same_session_is_still_replayed(tmp_path):
+    app, drepo, _, _ = build(tmp_path)
+    headers = {"idempotency-key": "shared"}
+
+    first = await call(app, "POST", "/v1/decide", json=body(session_id="s1"), headers=headers)
+    second = await call(app, "POST", "/v1/decide", json=body(session_id="s1"), headers=headers)
+
+    assert first.json()["decision_id"] == second.json()["decision_id"]
+    assert len(drepo.rows) == 1
+
+
+async def test_two_sessionless_calls_share_one_slot(tmp_path):
+    # "-" is a namespace, not an exemption: a caller without a session still
+    # gets replays, it simply shares them with every other sessionless call of
+    # the same principal -- and the digest keeps that from being a wrong answer.
+    app, drepo, _, _ = build(tmp_path)
+    headers = {"idempotency-key": "shared"}
+
+    first = await call(app, "POST", "/v1/decide", json=body(session_id=None), headers=headers)
+    second = await call(app, "POST", "/v1/decide", json=body(session_id=None), headers=headers)
+
+    assert first.json()["decision_id"] == second.json()["decision_id"]
+    assert len(drepo.rows) == 1

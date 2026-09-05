@@ -16,8 +16,16 @@ under `ReplayKey` -- the key namespaced by the principal that supplied it
 (the issued key's id, or "token" for the static one) -- and `answers`
 checks the principal again, so a store that flattened the namespace still
 could not hand one caller another's verdict.
+
+A principal running two sessions under one key is a third way to collide:
+without the session in the namespace, the two sessions' entries would evict
+each other and neither would ever be replayed. `ReplayKey` therefore also
+carries the session (or `NO_SESSION` for a call that named none), encoded
+as a JSON array so that no character inside a session id or the caller's
+key can be mistaken for a field separator between the three parts.
 """
 
+import json
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -26,25 +34,33 @@ from agentgate.engine.decision import DecisionRecord
 
 from agentgate.domain.principal import STATIC_PRINCIPAL, principal_of  # noqa: F401  (re-exported)
 
+NO_SESSION = "-"
+
 
 @dataclass(frozen=True)
 class ReplayKey:
-    """The caller-supplied key, namespaced by whoever supplied it.
+    """The caller-supplied key, namespaced by whoever supplied it and where.
 
     The key is chosen by the caller and was global to the service until
     this type existed: two integrators picking the same string shared one
     entry, and one of them lost the audit row to the other's unique index.
+    The session is the second half of that story -- one integrator running
+    two sessions under one key had the two entries evict each other, so
+    neither was ever replayed.
     """
 
     principal: str
+    session: str
     key: str
 
     @classmethod
-    def of(cls, key_id: str | None, key: str) -> "ReplayKey":
-        return cls(principal_of(key_id), key)
+    def of(cls, key_id: str | None, session_id: str | None, key: str) -> "ReplayKey":
+        return cls(principal_of(key_id), session_id or NO_SESSION, key)
 
     def storage_key(self) -> str:
-        return f"{self.principal}:{self.key}"
+        # A JSON array, not a "principal:session:key" join: either field could
+        # itself contain ":" and alias a different triple onto the same slot.
+        return json.dumps([self.principal, self.session, self.key], separators=(",", ":"), ensure_ascii=False)
 
 
 @dataclass(frozen=True)

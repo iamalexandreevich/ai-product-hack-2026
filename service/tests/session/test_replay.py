@@ -1,7 +1,7 @@
 import logging
 from datetime import datetime, timedelta, timezone
 
-from agentgate.domain.replay import Replay
+from agentgate.domain.replay import Replay, ReplayKey
 from agentgate.session.replay import SWEEP_EVERY, InMemoryReplayStore, PersistentReplayStore
 from tests.factories import FakeClock, FakeReplayRecords, decide_request, decision
 
@@ -11,6 +11,12 @@ def record(key: str = "k", age_seconds: int = 0):
         id="01J" + key[-3:].upper().ljust(3, "0"), idempotency_key=key,
         ts=datetime.now(timezone.utc) - timedelta(seconds=age_seconds),
     ).to_record()
+
+
+def stored_key(key: str, key_id: str | None = None, session_id: str | None = "s1") -> str:
+    """The storage key a restored record of `record`/`keyed_record` lands
+    under -- their `decide_request` default is `session_id="s1"`."""
+    return ReplayKey.of(key_id, session_id, key).storage_key()
 
 
 def replay(key: str = "k", age_seconds: int = 0) -> Replay:
@@ -77,18 +83,18 @@ async def test_restore_loads_keyed_rows_with_their_remaining_ttl():
     records = FakeReplayRecords([record("fresh", age_seconds=100), record("stale", age_seconds=90000)])
     store = PersistentReplayStore(inner, records, ttl_seconds=86400)
     await store.restore()
-    assert await store.get("token:fresh") is not None
-    assert await store.get("token:stale") is None
+    assert await store.get(stored_key("fresh")) is not None
+    assert await store.get(stored_key("stale")) is None
     assert records.cutoffs and records.cutoffs[0] < datetime.now(timezone.utc)
     clock.advance(86400 - 100 + 1)
-    assert await store.get("token:fresh") is None
+    assert await store.get(stored_key("fresh")) is None
 
 
 async def test_restore_keeps_the_identity_the_row_was_decided_for():
     stored = record("fresh", age_seconds=100)
     store = PersistentReplayStore(InMemoryReplayStore(), FakeReplayRecords([stored]), ttl_seconds=86400)
     await store.restore()
-    restored = await store.get("token:fresh")
+    restored = await store.get(stored_key("fresh"))
     assert restored.request_digest == decide_request("ls -la").identity_digest()
     assert restored.request_digest == stored.request_digest
 
@@ -105,7 +111,7 @@ async def test_restore_puts_an_entry_under_its_principals_key():
 
     await store.restore()
 
-    assert await inner.get("01HZKEYA:k") is not None
+    assert await inner.get(stored_key("k", "01HZKEYA")) is not None
     assert await inner.get("k") is None
 
 
@@ -115,7 +121,17 @@ async def test_restore_namespaces_a_static_token_entry_too():
 
     await store.restore()
 
-    assert await inner.get("token:k") is not None
+    assert await inner.get(stored_key("k")) is not None
+
+
+async def test_restore_puts_entries_under_the_principal_and_session():
+    inner = InMemoryReplayStore()
+    store = PersistentReplayStore(inner, FakeReplayRecords([record("k")]), ttl_seconds=60)
+
+    await store.restore()
+
+    assert await inner.get(stored_key("k")) is not None
+    assert await inner.get("token:k") is None
 
 
 async def test_restore_failure_starts_empty_and_warns(caplog):
@@ -142,7 +158,7 @@ async def test_restore_skips_one_unprojectable_record_without_failing_the_others
     )
     with caplog.at_level(logging.WARNING):
         await store.restore()
-    assert await store.get("token:before") is not None
-    assert await store.get("token:after") is not None
-    assert await store.get("token:bad") is None
+    assert await store.get(stored_key("before")) is not None
+    assert await store.get(stored_key("after")) is not None
+    assert await store.get(stored_key("bad")) is None
     assert bad.id in caplog.text
