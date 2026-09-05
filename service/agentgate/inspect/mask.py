@@ -18,7 +18,7 @@ thirty redacted values is exactly the result the agent must keep.
 
 from dataclasses import dataclass
 
-from agentgate.api.schemas import InspectVerdict, Span
+from agentgate.api.schemas import InspectVerdict, Span, SpanKind
 from agentgate.inspect.detectors import INVISIBLE_CHARS, Action, Finding
 
 REPLACEMENT_LINE = "[gate: instruction-like text removed]"
@@ -28,7 +28,7 @@ DROP_SHARE = 0.5
 SEMANTIC_RULE = "inspect.semantic"
 
 _PRECEDENCE = {Action.redact: 0, Action.clean: 1, Action.mask: 2}
-_KIND_BY_RULE = {
+_KIND_BY_RULE: dict[str, SpanKind] = {
     "inspect.injection": "instruction",
     "inspect.pipe-exec": "pipe-exec",
     "inspect.encoded": "encoded",

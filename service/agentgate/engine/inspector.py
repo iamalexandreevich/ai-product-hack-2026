@@ -32,10 +32,10 @@ from agentgate.domain.policy import Policy
 from agentgate.engine.inspection import Inspection
 from agentgate.engine.timings import Timings
 from agentgate.inspect.classify import InspectCase, InspectClassifier, InspectOutcome
-from agentgate.inspect.detectors import Action, Detector, Finding, scan
+from agentgate.inspect.detectors import INVISIBLE, Action, Detector, Finding, scan
 from agentgate.inspect.mask import Stage1Outcome, apply, redacted_lines
 from agentgate.inspect.reconcile import reconcile
-from agentgate.inspect.secrets import entropy_candidates_allowed, scan_secrets
+from agentgate.inspect.secrets import SECRET_RULE, entropy_candidates_allowed, scan_secrets
 from agentgate.inspect.segments import Segments
 from agentgate.inspect.segments import build as build_segments
 from agentgate.profiles.loader import detect_workspace
@@ -43,9 +43,6 @@ from agentgate.profiles.schema import Profile
 from agentgate.session.cache_key import inspect_cache_key
 
 log = logging.getLogger(__name__)
-
-_INVISIBLE_RULE = "inspect.invisible"
-_SECRET_RULE = "inspect.secret"
 
 
 @dataclass(frozen=True)
@@ -56,6 +53,15 @@ class _Context:
     cache_key: str
     dialogue: Dialogue
     entropy_candidates: bool
+
+
+@dataclass(frozen=True)
+class _Stage1:
+    """Everything stage 1 produced, before the classifier is consulted."""
+
+    findings: list[Finding]
+    outcome: Stage1Outcome
+    redacted_lines: list[str]
 
 
 @dataclass(frozen=True)
@@ -122,10 +128,7 @@ class Inspector:
 
         try:
             with timings.stage(1):
-                lines = request.output.split("\n")
-                findings = self._scan(request, policy, resolved.entropy_candidates)
-                outcome = apply(request.output, findings)
-                redacted = redacted_lines(lines, findings)
+                stage1 = self._stage1(request, policy, resolved.entropy_candidates)
         except Exception:  # noqa: BLE001 - a detector bug must read as drop, never as pass
             log.exception("inspect stage 1 raised")
             return self._refuse(
@@ -133,22 +136,16 @@ class Inspector:
                 "api.internal-error", "internal error", error="unexpected",
             )
 
-        result = _Stage2Result.from_stage1(outcome)
-        if self._should_classify(policy, findings):
+        result = _Stage2Result.from_stage1(stage1.outcome)
+        if self._should_classify(policy, stage1.findings):
             with timings.stage(2):
-                segments = build_segments(redacted, findings, policy.inspect.model_budget)
+                segments = build_segments(stage1.redacted_lines, stage1.findings, policy.inspect.model_budget)
                 result = await self._run_stage2(
-                    request, profile_id, policy, dialogue, findings, outcome, segments, result,
+                    request, profile_id, policy, dialogue, stage1.findings, stage1.outcome, segments, result,
                 )
 
-        inspection = Inspection(
-            id=inspection_id, ts=datetime.now(timezone.utc), request=request, verdict=result.verdict,
-            latency=timings.finish(), profile_id=profile_id, profile_hash=policy.profile_hash,
-            replacement=result.replacement, reason=result.reason, stage=result.stage, rule_id=result.rule_id,
-            model=result.model, error=result.error, findings=tuple(f.rule_id for f in findings), workspace=workspace,
-            cost=result.cost,
-            spans=result.spans, redacted=result.redacted, spans_rejected=result.spans_rejected,
-            redacted_output="\n".join(redacted) if any(f.action is Action.redact for f in findings) else None,
+        inspection = self._inspection(
+            inspection_id, request, timings, profile_id, policy.profile_hash, workspace, stage1, result,
         )
         if inspection.error is None:
             # An inspection whose stage 2 failed carries stage 1's verdict
@@ -184,6 +181,14 @@ class Inspector:
                 error="unexpected",
             )
 
+    def _stage1(self, request: InspectRequest, policy: Policy, entropy_candidates: bool) -> _Stage1:
+        findings = self._scan(request, policy, entropy_candidates)
+        return _Stage1(
+            findings=findings,
+            outcome=apply(request.output, findings),
+            redacted_lines=redacted_lines(request.output.split("\n"), findings),
+        )
+
     def _scan(self, request: InspectRequest, policy: Policy, entropy_candidates: bool) -> list[Finding]:
         """Stage 1's findings, secrets first: a value hidden here is hidden
         everywhere downstream, whatever a detector or the model says about
@@ -193,6 +198,21 @@ class Inspector:
             findings.extend(scan_secrets(request.output, entropy_candidates=entropy_candidates))
         findings.extend(scan(request.output, self._detectors))
         return findings
+
+    def _inspection(
+        self, inspection_id: str, request: InspectRequest, timings: Timings, profile_id: str, profile_hash: str,
+        workspace: str, stage1: _Stage1, result: _Stage2Result,
+    ) -> Inspection:
+        redacted = any(f.action is Action.redact for f in stage1.findings)
+        return Inspection(
+            id=inspection_id, ts=datetime.now(timezone.utc), request=request, verdict=result.verdict,
+            latency=timings.finish(), profile_id=profile_id, profile_hash=profile_hash,
+            replacement=result.replacement, reason=result.reason, stage=result.stage, rule_id=result.rule_id,
+            model=result.model, error=result.error, findings=tuple(f.rule_id for f in stage1.findings),
+            workspace=workspace, cost=result.cost,
+            spans=result.spans, redacted=result.redacted, spans_rejected=result.spans_rejected,
+            redacted_output="\n".join(stage1.redacted_lines) if redacted else None,
+        )
 
     async def _run_stage2(
         self, request: InspectRequest, profile_id: str, policy: Policy, dialogue: Dialogue,
@@ -280,9 +300,9 @@ def _asks_the_model(finding: Finding) -> bool:
     by form is not the model's call at all -- only a candidate flagged by
     entropy alone is, since only that one can be released.
     """
-    if finding.rule_id == _INVISIBLE_RULE:
+    if finding.rule_id == INVISIBLE.id:
         return False
-    if finding.rule_id == _SECRET_RULE:
+    if finding.rule_id == SECRET_RULE:
         return finding.candidate_key is not None
     return True
 

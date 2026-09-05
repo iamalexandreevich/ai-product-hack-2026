@@ -47,6 +47,12 @@ class Inspection:
     # `None` when nothing was redacted. This -- never `request.output` --
     # is what the record stores as `raw`: the service must not become the
     # long-term store of the secrets it hides.
+    #
+    # It is built from *all* redact findings, before `unredact` is applied,
+    # so a value the model released is visible to the agent in `replacement`
+    # and still hidden in `raw`. Deliberate: the audit trail errs toward
+    # hiding, and a model that releases a real secret must not thereby
+    # write it into the database.
     redacted_output: str | None = None
 
     def session_state(self) -> None:
