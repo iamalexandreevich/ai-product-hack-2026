@@ -173,8 +173,8 @@ class Inspector:
             intent = request.user_request or dialogue.last_human_request() or ""
             candidates = entropy_candidates_allowed(request.provenance, workspace)
             cache_key = inspect_cache_key(
-                policy.profile_hash, request.provenance.kind, _digest(request.output), _digest(intent),
-                dialogue.digest(), candidates,
+                policy.profile_hash, _digest(request.provenance.model_dump_json()), _digest(request.output),
+                _digest(intent), dialogue.digest(), candidates,
             )
             return _Context(policy=policy, cache_key=cache_key, dialogue=dialogue, entropy_candidates=candidates)
         except Exception:  # noqa: BLE001 - a bug resolving the policy must read as drop, never as pass

@@ -53,6 +53,16 @@ async def test_cache_key_depends_on_content_profile_and_provenance_kind():
     assert cache.puts == 3
 
 
+async def test_cache_key_distinguishes_two_urls_of_one_kind():
+    # The prompt renders the url, so a verdict about one page must not be
+    # replayed for another page carrying the same bytes.
+    cache = FakeInspectCache()
+    ins = inspector(cache=cache)
+    await ins.inspect(inspect_request("x\n", provenance={"kind": "web", "url": "https://docs.example/guide"}))
+    await ins.inspect(inspect_request("x\n", provenance={"kind": "web", "url": "https://evil.example/payload"}))
+    assert cache.puts == 2
+
+
 async def test_cache_key_distinguishes_two_tasks_with_one_output():
     cache = FakeInspectCache()
     ins = inspector(cache=cache)
