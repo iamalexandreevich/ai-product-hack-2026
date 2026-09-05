@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from agentgate.api.schemas import DecideRequest, DecideResponse
+from agentgate.api.schemas import DecideRequest, DecideResponse, InspectRequest, InspectResponse
 
 CONTRACTS = Path(__file__).resolve().parents[2] / "contracts"
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
@@ -44,6 +44,16 @@ def test_request_schema_matches_contract():
 def test_response_schema_matches_contract():
     committed = json.loads((CONTRACTS / "decide_response.schema.json").read_text())
     assert committed == DecideResponse.model_json_schema()
+
+
+def test_inspect_request_schema_matches_contract():
+    committed = json.loads((CONTRACTS / "inspect_request.schema.json").read_text())
+    assert committed == InspectRequest.model_json_schema()
+
+
+def test_inspect_response_schema_matches_contract():
+    committed = json.loads((CONTRACTS / "inspect_response.schema.json").read_text())
+    assert committed == InspectResponse.model_json_schema()
 
 
 def test_openapi_yaml_matches_what_the_app_generates(committed_openapi, generated_openapi):
@@ -118,6 +128,43 @@ def test_openapi_decide_examples_validate_against_the_models(committed_openapi):
             assert example["value"]["suggest"], name
 
 
+def test_openapi_inspect_examples_validate_against_the_models(committed_openapi):
+    """Same guarantee as `test_openapi_decide_examples_validate_against_the_models`,
+    for `/v1/inspect`: documented examples must parse against the real models."""
+    inspect = committed_openapi["paths"]["/v1/inspect"]["post"]
+    requests = inspect["requestBody"]["content"]["application/json"]["examples"]
+    responses = inspect["responses"]["200"]["content"]["application/json"]["examples"]
+
+    assert len(requests) >= 2
+    assert len(responses) >= 2
+
+    for name, example in requests.items():
+        assert InspectRequest.model_validate(example["value"]) is not None, name
+    for name, example in responses.items():
+        assert InspectResponse.model_validate(example["value"]) is not None, name
+
+    # Every request example has a response example of the same name.
+    assert set(requests) <= set(responses)
+
+    verdicts = {name: e["value"]["verdict"] for name, e in responses.items()}
+    assert {"mask", "pass"} <= set(verdicts.values())
+
+    # mask always carries an authoritative output.
+    for name, example in responses.items():
+        if example["value"]["verdict"] == "mask":
+            assert example["value"]["output"], name
+
+
+# `cost` is dropped from the wire form whenever stage 2 did not run
+# (`_drop_cost_when_stage2_did_not_run` pops it, never sends `null`), so a
+# stage-0/stage-1 example correctly omits the key instead of publishing
+# `"cost": null`, which the wire never emits. The per-field completeness
+# checks below exempt `cost` for that reason; `test_cost_examples_show_the_
+# field_as_the_wire_emits_it` below makes sure at least the stage-2
+# examples still show what the field looks like when it is present.
+_FIELDS_ABSENT_BY_DESIGN = {"cost"}
+
+
 def test_response_examples_show_every_response_field():
     """A response field missing from an example teaches an integrator that
     the field does not exist. Stricter than model_validate: pydantic accepts
@@ -125,13 +172,40 @@ def test_response_examples_show_every_response_field():
     from agentgate.api.examples import RESPONSE_EXAMPLES
     from agentgate.api.schemas import DecideResponse
 
+    required_fields = set(DecideResponse.model_fields) - _FIELDS_ABSENT_BY_DESIGN
     for name, example in RESPONSE_EXAMPLES.items():
-        assert set(example["value"]) == set(DecideResponse.model_fields), name
+        assert set(example["value"]) <= set(DecideResponse.model_fields), name
+        assert set(example["value"]) >= required_fields, name
+
+
+def test_inspect_response_examples_show_every_response_field():
+    """Same guarantee as `test_response_examples_show_every_response_field`, for
+    `INSPECT_RESPONSE_EXAMPLES`."""
+    from agentgate.api.examples import INSPECT_RESPONSE_EXAMPLES
+    from agentgate.api.schemas import InspectResponse
+
+    required_fields = set(InspectResponse.model_fields) - _FIELDS_ABSENT_BY_DESIGN
+    for name, example in INSPECT_RESPONSE_EXAMPLES.items():
+        assert set(example["value"]) <= set(InspectResponse.model_fields), name
+        assert set(example["value"]) >= required_fields, name
+
+
+def test_cost_examples_show_the_field_as_the_wire_emits_it():
+    """At least one example must carry a real `cost` object -- otherwise
+    exempting `cost` from the completeness checks above would let every
+    example quietly omit it without anything catching that."""
+    from agentgate.api.examples import RESPONSE_EXAMPLES
+
+    priced = {name: e["value"]["cost"] for name, e in RESPONSE_EXAMPLES.items() if "cost" in e["value"]}
+    assert priced, "no RESPONSE_EXAMPLES example carries a cost object"
+    for name, cost in priced.items():
+        assert cost is not None, name
 
 
 def test_openapi_documents_every_v1_endpoint(committed_openapi):
     assert set(committed_openapi["paths"]) == {
         "/v1/decide",
+        "/v1/inspect",
         "/v1/decisions",
         "/v1/profiles/{id}",
         "/healthz",
@@ -139,7 +213,7 @@ def test_openapi_documents_every_v1_endpoint(committed_openapi):
 
 
 def test_no_endpoint_is_marked_provisional(committed_openapi):
-    """All four routes are implemented — nothing in the document may still
+    """All five routes are implemented — nothing in the document may still
     describe one as unbuilt."""
     document = yaml.safe_dump(committed_openapi).lower()
     assert "provisional" not in document

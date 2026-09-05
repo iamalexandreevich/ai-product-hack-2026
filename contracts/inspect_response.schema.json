@@ -1,0 +1,204 @@
+{
+  "$defs": {
+    "Cost": {
+      "description": "Token usage of the stage-2 call, and its money cost when the operator\npriced the model in `profiles/schema.py::ModelConfig`.\n\n`amount` and `currency` are both absent from the wire form when the\noperator did not configure a price -- the tokens are still worth\nreporting, the money is not (see\ndocs/superpowers/service/specs/response-cost-reporting.md). This whole\nfield is absent from the response, not merely `null`, whenever stage 2\nwas not called: `allow` from stage 1 and `allow` from the cache cost\nnothing to compute, which is a different fact than \"we didn't count.\"",
+      "properties": {
+        "input_tokens": {
+          "description": "Prompt tokens the provider billed for the stage-2 call.",
+          "title": "Input Tokens",
+          "type": "integer"
+        },
+        "output_tokens": {
+          "description": "Completion tokens the provider billed for the stage-2 call.",
+          "title": "Output Tokens",
+          "type": "integer"
+        },
+        "reasoning_tokens": {
+          "default": 0,
+          "description": "Hidden reasoning tokens the provider billed, or `0` when the provider does not report them. A nonzero value while the model is configured with reasoning off means the setting did not take effect.",
+          "title": "Reasoning Tokens",
+          "type": "integer"
+        },
+        "currency": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "`USD`, present only when `amount` is.",
+          "title": "Currency"
+        },
+        "amount": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Money cost of the call at the operator's configured price; absent when no price is configured for this model.",
+          "title": "Amount"
+        }
+      },
+      "required": [
+        "input_tokens",
+        "output_tokens"
+      ],
+      "title": "Cost",
+      "type": "object"
+    },
+    "InspectVerdict": {
+      "description": "`pass` reaches the model untouched; `mask` — the caller substitutes `output`; `drop` — the result is withheld and `reason` shown instead.",
+      "enum": [
+        "pass",
+        "mask",
+        "drop"
+      ],
+      "title": "InspectVerdict",
+      "type": "string"
+    },
+    "LatencyMs": {
+      "description": "Per-stage timing of one decision. A stage that did not run is `null`.",
+      "properties": {
+        "stage1": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Milliseconds spent in stage 1, or `null` if it did not run.",
+          "title": "Stage1"
+        },
+        "stage2": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Milliseconds spent in stage 2, or `null` if it did not run.",
+          "title": "Stage2"
+        },
+        "total": {
+          "description": "Total milliseconds the service spent on this decision.",
+          "title": "Total",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "total"
+      ],
+      "title": "LatencyMs",
+      "type": "object"
+    }
+  },
+  "description": "The verdict on one tool result. Always HTTP 200.",
+  "properties": {
+    "verdict": {
+      "$ref": "#/$defs/InspectVerdict"
+    },
+    "output": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Replacement text. Required and authoritative for `mask`; absent otherwise.",
+      "title": "Output"
+    },
+    "reason": {
+      "default": "",
+      "description": "Shown to the model on `drop`, recorded on `mask`, empty for `pass`.",
+      "title": "Reason",
+      "type": "string"
+    },
+    "suggest": {
+      "default": "",
+      "description": "A safe alternative to show the user. Empty string when there is nothing to suggest.",
+      "title": "Suggest",
+      "type": "string"
+    },
+    "stage": {
+      "title": "Stage",
+      "type": "integer"
+    },
+    "rule_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Rule Id"
+    },
+    "model": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Model"
+    },
+    "latency_ms": {
+      "$ref": "#/$defs/LatencyMs"
+    },
+    "cached": {
+      "default": false,
+      "title": "Cached",
+      "type": "boolean"
+    },
+    "decision_id": {
+      "title": "Decision Id",
+      "type": "string"
+    },
+    "protocol": {
+      "default": 1,
+      "title": "Protocol",
+      "type": "integer"
+    },
+    "cost": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Cost"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Token usage and money cost of the stage-2 call. Absent when stage 2 did not run."
+    }
+  },
+  "required": [
+    "verdict",
+    "stage",
+    "latency_ms",
+    "decision_id"
+  ],
+  "title": "InspectResponse",
+  "type": "object"
+}

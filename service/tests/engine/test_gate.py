@@ -10,6 +10,7 @@ from tests.factories import (
     decide_request,
     gate,
     profile,
+    rule_set,
     stage2_verdict,
     turn,
     unavailable_verdict,
@@ -229,3 +230,50 @@ async def test_stage_one_verdict_is_identical_with_and_without_history():
         plain = await gate().decide(decide_request(raw))
         with_history = await gate().decide(decide_request(raw, history=HOSTILE_HISTORY))
         assert (plain.verdict.decision, plain.verdict.rule_id) == (with_history.verdict.decision, with_history.verdict.rule_id), raw
+
+
+async def test_the_policy_the_classifier_sees_carries_the_request_rules():
+    classifier = FakeClassifier(stage2_verdict("A"))
+    await gate(classifier).decide(decide_request("npm install lodash", rules=rule_set().model_dump()))
+    assert classifier.cases[0].policy.client_rules.level == "medium"
+
+
+async def test_no_rules_means_no_client_rules_on_the_policy():
+    classifier = FakeClassifier(stage2_verdict("A"))
+    await gate(classifier).decide(decide_request("npm install lodash"))
+    assert classifier.cases[0].policy.client_rules is None
+
+
+async def test_allow_cached_under_permissive_rules_is_not_replayed_under_deny_rules():
+    classifier = FakeClassifier(stage2_verdict("A"))
+    g = gate(classifier)
+    permissive = rule_set(deny=[]).model_dump()
+    first = await g.decide(decide_request("npm install lodash", rules=permissive))
+    assert first.verdict.decision is DecisionKind.allow and classifier.calls == 1
+
+    stricter = rule_set(deny=["npm install*"]).model_dump()
+    second = await g.decide(decide_request("npm install lodash", rules=stricter))
+    assert second.cached is False
+    assert second.verdict.decision is DecisionKind.deny and second.verdict.rule_id == "client.deny"
+
+
+async def test_allow_cached_under_rules_is_not_replayed_with_no_rules_at_all():
+    classifier = FakeClassifier(stage2_verdict("A"))
+    g = gate(classifier)
+    await g.decide(decide_request("npm install lodash", rules=rule_set(deny=[]).model_dump()))
+    assert classifier.calls == 1
+
+    bare = await g.decide(decide_request("npm install lodash"))
+    assert bare.cached is False and classifier.calls == 2
+
+
+async def test_allow_cache_hit_survives_the_same_rules_in_a_different_order():
+    classifier = FakeClassifier(stage2_verdict("A"))
+    g = gate(classifier)
+    ordered = rule_set(deny=["sudo *", "**/.env"]).model_dump()
+    reordered = rule_set(deny=["**/.env", "sudo *"]).model_dump()
+    await g.decide(decide_request("npm install lodash", rules=ordered))
+    assert classifier.calls == 1
+
+    second = await g.decide(decide_request("npm install lodash", rules=reordered))
+    assert second.cached is True and classifier.calls == 1

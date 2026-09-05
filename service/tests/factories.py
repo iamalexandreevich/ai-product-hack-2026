@@ -4,16 +4,23 @@ each other -- renaming a test module must not break three others.
 
 from collections.abc import Callable
 from datetime import datetime, timezone
+from typing import Any
 
-from agentgate.api.schemas import DecideRequest, DecisionKind, Turn
+from agentgate.api.schemas import DecideRequest, DecisionKind, InspectRequest, InspectVerdict, RuleSet, Turn
 from agentgate.classify.base import Classifier, ReviewCase
 from agentgate.domain.dialogue import Dialogue
+from agentgate.domain.inspect_cache import InspectCache
 from agentgate.domain.policy import Policy
 from agentgate.domain.session import SessionState, SessionStateStore
 from agentgate.domain.verdict import Verdict
 from agentgate.engine.decision import Decision, DecisionRecord
 from agentgate.engine.gate import Gate
+from agentgate.engine.inspection import Inspection
+from agentgate.engine.inspector import Inspector
 from agentgate.engine.timings import Latency
+from agentgate.inspect.chain import INSPECT_STAGE1
+from agentgate.inspect.classify import InspectCase, InspectClassifier, InspectOutcome
+from agentgate.inspect.detectors import Detector
 from agentgate.normalize import normalize
 from agentgate.normalize.model import NormalizedAction
 from agentgate.profiles.schema import Profile
@@ -55,6 +62,12 @@ def minimal_profile_data(**overrides) -> dict:
     }
     data.update(overrides)
     return data
+
+
+def rule_set(**overrides) -> RuleSet:
+    data = dict(version=1, level="medium", allow=["git status", "git diff*"], ask=["curl *"], deny=["sudo *", "**/.env"])
+    data.update(overrides)
+    return RuleSet.model_validate(data)
 
 
 def policy(**overrides) -> Policy:
@@ -239,6 +252,7 @@ class FakeSessionRecords:
         self._upsert_error = upsert_error
         self.upserts: list[str] = []
         self.cache_puts: list[tuple[str, str, str]] = []
+        self.ensures: list[tuple[str, str]] = []
 
     async def load_all(self) -> list[SessionState]:
         return list(self._states)
@@ -250,6 +264,9 @@ class FakeSessionRecords:
         if self._upsert_error is not None:
             raise self._upsert_error
         self.upserts.append(state.session_id)
+
+    async def ensure(self, session_id: str, workspace: str) -> None:
+        self.ensures.append((session_id, workspace))
 
     async def cache_put(self, session_id, action_hash, decision_id, expires_at) -> None:
         self.cache_puts.append((session_id, action_hash, decision_id))
@@ -322,3 +339,92 @@ class FailingDecisionWriter:
     async def write(self, decision: Decision) -> None:
         self.calls += 1
         raise self.error
+
+
+def inspect_request(output: str = "On branch main\n", **overrides) -> InspectRequest:
+    data = dict(
+        session_id="s1", harness="t", call_id="c1", tool="shell", tool_name="bash", status="completed",
+        output=output, provenance={"kind": "shell", "command": "git status"},
+        args={"cwd": WORKSPACE}, user_request="status",
+    )
+    data.update(overrides)
+    return InspectRequest.model_validate(data)
+
+
+def inspection(**overrides) -> Inspection:
+    data = dict(
+        id="01J0", ts=datetime.now(timezone.utc), request=inspect_request(),
+        verdict=InspectVerdict.pass_, latency=Latency(total_ms=1, stage1_ms=1),
+        profile_id="default", profile_hash="h" * 64,
+    )
+    data.update(overrides)
+    return Inspection(**data)
+
+
+class FakeInspectCache:
+    def __init__(self) -> None:
+        self.items: dict[str, Inspection] = {}
+        self.puts = 0
+
+    async def get(self, key: str) -> Inspection | None:
+        return self.items.get(key)
+
+    async def put(self, key: str, inspection: Inspection, ttl_seconds: int) -> None:
+        self.puts += 1
+        self.items[key] = inspection
+
+
+class FakeInspectClassifier:
+    """An InspectClassifier that answers what it was told to, and keeps what it was asked.
+
+    `answer` is one of "P"/"M"/"D"; a "P" or "D" answer drops stage 1's
+    replacement (a rewrite is only meaningful for "M"). Passing `error`
+    instead produces a failure outcome carrying stage 1's own verdict, the
+    same shape `Inspector` falls back to on any stage-2 error.
+    """
+
+    def __init__(
+        self, answer: str | None = None, reason: str = "", error: str | None = None, name: str = "m",
+    ) -> None:
+        self.name = name
+        self.calls = 0
+        self.cases: list[InspectCase] = []
+        self._answer = answer
+        self._reason = reason
+        self._error = error
+
+    async def classify(self, case: InspectCase) -> InspectOutcome:
+        self.calls += 1
+        self.cases.append(case)
+        if self._error is not None:
+            return InspectOutcome(
+                verdict=case.stage1.verdict, replacement=case.stage1.replacement,
+                reason=case.stage1.reason, model=self.name, error=self._error,
+            )
+        if self._answer == "P":
+            return InspectOutcome(verdict=InspectVerdict.pass_, replacement=None, reason=self._reason, model=self.name)
+        if self._answer == "D":
+            return InspectOutcome(verdict=InspectVerdict.drop, replacement=None, reason=self._reason, model=self.name)
+        return InspectOutcome(
+            verdict=case.stage1.verdict, replacement=case.stage1.replacement, reason=self._reason, model=self.name,
+        )
+
+
+def inspector(
+    cache: InspectCache[Inspection] | None = None,
+    detectors: tuple[Detector, ...] = INSPECT_STAGE1,
+    classifier: InspectClassifier | None = None,
+    **profile_overrides: Any,
+) -> Inspector:
+    """An Inspector over "default" and "other" profiles, both sharing the given classifier."""
+    classifiers = None
+    if classifier is not None:
+        classifiers = {"default": {classifier.name: classifier}, "other": {classifier.name: classifier}}
+    return Inspector(
+        profiles={"default": profile(**profile_overrides), "other": profile(id="other")},
+        default_profile="default",
+        detectors=detectors,
+        cache=cache if cache is not None else FakeInspectCache(),
+        ttl_seconds=86400,
+        classifiers=classifiers,
+    )

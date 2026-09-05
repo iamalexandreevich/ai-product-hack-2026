@@ -23,6 +23,7 @@ from ulid import ULID
 
 from agentgate.api.schemas import DecideRequest, DecisionKind
 from agentgate.classify.base import Classifier, ReviewCase
+from agentgate.domain.client_rules import ClientRules
 from agentgate.domain.dialogue import Dialogue
 from agentgate.domain.policy import Policy
 from agentgate.domain.session import SessionState, SessionStateStore
@@ -34,7 +35,7 @@ from agentgate.normalize.model import NormalizedAction
 from agentgate.profiles.loader import detect_workspace
 from agentgate.profiles.schema import Profile
 from agentgate.rules.base import RuleChain
-from agentgate.session.cache_key import allow_cache_key
+from agentgate.session.cache_key import NO_RULES_DIGEST, allow_cache_key
 from agentgate.session.escalation import should_escalate
 
 log = logging.getLogger(__name__)
@@ -89,8 +90,9 @@ class Gate:
             )
 
         action = normalize(request)
+        rules_digest = resolved.policy.client_rules.digest() if resolved.policy.client_rules is not None else NO_RULES_DIGEST
         cache_key = allow_cache_key(
-            resolved.policy.profile_hash, action.action_hash(), request.user_request, history_digest
+            resolved.policy.profile_hash, action.action_hash(), request.user_request, history_digest, rules_digest
         )
         if await self._cache_hit(resolved, cache_key):
             return self._finish(
@@ -127,8 +129,8 @@ class Gate:
         # filesystem, and past a session's first request the walk is waste.
         workspace = state.workspace if state is not None else detect_workspace(request.args.cwd)
         return _Context(
-            policy=Policy.bind(profile, workspace), profile_id=profile_id,
-            classifier=classifier, state=state,
+            policy=Policy.bind(profile, workspace, ClientRules.of(request.rules)),
+            profile_id=profile_id, classifier=classifier, state=state,
         )
 
     async def _cache_hit(self, context: _Context, cache_key: str) -> bool:

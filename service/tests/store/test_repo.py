@@ -5,16 +5,28 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from ulid import ULID
 
-from agentgate.api.schemas import DecisionKind
+from agentgate.api.schemas import Cost, DecisionKind, InspectVerdict
 from agentgate.domain.dialogue import Dialogue
 from agentgate.domain.session import RECENT_MAXLEN, SessionState
+from agentgate.domain.usage import Usage
 from agentgate.domain.verdict import Verdict
 from agentgate.engine.decision import Decision
 from agentgate.engine.timings import Latency
 from agentgate.store.models import SessionRow
 from agentgate.store.repo import DecisionRepo, SessionRepo
+from agentgate.store.writer import PostgresDecisionWriter
 from tests.conftest import requires_db
-from tests.factories import WORKSPACE, decide_request, decision, session_state, shell_action, turn
+from tests.factories import (
+    WORKSPACE,
+    decide_request,
+    decision,
+    inspect_request,
+    inspection,
+    rule_set,
+    session_state,
+    shell_action,
+    turn,
+)
 
 pytestmark = requires_db
 
@@ -68,6 +80,25 @@ async def test_decision_insert_and_list(session_factory):
     assert [r.id for r in only_m] == [r2.id]
     page = await repo.list(session_id=None, model=None, limit=1, before=all_rows[0].id)
     assert page[0].id == all_rows[1].id
+
+
+async def test_decision_cost_roundtrips_through_postgres(session_factory):
+    await _seed_session(session_factory)
+    repo = DecisionRepo(session_factory)
+    base = rec(model="m")
+    priced = decision(
+        id=base.id, request=base.request, latency=base.latency,
+        verdict=Verdict(
+            decision=DecisionKind.deny, stage=2, model="m",
+            cost=Cost.of(Usage(input_tokens=812, output_tokens=41), 0.15, 0.60),
+        ),
+    )
+    await repo.insert(priced)
+    rows = await repo.list(session_id=None, model=None, limit=10, before=None)
+    row = next(r for r in rows if r.id == priced.id)
+    assert row.cost.input_tokens == 812
+    assert row.cost.output_tokens == 41
+    assert row.cost.amount == (812 * 0.15 + 41 * 0.60) / 1_000_000
 
 
 async def test_allow_cache_roundtrip(session_factory):
@@ -284,6 +315,77 @@ async def test_created_at_preserved_across_upsert(session_factory):
     assert first_created == second_created
 
 
+# --- SessionRepo.ensure: a bare row for an inspect that never decided anything ---
+
+
+async def test_ensure_creates_a_session_row_for_a_session_that_never_decided(session_factory):
+    repo = SessionRepo(session_factory)
+    await repo.ensure("s1", "/w")
+    loaded = await repo.load_all()
+    assert len(loaded) == 1
+    assert loaded[0].session_id == "s1"
+    assert loaded[0].workspace == "/w"
+    assert loaded[0].decisions_total == 0
+    # The empty harness is the sentinel the in-memory store reads as
+    # "no decide has claimed this session yet"; see session/memory.py.
+    assert loaded[0].harness == ""
+
+
+async def test_ensure_does_not_touch_an_existing_session_row(session_factory):
+    repo = SessionRepo(session_factory)
+    s = await _seed_session(session_factory, "s1")
+    s.record(DecisionKind.allow)
+    await repo.upsert(s)
+
+    await repo.ensure("s1", "/somewhere-else")
+
+    loaded = await repo.load_all()
+    assert len(loaded) == 1
+    assert loaded[0].decisions_total == 1
+    assert loaded[0].workspace == s.workspace
+
+
+# --- PostgresDecisionWriter: an inspect row must not be lost -----------------
+
+
+async def test_writer_stores_an_inspection_when_no_decide_ever_created_the_session(session_factory):
+    # This is the bug this test guards against: an Inspection carries a
+    # session_id but never upserts session state, so without `ensure`
+    # `decisions.session_id`'s foreign key has nothing to reference and the
+    # insert below would raise ForeignKeyViolationError.
+    writer = PostgresDecisionWriter(DecisionRepo(session_factory), SessionRepo(session_factory), 86400)
+    outcome = inspection(
+        id=str(ULID()), verdict=InspectVerdict.drop,
+        request=inspect_request(session_id="fresh-session"), workspace="/w",
+    )
+
+    await writer.write(outcome)
+
+    rows = await DecisionRepo(session_factory).list(session_id=None, model=None, limit=10, before=None, kind="inspect")
+    assert [r.id for r in rows] == [outcome.id]
+    sessions = await SessionRepo(session_factory).load_all()
+    assert [s.session_id for s in sessions] == ["fresh-session"]
+    assert sessions[0].decisions_total == 0
+
+
+async def test_writer_stores_an_inspection_without_touching_an_existing_session(session_factory):
+    s = await _seed_session(session_factory, "s1")
+    s.record(DecisionKind.allow)
+    await SessionRepo(session_factory).upsert(s)
+
+    writer = PostgresDecisionWriter(DecisionRepo(session_factory), SessionRepo(session_factory), 86400)
+    outcome = inspection(
+        id=str(ULID()), verdict=InspectVerdict.pass_,
+        request=inspect_request(session_id="s1"), workspace="/somewhere-else",
+    )
+    await writer.write(outcome)
+
+    sessions = await SessionRepo(session_factory).load_all()
+    assert len(sessions) == 1
+    assert sessions[0].decisions_total == 1
+    assert sessions[0].workspace == "/w"
+
+
 # --- cache_load_valid: full 4-tuple payload ----------------------------------
 
 
@@ -403,3 +505,20 @@ async def test_load_replayable_limit_keeps_the_newest_keyed_rows(session_factory
         ))
     loaded = await repo.load_replayable(now - timedelta(days=1), limit=2)
     assert [r.idempotency_key for r in loaded] == ["newest", "middle"]
+
+
+async def test_v3_columns_round_trip(session_factory):
+    await _seed_session(session_factory)
+    repo = DecisionRepo(session_factory)
+    d = decision(id=str(ULID()), request=decide_request("ls", call_id="c1", rules=rule_set().model_dump()), action=shell_action("ls"))
+    await repo.insert(d)
+    row = (await repo.list(session_id=None, model=None, limit=1, before=None))[0]
+    assert row.kind == "decide" and row.call_id == "c1" and row.rules_level == "medium" and len(row.rules_digest) == 64
+
+
+async def test_list_filters_by_kind(session_factory):
+    await _seed_session(session_factory)
+    repo = DecisionRepo(session_factory)
+    await repo.insert(rec())
+    assert len(await repo.list(session_id=None, model=None, limit=10, before=None, kind="decide")) == 1
+    assert await repo.list(session_id=None, model=None, limit=10, before=None, kind="inspect") == []

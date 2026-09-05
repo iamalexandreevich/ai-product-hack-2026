@@ -10,7 +10,7 @@ touch it, and stage 2 is never reached past it.
 
 from dataclasses import dataclass, replace
 
-from agentgate.api.schemas import DecisionKind
+from agentgate.api.schemas import Cost, DecisionKind
 
 
 @dataclass(frozen=True)
@@ -24,6 +24,7 @@ class Verdict:
     model: str | None = None
     raw_response: dict | None = None
     error: str | None = None
+    cost: Cost | None = None
 
     @classmethod
     def allow(cls, rule_id: str, *, stage: int = 1) -> "Verdict":

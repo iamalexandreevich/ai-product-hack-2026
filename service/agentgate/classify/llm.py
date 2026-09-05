@@ -14,11 +14,12 @@ import logging
 
 import httpx
 
-from agentgate.api.schemas import DecisionKind
+from agentgate.api.schemas import Cost, DecisionKind
 from agentgate.classify.base import Classifier, ReviewCase
 from agentgate.classify.client import LLMClient, Stage2Error
 from agentgate.classify.prompt import build_system_prompt, build_user_message
-from agentgate.classify.schema import ClassifierOutput
+from agentgate.classify.schema import DECIDE_STRUCTURED_OUTPUT, ClassifierOutput
+from agentgate.domain.usage import Usage
 from agentgate.domain.verdict import Verdict
 from agentgate.profiles.schema import ModelConfig, Profile
 
@@ -30,13 +31,14 @@ _DECISIONS = {"A": DecisionKind.allow, "D": DecisionKind.deny, "U": DecisionKind
 class LLMClassifier:
     def __init__(self, name: str, model_config: ModelConfig, http: httpx.AsyncClient) -> None:
         self.name = name
-        self._client = LLMClient(name, model_config, http)
+        self._config = model_config
+        self._client = LLMClient(name, model_config, http, DECIDE_STRUCTURED_OUTPUT)
 
     async def classify(self, case: ReviewCase) -> Verdict:
         system = build_system_prompt(case.policy)
         user = build_user_message(case.action, case.intent, case.dialogue, case.stage1_note)
         try:
-            output, raw = await self._client.classify(system, user)
+            output, raw, usage = await self._client.classify(system, user)
         except Stage2Error as exc:
             return self._unavailable(exc.kind, f"classifier unavailable: {exc.kind}")
         except Exception as exc:  # noqa: BLE001 - fail closed on anything, not just Stage2Error
@@ -44,9 +46,9 @@ class LLMClassifier:
             return self._unavailable(
                 "unexpected", f"classifier unavailable: unexpected ({type(exc).__name__})"
             )
-        return self._verdict_from(output, raw)
+        return self._verdict_from(output, raw, usage)
 
-    def _verdict_from(self, output: ClassifierOutput, raw: dict) -> Verdict:
+    def _verdict_from(self, output: ClassifierOutput, raw: dict, usage: Usage | None) -> Verdict:
         decision = _DECISIONS[output.decision]
         allowed = decision is DecisionKind.allow
         return Verdict(
@@ -56,6 +58,7 @@ class LLMClassifier:
             suggest="" if allowed else output.suggest,
             model=self.name,
             raw_response=raw,
+            cost=Cost.for_model(usage, self._config),
         )
 
     def _unavailable(self, error: str, reason: str) -> Verdict:

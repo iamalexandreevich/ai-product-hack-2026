@@ -2,8 +2,10 @@ import statistics
 import time
 
 from agentgate.api.schemas import HISTORY_MAX_TURNS
+from agentgate.domain.client_rules import ClientRules
+from agentgate.domain.policy import Policy
 from agentgate.rules.chain import STAGE1
-from tests.factories import WORKSPACE, dialogue, shell_action, stage1_policy, turn
+from tests.factories import WORKSPACE, dialogue, rule_set, shell_action, stage1_policy, turn
 
 POLICY = stage1_policy()
 
@@ -20,6 +22,23 @@ def test_stage1_p50_under_1ms():
         t0 = time.perf_counter()
         action = shell_action(raw, WORKSPACE)
         STAGE1.evaluate(action, POLICY)
+        samples.append((time.perf_counter() - t0) * 1000)
+    p50 = statistics.median(samples)
+    assert p50 <= 1.0, f"p50={p50:.3f}ms"
+
+
+def test_stage1_p50_under_1ms_with_500_client_rules():
+    rules = rule_set(
+        allow=[f"tool{i} *" for i in range(200)],
+        ask=[f"tool{i} *" for i in range(200, 350)],
+        deny=[f"tool{i} *" for i in range(350, 425)] + [f"**/dir{i}/*" for i in range(425, 500)],
+    )
+    policy = Policy.bind(POLICY.profile, WORKSPACE, ClientRules.of(rules))
+    samples = []
+    for raw in COMMANDS:
+        t0 = time.perf_counter()
+        action = shell_action(raw, WORKSPACE)
+        STAGE1.evaluate(action, policy)
         samples.append((time.perf_counter() - t0) * 1000)
     p50 = statistics.median(samples)
     assert p50 <= 1.0, f"p50={p50:.3f}ms"

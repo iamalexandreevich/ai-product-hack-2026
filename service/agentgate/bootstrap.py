@@ -20,9 +20,13 @@ from agentgate.config import Settings
 from agentgate.domain.replay import RestorableReplayStore
 from agentgate.domain.session import RestorableSessionStateStore
 from agentgate.engine.gate import Gate
+from agentgate.engine.inspector import Inspector
+from agentgate.inspect.chain import INSPECT_STAGE1
+from agentgate.inspect.classify import build_inspect_classifiers
 from agentgate.log.jsonl import JsonlLogger
 from agentgate.profiles.loader import load_profiles
 from agentgate.rules.chain import STAGE1
+from agentgate.session.inspect_cache import InMemoryInspectCache
 from agentgate.session.memory import InMemorySessionStateStore
 from agentgate.session.persistent import PersistentSessionStateStore
 from agentgate.session.replay import InMemoryReplayStore, PersistentReplayStore
@@ -43,6 +47,7 @@ log = logging.getLogger(__name__)
 class Service:
     app: FastAPI
     gate: Gate
+    inspector: Inspector
     state_store: RestorableSessionStateStore
     replay_store: RestorableReplayStore
     engine: AsyncEngine
@@ -85,9 +90,14 @@ async def build_service(
 
     http = http or httpx.AsyncClient()
     classifiers = {name: build_classifiers(profile, http) for name, profile in profiles.items()}
+    inspect_classifiers = {name: build_inspect_classifiers(profile, http) for name, profile in profiles.items()}
     gate = Gate(
         profiles, settings.default_profile, classifiers, STAGE1, store,
         settings.allow_cache_ttl_seconds,
+    )
+    inspector = Inspector(
+        profiles, settings.default_profile, INSPECT_STAGE1, InMemoryInspectCache(),
+        settings.allow_cache_ttl_seconds, inspect_classifiers,
     )
 
     writer = writer or CompositeDecisionWriter([
@@ -97,9 +107,11 @@ async def build_service(
     app = create_app(
         settings, gate, writer, decisions, profiles,
         db_probe=_make_db_probe(engine), key_repo=ApiKeyRepo(session_factory), replay=replay,
+        inspector=inspector,
     )
     return Service(
-        app=app, gate=gate, state_store=store, replay_store=replay, engine=engine, settings=settings,
+        app=app, gate=gate, inspector=inspector, state_store=store, replay_store=replay,
+        engine=engine, settings=settings,
     )
 
 

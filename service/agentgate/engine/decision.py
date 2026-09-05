@@ -21,24 +21,33 @@ just stores itself and delegates.
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, computed_field
 
 from agentgate.api.schemas import (
     PROTOCOL,
+    Cost,
     DecideRequest,
     DecideResponse,
     DecisionKind,
+    InspectResponse,
+    InspectVerdict,
     LatencyMs,
     Tool,
     Turn,
 )
+from agentgate.domain.client_rules import ClientRules
 from agentgate.domain.dialogue import Dialogue
 from agentgate.domain.session import SessionState
 from agentgate.domain.verdict import Verdict
 from agentgate.engine.timings import Latency
 from agentgate.normalize.model import NormalizedAction
+
+
+class WrongRecordKind(ValueError):
+    """Raised when a projection is asked of a `DecisionRecord` whose `kind`
+    does not support it -- e.g. `to_inspect_response` on a `decide` record."""
 
 
 class DecisionRecord(BaseModel):
@@ -60,7 +69,7 @@ class DecisionRecord(BaseModel):
     profile_hash: str = Field(
         description="sha256 of the normalized profile, so the benchmark can tell policies apart."
     )
-    decision: DecisionKind
+    decision: DecisionKind | InspectVerdict
     reason: str
     suggest: str
     stage: int
@@ -107,6 +116,29 @@ class DecisionRecord(BaseModel):
             "`Idempotency-Key` is honoured only when it matches."
         ),
     )
+    kind: Literal["decide", "inspect"] = Field(
+        default="decide", description="`decide` for a pre-tool-use decision, `inspect` for a post-tool-use verdict on a result."
+    )
+    call_id: str | None = Field(
+        default=None, description="Harness identifier pairing the decide and inspect records of one invocation."
+    )
+    rules_level: str | None = Field(
+        default=None, description="`level` of the user's rules the request carried, if any."
+    )
+    rules_digest: str | None = Field(
+        default=None,
+        description="sha256 of the user's rule patterns, order-independent; the patterns themselves are not stored.",
+    )
+    provenance: dict[str, Any] | None = Field(
+        default=None, description="Where an inspected result came from; `null` for decide records."
+    )
+    replacement: str | None = Field(
+        default=None, description="The `output` a `mask` verdict returned; `null` otherwise."
+    )
+    cost: Cost | None = Field(
+        default=None,
+        description="Token usage and money cost of the stage-2 call. `null` when stage 2 did not run.",
+    )
 
     @computed_field(description="Same ULID as `id`; mirrors the field name /v1/decide returns.")
     @property
@@ -118,11 +150,26 @@ class DecisionRecord(BaseModel):
         decision and the one replayed for a repeated `Idempotency-Key` alike."""
         return DecideResponse(
             decision=self.decision, reason=self.reason, suggest=self.suggest, stage=self.stage,
-            rule_id=self.rule_id, model=self.model,
-            latency_ms=LatencyMs(
-                stage1=self.latency_stage1_ms, stage2=self.latency_stage2_ms, total=self.latency_total_ms
-            ),
-            cached=self.cached, decision_id=self.id, protocol=self.protocol,
+            rule_id=self.rule_id, model=self.model, latency_ms=self._latency_ms(),
+            cached=self.cached, decision_id=self.id, protocol=self.protocol, cost=self.cost,
+        )
+
+    def to_inspect_response(self) -> InspectResponse:
+        """The wire answer for the inspect route. Only defined for a record
+        of `kind == "inspect"` -- calling it on a `decide` record would cast
+        a `DecisionKind` into `InspectVerdict`, which is not a valid verdict
+        on either side."""
+        if self.kind != "inspect":
+            raise WrongRecordKind(f"to_inspect_response() called on a {self.kind!r} record")
+        return InspectResponse(
+            verdict=InspectVerdict(self.decision), output=self.replacement, reason=self.reason, suggest=self.suggest,
+            stage=self.stage, rule_id=self.rule_id, model=self.model, latency_ms=self._latency_ms(),
+            cached=self.cached, decision_id=self.id, protocol=self.protocol, cost=self.cost,
+        )
+
+    def _latency_ms(self) -> LatencyMs:
+        return LatencyMs(
+            stage1=self.latency_stage1_ms, stage2=self.latency_stage2_ms, total=self.latency_total_ms
         )
 
 
@@ -145,6 +192,22 @@ class Decision:
 
     def to_response(self) -> DecideResponse:
         return self.to_record().to_response()
+
+    def session_state(self) -> SessionState | None:
+        return self.state
+
+    def session_ref(self) -> tuple[str, str] | None:
+        """None: the state above already guarantees the session row."""
+        return None
+
+    def allow_cache_entry(self) -> tuple[str, str] | None:
+        """Session and key to cache this decision under, or None: only a
+        fresh `allow` with a session is cached."""
+        if self.state is None or self.cache_key is None or self.cached:
+            return None
+        if self.verdict.decision is not DecisionKind.allow:
+            return None
+        return self.state.session_id, self.cache_key
 
     def to_record(self) -> DecisionRecord:
         return DecisionRecord(
@@ -177,4 +240,8 @@ class Decision:
             history_digest=self.history_digest,
             idempotency_key=self.idempotency_key,
             request_digest=self.request.identity_digest(),
+            call_id=self.request.call_id,
+            rules_level=self.request.rules.level if self.request.rules else None,
+            rules_digest=ClientRules.of(self.request.rules).digest() if self.request.rules else None,
+            cost=self.verdict.cost,
         )

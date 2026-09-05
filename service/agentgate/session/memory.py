@@ -22,7 +22,15 @@ class InMemorySessionStateStore:
         self, session_id: str, harness: str, profile_id: str, workspace: Callable[[], str]
     ) -> SessionState:
         state = self._states.get(session_id)
-        if state is None:
+        # An empty `harness` is the sentinel `SessionRepo.ensure` writes for a
+        # session an inspect call created without ever deciding anything --
+        # `DecideRequest.harness` requires at least one character, so a real
+        # decide never produces one. A restart preloads that row like any
+        # other (see `PersistentSessionStateStore.restore`), and without this
+        # check the first decide for that session would inherit whatever
+        # `cwd` the inspect call happened to carry as its workspace pin,
+        # instead of establishing its own.
+        if state is None or not state.harness:
             state = SessionState(
                 session_id=session_id, harness=harness, profile_id=profile_id,
                 workspace=workspace(),

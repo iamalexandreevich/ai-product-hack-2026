@@ -7,18 +7,27 @@ from agentgate.api.schemas import (
     HISTORY_MAX_BYTES,
     HISTORY_MAX_TURNS,
     METADATA_MAX_BYTES,
+    OUTPUT_MAX_BYTES,
     PROTOCOL,
     RAW_MAX_BYTES,
+    RULE_PATTERN_MAX_CHARS,
+    RULES_MAX_BYTES,
+    RULES_MAX_PATTERNS,
     USER_REQUEST_MAX_CHARS,
     Author,
+    Cost,
     DecideRequest,
     DecideResponse,
     DecisionKind,
+    InspectRequest,
+    InspectResponse,
+    InspectVerdict,
     LatencyMs,
     Tool,
     Turn,
     TurnRole,
 )
+from agentgate.domain.usage import Usage
 
 
 def _req(**over):
@@ -269,3 +278,136 @@ def test_identity_digest_separates_requests_differing_only_in_paths():
     one = _req(tool="file_write", raw="", args={"cwd": "/r", "paths": ["/r/ok.txt"]})
     other = _req(tool="file_write", raw="", args={"cwd": "/r", "paths": ["/r/.env"]})
     assert one.identity_digest() != other.identity_digest()
+
+
+def _rules(**over) -> dict:
+    base = dict(version=1, level="medium", allow=["git status", "git diff*"], ask=["curl *"], deny=["sudo *", "**/.env"])
+    base.update(over)
+    return base
+
+
+def test_rules_default_to_none_and_call_id_to_none():
+    r = _req()
+    assert r.rules is None and r.call_id is None
+
+
+def test_rules_parse_and_are_immutable():
+    r = _req(rules=_rules())
+    assert r.rules.level == "medium" and r.rules.deny == ["sudo *", "**/.env"]
+    with pytest.raises(ValidationError):
+        r.rules.level = "high"
+
+
+def test_rules_level_defaults_to_custom():
+    assert _req(rules={k: v for k, v in _rules().items() if k != "level"}).rules.level == "custom"
+
+
+def test_unknown_rules_version_is_rejected():
+    with pytest.raises(ValidationError, match="unsupported rules version 2"):
+        _req(rules=_rules(version=2))
+
+
+def test_rules_over_pattern_count_are_rejected():
+    with pytest.raises(ValidationError, match=f"exceed {RULES_MAX_PATTERNS} patterns"):
+        _req(rules=_rules(allow=["a"] * (RULES_MAX_PATTERNS + 1), ask=[], deny=[]))
+
+
+def test_rules_pattern_over_length_is_rejected():
+    with pytest.raises(ValidationError, match=f"exceeds {RULE_PATTERN_MAX_CHARS} chars"):
+        _req(rules=_rules(deny=["x" * (RULE_PATTERN_MAX_CHARS + 1)]))
+
+
+def test_rules_over_byte_limit_are_rejected():
+    many = ["ж" * 100] * 90  # 9000 chars, 18000 bytes
+    with pytest.raises(ValidationError, match=f"exceed {RULES_MAX_BYTES} bytes"):
+        _req(rules=_rules(allow=many, ask=[], deny=[]))
+
+
+def test_call_id_is_capped():
+    assert _req(call_id="c" * 128).call_id == "c" * 128
+    with pytest.raises(ValidationError):
+        _req(call_id="c" * 129)
+
+
+def _inspect(**over) -> InspectRequest:
+    base = dict(
+        session_id="s1", harness="kilo", call_id="c1", tool="file_read", tool_name="read", status="completed",
+        output="Setup guide.\n", provenance={"kind": "file", "path": "/repo/README.md"},
+        args={"cwd": "/repo", "paths": ["/repo/README.md"]}, user_request="read the readme",
+    )
+    base.update(over)
+    return InspectRequest.model_validate(base)
+
+
+def test_inspect_request_parses_provenance_by_kind():
+    assert _inspect().provenance.kind == "file"
+    assert _inspect().provenance.path == "/repo/README.md"
+    web = _inspect(provenance={"kind": "web", "url": "https://x"})
+    assert web.provenance.kind == "web"
+    assert web.provenance.url == "https://x"
+    with pytest.raises(ValidationError):
+        _inspect(provenance={"kind": "file", "url": "https://x"})
+
+
+def test_inspect_request_requires_call_id_and_caps_output():
+    with pytest.raises(ValidationError):
+        _inspect(call_id=None)
+    with pytest.raises(ValidationError, match=f"exceeds {OUTPUT_MAX_BYTES} bytes"):
+        _inspect(output="ж" * (OUTPUT_MAX_BYTES // 2 + 1))
+    assert len(_inspect(output="ж" * (OUTPUT_MAX_BYTES // 2)).output) == OUTPUT_MAX_BYTES // 2
+
+
+def test_inspect_request_carries_history_and_protocol_like_decide():
+    r = _inspect(history=[dict(role="human", author="human", content="x")], protocol=1)
+    assert len(r.history) == 1
+    assert r.protocol == 1
+    with pytest.raises(ValidationError, match="unsupported protocol 2"):
+        _inspect(protocol=2)
+
+
+def test_inspect_response_output_only_makes_sense_for_mask():
+    r = InspectResponse(verdict="mask", output="x", reason="r", stage=1, rule_id="inspect.injection",
+                        latency_ms=LatencyMs(total=1), decision_id="01J")
+    assert r.verdict is InspectVerdict.mask
+    assert r.protocol == PROTOCOL
+    with pytest.raises(ValidationError, match="mask requires output"):
+        InspectResponse(verdict="mask", reason="r", stage=1, latency_ms=LatencyMs(total=1), decision_id="01J")
+
+
+def test_cost_carries_tokens_and_amount_when_priced():
+    cost = Cost.of(Usage(input_tokens=812, output_tokens=41), 0.15, 0.60)
+    dumped = cost.model_dump()
+    assert dumped == {
+        "input_tokens": 812, "output_tokens": 41, "reasoning_tokens": 0,
+        "currency": "USD", "amount": (812 * 0.15 + 41 * 0.60) / 1_000_000,
+    }
+
+
+def test_cost_drops_amount_and_currency_without_prices():
+    cost = Cost.of(Usage(input_tokens=812, output_tokens=41), None, None)
+    dumped = cost.model_dump()
+    assert dumped == {"input_tokens": 812, "output_tokens": 41, "reasoning_tokens": 0}
+    assert "amount" not in dumped and "currency" not in dumped
+
+
+def test_decide_response_omits_cost_key_when_stage2_did_not_run():
+    r = DecideResponse(decision="allow", stage=1, latency_ms=LatencyMs(total=1), decision_id="01J")
+    assert "cost" not in r.model_dump()
+    assert "cost" not in json.loads(r.model_dump_json())
+
+
+def test_decide_response_carries_cost_when_stage2_ran():
+    cost = Cost(input_tokens=10, output_tokens=5)
+    r = DecideResponse(decision="deny", stage=2, latency_ms=LatencyMs(total=1), decision_id="01J", cost=cost)
+    assert r.model_dump()["cost"]["input_tokens"] == 10
+
+
+def test_inspect_response_omits_cost_key_when_stage2_did_not_run():
+    r = InspectResponse(verdict="pass", stage=1, latency_ms=LatencyMs(total=1), decision_id="01J")
+    assert "cost" not in r.model_dump()
+
+
+def test_inspect_response_carries_cost_when_stage2_ran():
+    cost = Cost(input_tokens=10, output_tokens=5)
+    r = InspectResponse(verdict="pass", stage=2, latency_ms=LatencyMs(total=1), decision_id="01J", cost=cost)
+    assert r.model_dump()["cost"]["input_tokens"] == 10

@@ -1,12 +1,14 @@
 # service — ядро AgentGate
 
-FastAPI-сервис: `POST /v1/decide`, `GET /v1/decisions`, `GET /v1/profiles/{id}`, `GET /healthz`. Конвейер: нормализация по AST → ступень 1 (hard-deny, профиль, allowlist) → ступень 2 (LLM через OpenAI-совместимый API) → эскалация → ответ; решения в Postgres и JSONL.
+FastAPI-сервис: `POST /v1/decide`, `POST /v1/inspect`, `GET /v1/decisions`, `GET /v1/profiles/{id}`, `GET /healthz`. Конвейер решения: нормализация по AST → ступень 1 (hard-deny, правила пользователя из `rules`, профиль, allowlist) → ступень 2 (LLM через OpenAI-совместимый API) → эскалация → ответ; решения в Postgres и JSONL.
+
+С v3 запрос `decide` может нести `rules` — детерминированные `allow`/`ask`/`deny` пользователя, которые ступень 1 применяет на трёх позициях цепочки, — и `call_id`. `POST /v1/inspect` судит результат инструмента до того, как его увидит модель: детекторы → маска или `drop`, при флаге — классификатор ступени 2. Fail-closed там — `drop`. Контракт обоих — `contracts/README.md`, раздел «v3».
 
 Спека: `docs/superpowers/service/specs/2026-09-03-agentgate-v1-design.md`. План реализации: `docs/superpowers/service/plans/2026-09-03-agentgate-v1.md`. Карта модулей — `service/CLAUDE.md`.
 
 ## Как это устроено
 
-Четыре шва, за каждым — протокол, и подстановка своей реализации не требует правок выше по стеку:
+Швы, за каждым — протокол, и подстановка своей реализации не требует правок выше по стеку:
 
 | Шов | Протокол | Реализации в проде | Где собирается |
 |---|---|---|---|
@@ -15,6 +17,8 @@ FastAPI-сервис: `POST /v1/decide`, `GET /v1/decisions`, `GET /v1/profiles/
 | Состояние сессии | `SessionStateStore` (`agentgate/domain/session.py`) | `InMemorySessionStateStore` внутри `PersistentSessionStateStore` | `bootstrap.build_service` |
 | Повтор по `Idempotency-Key` | `ReplayStore` (`agentgate/domain/replay.py`) | `InMemoryReplayStore` внутри `PersistentReplayStore` | `bootstrap.build_service` |
 | Запись решения | `DecisionWriter` (`agentgate/store/writer.py`) | `Jsonl…` + `Postgres…` внутри `Composite…` | `bootstrap.build_service` |
+| Ступень 2 inspect | `InspectClassifier` (`agentgate/inspect/classify.py`) | `LLMInspectClassifier` | `bootstrap.build_service` |
+| Кэш вердиктов inspect | `InspectCache` (`agentgate/domain/inspect_cache.py`) | `InMemoryInspectCache` | `bootstrap.build_service` |
 
 Всё, что каскад возвращает, — один тип `Verdict` (`agentgate/domain/verdict.py`): и правило, и классификатор, и allow-кэш, и ранний отказ API.
 
@@ -98,6 +102,49 @@ class RedisReplayStore:
 ```python
 replay = replay_store or PersistentReplayStore(RedisReplayStore(...), decisions, ttl)
 ```
+
+### …детектор inspect
+
+Строка в таблице. `Inspector` не меняется: он получает кортеж детекторов и просто перебирает их по строкам.
+
+```python
+# agentgate/inspect/detectors.py
+BASE64_URL = Detector(
+    id="inspect.data-url",
+    patterns=(re.compile(r"data:[a-z/+.-]+;base64,[A-Za-z0-9+/=]{200,}"),),
+    action=Action.mask,
+    hints=("data:",),
+)
+```
+
+```python
+# agentgate/inspect/chain.py
+INSPECT_STAGE1 = (INJECTION, PIPE_EXEC, ENCODED, BASE64_URL, INVISIBLE)
+```
+
+`hints` и `precheck` — дешёвые предпроверки перед регулярками; инвариант: они могут отсеять только строку, которую шаблоны заведомо не совпадут, никогда наоборот. Без них бюджет 20 мс на 256 КБ не держится.
+
+### …классификатор inspect
+
+```python
+from agentgate.inspect.classify import InspectCase, InspectOutcome
+
+
+class LocalInspectClassifier:
+    async def classify(self, case: InspectCase) -> InspectOutcome: ...
+```
+
+`classify` не бросает: любой сбой возвращается как `InspectOutcome` с `error`, и `Inspector` отвечает вердиктом ступени 1. Подключение — строка в `bootstrap.build_service`.
+
+### …кэш вердиктов inspect
+
+```python
+class RedisInspectCache:
+    async def get(self, key: str) -> Inspection | None: ...
+    async def put(self, key: str, value: Inspection, ttl_seconds: int) -> None: ...
+```
+
+Ключ строит `inspect_cache_key` (`agentgate/session/cache_key.py`) — там же, где ключ allow-кэша.
 
 ## Запуск
 

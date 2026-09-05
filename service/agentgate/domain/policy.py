@@ -4,13 +4,16 @@
 `Policy` is that configuration resolved against the workspace of one
 session -- placeholders expanded, paths normalized, the hash taken once.
 Resolving on every call was both repeated work and the reason a later
-`cwd` could silently widen the sandbox.
+`cwd` could silently widen the sandbox. The user's own rules bind to the
+policy the same way the workspace does, so stage 1 sees only an action
+and a policy.
 """
 
 import os
 from dataclasses import dataclass
 
-from agentgate.profiles.schema import Escalation, History, Network, Profile, Prose
+from agentgate.domain.client_rules import ClientRules
+from agentgate.profiles.schema import Escalation, History, InspectSettings, Network, Profile, Prose
 
 
 @dataclass(frozen=True)
@@ -20,9 +23,12 @@ class Policy:
     allowed_paths: tuple[str, ...]
     protected_paths: tuple[str, ...]
     profile_hash: str
+    client_rules: ClientRules | None = None
 
     @classmethod
-    def bind(cls, profile: Profile, workspace: str) -> "Policy":
+    def bind(
+        cls, profile: Profile, workspace: str, client_rules: ClientRules | None = None
+    ) -> "Policy":
         return cls(
             profile=profile,
             workspace=workspace,
@@ -31,6 +37,7 @@ class Policy:
             ),
             protected_paths=tuple(_expand(path, workspace) for path in profile.protected_paths),
             profile_hash=profile.profile_hash(),
+            client_rules=client_rules,
         )
 
     @property
@@ -60,6 +67,10 @@ class Policy:
     @property
     def history(self) -> History:
         return self.profile.history
+
+    @property
+    def inspect(self) -> InspectSettings:
+        return self.profile.inspect
 
 
 def _expand(path: str, workspace: str) -> str:

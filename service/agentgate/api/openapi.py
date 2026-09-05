@@ -27,7 +27,7 @@ from typing import Any
 from fastapi import FastAPI
 
 from agentgate.api.deps import BEARER_SCHEME
-from agentgate.api.schemas import DecideRequest
+from agentgate.api.schemas import DecideRequest, InspectRequest
 
 # An empty requirement alongside the named one is how OpenAPI says "optional".
 OPTIONAL_BEARER: list[dict[str, list[str]]] = [{}, {"bearerAuth": []}]
@@ -134,10 +134,18 @@ def _copy_examples(source: Any, target: Any) -> None:
 
 
 def _request_schemas() -> dict[str, Any]:
-    """`DecideRequest` and everything it is built out of."""
-    schema = DecideRequest.model_json_schema(ref_template=_REF_TEMPLATE)
-    nested = schema.pop("$defs", {})
-    return {"DecideRequest": schema} | nested
+    """`DecideRequest`, `InspectRequest` and everything they are built out of.
+
+    Both routes parse and validate their own body (see `agentgate.api.app`),
+    so neither model is collected from a route signature; each is added here
+    by name, the same way, for the same reason.
+    """
+    schemas: dict[str, Any] = {}
+    for name, model in (("DecideRequest", DecideRequest), ("InspectRequest", InspectRequest)):
+        schema = model.model_json_schema(ref_template=_REF_TEMPLATE)
+        nested = schema.pop("$defs", {})
+        schemas |= {name: schema} | nested
+    return schemas
 
 
 def _in_reading_order(document: dict[str, Any]) -> dict[str, Any]:

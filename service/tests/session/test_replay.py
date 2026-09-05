@@ -17,6 +17,17 @@ def replay(key: str = "k", age_seconds: int = 0) -> Replay:
     return Replay.of(record(key, age_seconds))
 
 
+def unprojectable_record(key: str = "bad"):
+    """A record whose `kind` and `decision` disagree, as a downgrade/upgrade
+    round trip of migration 0004 could once produce for an inspect row
+    backfilled with `kind='decide'` (0004 now backfills `kind` from `decision`): the
+    `decision` column holds an `InspectVerdict` value ('pass') while `kind`
+    says 'decide', so `Replay.of` builds the wrong projection and blows up
+    validating a `DecideResponse` out of it.
+    """
+    return record(key).model_copy(update={"kind": "decide", "decision": "pass"})
+
+
 async def test_put_then_get_returns_the_same_entry():
     store = InMemoryReplayStore()
     stored = replay()
@@ -47,7 +58,9 @@ async def test_an_expired_entry_is_swept_without_ever_being_read():
     clock.advance(11)
     for i in range(SWEEP_EVERY):
         await store.put(f"k{i}", replay(), 60)
-    assert "stale" not in store._items
+    # "stale" is gone without ever being `get` -- if the sweep had not run,
+    # the store would hold SWEEP_EVERY + 1 entries instead.
+    assert len(store._store) == SWEEP_EVERY
 
 
 async def test_the_oldest_entry_is_evicted_when_the_cap_is_reached():
@@ -93,3 +106,18 @@ async def test_persistent_store_delegates_put_and_get():
     stored = replay()
     await store.put("k", stored, 60)
     assert await store.get("k") == stored
+
+
+async def test_restore_skips_one_unprojectable_record_without_failing_the_others(caplog):
+    good_before = record("before", age_seconds=100)
+    bad = unprojectable_record("bad")
+    good_after = record("after", age_seconds=100)
+    store = PersistentReplayStore(
+        InMemoryReplayStore(), FakeReplayRecords([good_before, bad, good_after]), ttl_seconds=86400,
+    )
+    with caplog.at_level(logging.WARNING):
+        await store.restore()
+    assert await store.get("before") is not None
+    assert await store.get("after") is not None
+    assert await store.get("bad") is None
+    assert bad.id in caplog.text

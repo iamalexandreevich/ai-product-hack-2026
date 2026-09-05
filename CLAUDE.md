@@ -2,23 +2,25 @@
 
 Читается первым. Актуальная спека v1: `docs/superpowers/service/specs/2026-09-03-agentgate-v1-design.md`. План: `docs/superpowers/service/plans/2026-09-03-agentgate-v1.md`. Исходные материалы (частично устарели, при расхождении права спека v1): `docs/base.md`, `docs/artifacts/`. Позиционирование: `docs/why-agentgate.md`.
 
-Дорожная карта версий (v1→v5: контекст на v1–v4, независимость от провайдера модели на v5), принятая владельцем продукта: `docs/superpowers/service/specs/context-versions-roadmap.md`. Стоимость решения в ответе (из трёх запрошенных полей два уже есть, нужна только цена): `docs/superpowers/service/specs/response-cost-reporting.md`. Спека API-ключей: `docs/superpowers/service/specs/api-keys.md`. Спека деплоя: `docs/superpowers/service/specs/deploy.md`. Деплой v1.5 за HTTPS и подключение команды: `docs/superpowers/service/specs/2026-09-04-deploy-public-endpoint-design.md`, страница интегратора — `docs/connect.md`. Сверка с контрактом адаптера (Gate↔Guard) и расхождение по fail-open/fail-closed: `docs/superpowers/service/specs/adapter-contract-gap-analysis.md`. Спека v2 (история диалога, идемпотентность, `protocol`): `docs/superpowers/service/specs/2026-09-04-agentgate-v2-design.md`, план — `docs/superpowers/service/plans/2026-09-04-agentgate-v2-dialogue-context.md`.
+Дорожная карта версий (v1→v5: контекст на v1–v4, независимость от провайдера модели на v5), принятая владельцем продукта: `docs/superpowers/service/specs/context-versions-roadmap.md`. Стоимость решения в ответе (из трёх запрошенных полей два уже есть, нужна только цена): `docs/superpowers/service/specs/response-cost-reporting.md`. Спека API-ключей: `docs/superpowers/service/specs/api-keys.md`. Спека деплоя: `docs/superpowers/service/specs/deploy.md`. Деплой v1.5 за HTTPS и подключение команды: `docs/superpowers/service/specs/2026-09-04-deploy-public-endpoint-design.md`, страница интегратора — `docs/connect.md`. Сверка с контрактом адаптера (Gate↔Guard) и расхождение по fail-open/fail-closed: `docs/superpowers/service/specs/adapter-contract-gap-analysis.md`. Спека v2 (история диалога, идемпотентность, `protocol`): `docs/superpowers/service/specs/2026-09-04-agentgate-v2-design.md`, план — `docs/superpowers/service/plans/2026-09-04-agentgate-v2-dialogue-context.md`. Спека v3 (правила пользователя, `/v1/inspect`): `docs/superpowers/service/specs/2026-09-04-agentgate-v3-rules-and-inspect-design.md`, план — `docs/superpowers/service/plans/2026-09-04-agentgate-v3-rules-and-inspect.md`, отчёт — `docs/reports/task-22-v3-rules-and-inspect.md`.
 
-## Что построено (v2 по функциям, v1.5 по форме кода)
+## Что построено (v3 по функциям, v1.5 по форме кода)
 
 Отдельный сервис между кодинг-агентом и ОС. `POST /v1/decide` получает одно действие плюс последний запрос пользователя и возвращает `allow | deny(reason, suggest) | ask`. Каскад: нормализация по AST → ступень 1 (hard-deny, профиль, allowlist, без LLM) → ступень 2 (LLM через OpenAI-совместимый API, structured output) → эскалация. Решения пишутся в Postgres и в JSONL после отправки ответа. С v2 запрос несёт `history` (ходы диалога с `role` и `author`), ответ и `/healthz` — `protocol`, заголовок `Idempotency-Key` даёт повтор решения без второй строки и без сдвига счётчиков.
+
+С v3 добавились две вещи. Первая — `rules` в `DecideRequest`: детерминированные `allow`/`ask`/`deny` пользователя, применяемые ступенью 1 на трёх позициях цепочки (`client.deny` сразу после hard-deny, `client.ask` после запретов профиля, `client.allow` перед серверным allowlist), плюс `call_id`, связывающий решение с проверкой результата того же вызова. Вторая — `POST /v1/inspect`: сервис судит результат инструмента до того, как его увидит модель, и отвечает `pass | mask(output) | drop(reason)`. Каскад inspect: кэш по содержимому → детекторы (инструкциеподобный текст, `curl … | sh`, длинные блобы, невидимые символы) → построчная маска или `drop` при пороге в половину строк → классификатор ступени 2 только при сработавшем флаге. Fail-closed на этом маршруте — `drop`.
 
 Архитектура после рефакторинга v1.5 (поведение то же; отчёт — `docs/reports/task-v1.5-solid-refactor.md`):
 
 - **Один тип исхода.** `Verdict` (`service/agentgate/domain/verdict.py`) возвращают и правило, и классификатор, и allow-кэш, и ранний отказ API. `Decision` (`engine/decision.py`) — исход одного вызова целиком; `DecideResponse` и `DecisionRecord` — две проекции с него.
 - **Один тип диалога.** `Dialogue` (`domain/dialogue.py`): дайджест полной истории входит в ключ allow-кэша, `fit` по бюджету профиля — в промпт; `ReviewCase` (`classify/base.py`) — единственный вход классификатора.
 - **Ступень 1 — один список правил.** `STAGE1` в `agentgate/rules/chain.py`: `RuleChain` из объектов `Rule`, первый непустой вердикт побеждает. Одно правило — один модуль в `agentgate/rules/`, hard-deny — в `agentgate/rules/hard_deny/`. Порядок списка и есть вся приоритетная политика ступени 1.
-- **Пять протоколов-швов:** `Rule` (`rules/base.py`), `Classifier` (`classify/base.py`), `SessionStateStore` (`domain/session.py`), `DecisionWriter` (`store/writer.py`), `ReplayStore` (`domain/replay.py`). Всё, что выше них, зависит от протокола, а не от реализации.
+- **Протоколы-швы:** `Rule` (`rules/base.py`), `Classifier` (`classify/base.py`), `SessionStateStore` (`domain/session.py`), `DecisionWriter` (`store/writer.py`), `ReplayStore` (`domain/replay.py`), и с v3 — `InspectClassifier` (`inspect/classify.py`), `InspectCache` (`domain/inspect_cache.py`), `Stored` (`store/protocols.py`: то, что writer'у нужно от исхода, будь то `Decision` или `Inspection`). Всё, что выше них, зависит от протокола, а не от реализации.
 - **Один composition root.** `agentgate/bootstrap.py::build_service` — единственное место, знающее, какие реализации идут в прод. `__main__.py`, `cli.py` и тестовые фабрики берут его, а не собирают свою сборку.
 - **Одна таблица знаний о командах.** `agentgate/shell/commands.py` (`CommandSpec`, `COMMANDS`) вместо одиннадцати множеств в пяти файлах: добавить команду — одна строка.
 - **`contracts/openapi.yaml` порождается приложением** (`service/scripts/export_openapi.py`, 96 строк вместо 886 рукописных); `tests/test_contracts.py` падает, если документ разошёлся с тем, что сервис реально отдаёт.
 
-Реализованные HTTP-эндпоинты: `POST /v1/decide`, `GET /v1/decisions`, `GET /v1/profiles/{profile_id}`, `GET /healthz` (см. `service/agentgate/api/app.py`). Аутентификация: статический токен (`AGENTGATE_TOKEN`) и/или выданные API-ключи — см. «API-ключи» ниже.
+Реализованные HTTP-эндпоинты: `POST /v1/decide`, `POST /v1/inspect`, `GET /v1/decisions` (с фильтром `?kind=decide|inspect`), `GET /v1/profiles/{profile_id}`, `GET /healthz` (см. `service/agentgate/api/app.py`). Аутентификация: статический токен (`AGENTGATE_TOKEN`) и/или выданные API-ключи — см. «API-ключи» ниже.
 
 ## Папки и кто в них пишет
 
@@ -26,9 +28,10 @@
   - `domain/` — чистые типы без I/O: `verdict.py`, `policy.py` (`Profile` ⊗ workspace), `session.py`, `dialogue.py`, `replay.py`. Единственный ход против «сверху вниз» здесь намеренный: `domain/replay.py` импортирует `engine.decision`, потому что повтор строится из сохранённой формы решения (`DecisionRecord`), а не из чего-то более раннего.
   - `shell/` — синтаксис и семантика shell без политики: `commands.py`, `argv.py`, `wrappers.py`, `paths.py`, `secrets.py`.
   - `normalize/` — `DecideRequest` → `NormalizedAction`.
-  - `rules/` — ступень 1: `base.py` (`Rule`, `RuleChain`), `chain.py` (`STAGE1`), по модулю на правило.
-  - `classify/` — ступень 2: `base.py` (`Classifier`), `llm.py`, `prompt.py`, `schema.py`, `client.py`.
-  - `engine/` — оркестрация: `gate.py`, `decision.py`, `timings.py`.
+  - `rules/` — ступень 1: `base.py` (`Rule`, `RuleChain`), `chain.py` (`STAGE1`), по модулю на правило, включая `client_rules.py`.
+  - `classify/` — ступень 2: `base.py` (`Classifier`), `llm.py`, `prompt.py`, `render.py`, `schema.py`, `client.py`.
+  - `inspect/` — каскад inspect: `detectors.py`, `chain.py` (`INSPECT_STAGE1`), `mask.py`, `classify.py`.
+  - `engine/` — оркестрация: `gate.py`, `decision.py`, `inspector.py`, `inspection.py`, `timings.py`.
   - `session/`, `store/`, `api/`, `profiles/`, `log/` + `bootstrap.py`, `cli.py`, `__main__.py`.
 - `adapters/` — плагины харнессов (направление 1).
 - `benchmark/` — внутренний и внешний бенчмарк (направление 3).
@@ -77,6 +80,15 @@
 - **Сайт на `openmagi.ru` — прототип из Claude Design как есть**: React и Babel грузятся с unpkg в браузере при каждом открытии. Пересборка в чистую статику по `frontend/handoff/README.md` — отдельная задача; деплой при этом не меняется.
 - **Неизменяемость `NormalizedAction` поверхностная.** Само действие `frozen=True` (переписать поле нельзя), но `commands`/`paths`/`domains` — списки, а не кортежи: переход на кортежи ломает сравнение `cmd.argv[:len(p)] == p` в `allowlist.py` и молча выключает `safe_prefixes` оператора. Отдельная задача с правкой матчера и golden-тестов, не часть рефакторинга.
 - **Гонка двух повторов с одним `Idempotency-Key`** сдвигает счётчики сессии дважды; строка в базе одна (частичный уникальный индекс). Блокировка по ключу в полёте не делается.
+- **Пороги детекторов inspect не зависят от провенанса.** Провенанс идёт в ключ кэша и в промпт ступени 2, но одна и та же строка из файла в workspace и со скачанной страницы флагуется одинаково. Разные пороги по провенансу — не сделано.
+- **`rules.allow` не проходит для команд с редиректом в файл.** `allow` — обещание про всю строку, поэтому он отказывается от того же, от чего отказывается серверный allowlist: `eval`, подстановки, редиректы (`writes_a_file`, где `/dev/null` тоже считается записью — как в `allowlist._is_readonly`). `rules.allow: ["echo *"]` не пропустит `echo x > out.txt`.
+- **`mask` — построчная замена.** Флагованная строка заменяется целиком; перефразированные инъекции, которые не ловятся регуляркой, детекторами не берутся — это семантика, то есть v4.
+- **Вердикт ступени 2 inspect кэшируется по содержимому**, как прямо требует §5.5 спеки («кэшируются все три вердикта»), хотя он зависит от `[TASK]` и `[HISTORY]` и потому не детерминирован по одному лишь содержимому. Расхождение вынесено владельцу как открытый вопрос, поведение оставлено по спеке.
+- **`$(…)` в argv не раскрывается на ступени 1.** `$(echo rm) -rf ./dist` не получает вердикта ступени 1: флаг `has_subst` уводит действие на ступень 2. Поведение нормализатора до v3, спека v3 его не меняет.
+- **`client.deny` может быть поднят эскалацией до `ask`** — так же, как сегодня `profile.path`. От эскалации спека защищает только hard-deny.
+- **CRLF-нормализация замаскированных строк.** Замаскированная строка подставляется целиком, поэтому строка, оканчивавшаяся `\r\n`, возвращается с обычным `\n`. Незамаскированные строки не трогаются.
+- **Латентность детекторов на плотном по подсказкам тексте ~15 мс при бюджете 20 мс на 256 КБ** (обычный лог — ~3,3 мс). Запас 1,3×; новый детектор с широкими `hints` его съест.
+- **Маскирование секретов и маскирование по спанам от модели — v4.** Сейчас ступень 2 отвечает одной буквой (`P`/`M`/`D`), а не диапазонами текста, и `.env`-подобные значения в выводе инструмента не маскируются.
 - **Окно v2→v4:** `toolresult` попадает в промпт экранированным (структуру подделать нельзя), но семантически незащищённым; v2 не открывается адаптерам как поддерживаемая до Context Guard (v4). Бюджет `history.budget_chars` считается по экранированной длине, кап на ход — по сырым символам.
 
 ## Отчёты

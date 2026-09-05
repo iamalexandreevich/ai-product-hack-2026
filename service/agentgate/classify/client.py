@@ -10,11 +10,12 @@ error is not representable here: the happy path is the only way to get a
 
 import json
 import os
+from dataclasses import dataclass
 
 import httpx
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
-from agentgate.classify.schema import RESPONSE_JSON_SCHEMA, ClassifierOutput
+from agentgate.domain.usage import Usage
 from agentgate.profiles.schema import ModelConfig
 
 
@@ -30,11 +31,33 @@ class Stage2Error(Exception):
         self.detail = detail
 
 
+@dataclass(frozen=True)
+class StructuredOutput:
+    """The name, JSON schema and Pydantic model for one stage 2 call's
+    structured output.
+
+    `name` is the `json_schema.name` the request declares -- two callers
+    with different schemas must not share it, or an OpenAI-compatible
+    provider that caches by name could hand one caller the other's shape.
+    `classify/schema.py` builds the decide value, `inspect/classify.py` its
+    own; `LLMClient` takes one explicitly rather than defaulting to either.
+    """
+
+    name: str
+    schema: dict
+    model: type[BaseModel]
+
+
 class LLMClient:
-    def __init__(self, name: str, config: ModelConfig, http: httpx.AsyncClient) -> None:
+    """Talks to one OpenAI-compatible chat-completions endpoint."""
+
+    def __init__(
+        self, name: str, config: ModelConfig, http: httpx.AsyncClient, structured_output: StructuredOutput,
+    ) -> None:
         self.name = name
         self.config = config
         self._http = http
+        self._structured_output = structured_output
 
     def _headers(self) -> dict[str, str]:
         headers = {"content-type": "application/json"}
@@ -54,11 +77,13 @@ class LLMClient:
         if self.config.structured_output:
             body["response_format"] = {
                 "type": "json_schema",
-                "json_schema": {"name": "agentgate_decision", "strict": True, "schema": RESPONSE_JSON_SCHEMA},
+                "json_schema": {
+                    "name": self._structured_output.name, "strict": True, "schema": self._structured_output.schema,
+                },
             }
         return body
 
-    async def classify(self, system: str, user: str) -> tuple[ClassifierOutput, dict]:
+    async def classify(self, system: str, user: str) -> tuple[BaseModel, dict, Usage | None]:
         """One request, no retries. Raises Stage2Error on every failure path."""
         url = self.config.base_url.rstrip("/") + "/chat/completions"
         try:
@@ -109,9 +134,10 @@ class LLMClient:
             raise Stage2Error("invalid_json", content[:200]) from exc
 
         try:
-            return ClassifierOutput.model_validate(data), raw
+            output = self._structured_output.model.model_validate(data)
         except ValidationError as exc:
             raise Stage2Error("invalid_schema", str(exc)[:200]) from exc
+        return output, raw, Usage.from_raw_response(raw)
 
 
 def _strip_fences(text: str) -> str:

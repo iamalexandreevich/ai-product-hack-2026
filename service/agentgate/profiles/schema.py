@@ -1,7 +1,7 @@
 import hashlib
 from enum import Enum
 from functools import cached_property
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -24,6 +24,16 @@ class ModelConfig(BaseModel):
     api_key_env: str | None = None
     timeout_ms: int = 3000
     structured_output: bool = True
+    price_per_1m_input: float | None = None
+    price_per_1m_output: float | None = None
+
+    @model_validator(mode="after")
+    def _prices_set_together(self) -> "ModelConfig":
+        if (self.price_per_1m_input is None) != (self.price_per_1m_output is None):
+            raise ValueError(
+                "price_per_1m_input and price_per_1m_output must both be set or both omitted"
+            )
+        return self
 
 
 class ModelsConfig(BaseModel):
@@ -97,6 +107,12 @@ class History(BaseModel):
         }[role]
 
 
+class InspectSettings(BaseModel):
+    """How the inspect route judges a tool result beyond stage 1."""
+
+    classifier: Literal["off", "on-flag"] = "off"
+
+
 class Profile(BaseModel):
     """A policy profile as the service loaded it. Server-side configuration; a
     harness never receives this in normal operation. Contains no secret values
@@ -113,6 +129,7 @@ class Profile(BaseModel):
     prose: Prose = Field(default_factory=Prose)
     history: History = Field(default_factory=History)
     rules: list[dict[str, Any]] = Field(default_factory=list)
+    inspect: InspectSettings = Field(default_factory=InspectSettings)
 
     @cached_property
     def _hash(self) -> str:

@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from agentgate.profiles.schema import DenyWindow, History, NetworkMode, PerTurnChars, Profile
+from agentgate.profiles.schema import DenyWindow, History, InspectSettings, ModelConfig, NetworkMode, PerTurnChars, Profile
 from tests.factories import minimal_profile_data, profile
 
 
@@ -62,7 +62,8 @@ def test_history_budget_has_the_spec_defaults():
 def test_history_budget_is_read_from_the_profile_and_enters_the_hash():
     plain = profile()
     tuned = profile(history={"budget_chars": 100, "per_turn_chars": {"toolresult": 10}})
-    assert tuned.history.budget_chars == 100 and tuned.history.cap_for("toolresult") == 10
+    assert tuned.history.budget_chars == 100
+    assert tuned.history.cap_for("toolresult") == 10
     assert tuned.history.cap_for("human") == 2048
     assert tuned.profile_hash() != plain.profile_hash()
 
@@ -87,3 +88,34 @@ def test_cap_for_answers_for_every_turn_role():
     from agentgate.api.schemas import TurnRole
 
     assert all(isinstance(History().cap_for(role.value), int) for role in TurnRole)
+
+
+def test_inspect_classifier_defaults_to_off():
+    p = Profile.model_validate(minimal_profile_data())
+    assert p.inspect.classifier == "off"
+
+
+def test_inspect_classifier_accepts_on_flag():
+    assert InspectSettings(classifier="on-flag").classifier == "on-flag"
+
+
+def test_model_config_prices_default_to_unset():
+    cfg = ModelConfig(base_url="http://x/v1", model="q")
+    assert cfg.price_per_1m_input is None
+    assert cfg.price_per_1m_output is None
+
+
+def test_model_config_accepts_both_prices():
+    cfg = ModelConfig(base_url="http://x/v1", model="q", price_per_1m_input=0.15, price_per_1m_output=0.60)
+    assert cfg.price_per_1m_input == 0.15
+    assert cfg.price_per_1m_output == 0.60
+
+
+def test_model_config_rejects_only_input_price():
+    with pytest.raises(ValueError):
+        ModelConfig(base_url="http://x/v1", model="q", price_per_1m_input=0.15)
+
+
+def test_model_config_rejects_only_output_price():
+    with pytest.raises(ValueError):
+        ModelConfig(base_url="http://x/v1", model="q", price_per_1m_output=0.60)

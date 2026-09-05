@@ -187,3 +187,60 @@ async def test_build_service_uses_the_replay_store_it_was_given(session_factory,
     replay = _NoRestore()
     service = await build_service(settings_for(tmp_path), replay_store=replay)
     assert service.replay_store is replay
+
+
+async def test_built_service_wires_an_inspector(session_factory, tmp_path):
+    service = await build_service(settings_for(tmp_path))
+    assert service.inspector is not None
+
+
+async def test_built_app_answers_inspect(session_factory, tmp_path):
+    service = await build_service(settings_for(tmp_path))
+    async with httpx.AsyncClient(transport=ASGITransport(app=service.app), base_url="http://test") as c:
+        r = await c.post("/v1/inspect", json={
+            "session_id": "s1", "harness": "t", "call_id": "c1", "tool": "shell", "tool_name": "bash",
+            "status": "completed", "output": "On branch main\n",
+            "provenance": {"kind": "shell", "command": "git status"},
+            "args": {"cwd": WORKSPACE}, "user_request": "status",
+        })
+    assert r.status_code == 200 and r.json()["verdict"] == "pass"
+
+
+async def test_a_session_created_only_by_inspect_never_pins_the_workspace_for_decide(session_factory, tmp_path):
+    """An inspect call resolves its own workspace from `args.cwd` and hands it
+    to `SessionRepo.ensure`, which creates a bare session row so
+    `decisions.session_id`'s foreign key is satisfied -- see
+    `agentgate.engine.inspection.Inspection.session_ref`. Across a restart
+    that row is preloaded like any other persisted session (see
+    `PersistentSessionStateStore.restore`), and before the fix in
+    `InMemorySessionStateStore.get_or_create` the session's *first decide*
+    would inherit that inspect-only workspace instead of establishing its
+    own -- proven here with `cwd: "/"`, which would widen `allowed_paths` to
+    the filesystem root.
+    """
+    session_id = "restart-pin"
+    settings = settings_for(tmp_path)
+
+    service_before_restart = await build_service(settings)
+    async with httpx.AsyncClient(transport=ASGITransport(app=service_before_restart.app), base_url="http://test") as c:
+        inspect_response = await c.post("/v1/inspect", json={
+            "session_id": session_id, "harness": "t", "call_id": "c1", "tool": "shell", "tool_name": "bash",
+            "status": "completed", "output": "root listing\n",
+            "provenance": {"kind": "shell", "command": "ls /"},
+            "args": {"cwd": "/"}, "user_request": "list root",
+        })
+    assert inspect_response.status_code == 200
+
+    # A fresh build_service against the same database simulates a restart:
+    # it restores session state from Postgres before serving traffic.
+    service_after_restart = await build_service(settings)
+    async with httpx.AsyncClient(transport=ASGITransport(app=service_after_restart.app), base_url="http://test") as c:
+        decide_response = await c.post("/v1/decide", json={
+            "session_id": session_id, "harness": "t", "tool": "file_write",
+            "args": {"cwd": WORKSPACE, "paths": ["/etc/passwd"]}, "user_request": "task",
+        })
+    body = decide_response.json()
+    assert (body["decision"], body["rule_id"]) == ("deny", "profile.path")
+
+    state = await service_after_restart.state_store.get_or_create(session_id, "t", "default", lambda: WORKSPACE)
+    assert state.workspace == WORKSPACE

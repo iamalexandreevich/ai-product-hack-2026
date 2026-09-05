@@ -47,3 +47,31 @@ async def test_preload_makes_a_seeded_state_the_stores_own():
     store.preload([seeded])
     again = await store.get_or_create("s2", "h", "p", lambda: "/w")
     assert again is seeded and again.deny_total == 5
+
+
+async def test_a_preloaded_unclaimed_state_does_not_pin_the_workspace():
+    # `SessionRepo.ensure` (called for an inspect that carries a session_id)
+    # writes a row with harness="" -- a session no decide has ever seen. A
+    # restart preloads that row same as any other; the first decide for that
+    # session must still get its own cwd's workspace, not the one inspect's
+    # `ensure` happened to write.
+    store = InMemorySessionStateStore()
+    unclaimed = session_state("s3", harness="", profile_id="", workspace="/")
+    store.preload([unclaimed])
+
+    claimed = await store.get_or_create("s3", "claude-code", "default", lambda: "/home/u/repo")
+
+    assert claimed.workspace == "/home/u/repo"
+    assert claimed.harness == "claude-code" and claimed.profile_id == "default"
+
+
+async def test_a_preloaded_claimed_state_keeps_its_pinned_workspace():
+    # The mirror case: a state a decide already claimed (non-empty harness)
+    # must not be re-detected on a later call, restart or not.
+    store = InMemorySessionStateStore()
+    claimed_before = session_state("s4", harness="claude-code", profile_id="default", workspace="/home/u/repo")
+    store.preload([claimed_before])
+
+    again = await store.get_or_create("s4", "claude-code", "default", lambda: "/should-not-be-used")
+
+    assert again.workspace == "/home/u/repo"

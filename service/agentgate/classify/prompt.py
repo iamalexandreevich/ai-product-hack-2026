@@ -33,6 +33,7 @@ own stage 1 code, not by the action being judged, so it is not escaped.
 
 import json
 
+from agentgate.classify.render import history_lines, j, system_prompt
 from agentgate.classify.schema import RESPONSE_JSON_SCHEMA
 from agentgate.domain.dialogue import Dialogue
 from agentgate.domain.policy import Policy
@@ -74,27 +75,8 @@ def _profile_line(policy: Policy) -> str:
 
 
 def build_system_prompt(policy: Policy) -> str:
-    parts = [_ROLE + json.dumps(RESPONSE_JSON_SCHEMA, separators=(",", ":")), "", _profile_line(policy)]
-    if policy.prose.environment:
-        parts.append(f"[ENVIRONMENT] {policy.prose.environment}")
-    if policy.prose.allow:
-        parts.append(f"[ALLOWED BY USER] {policy.prose.allow}")
-    if policy.prose.soft_deny:
-        parts.append(f"[AVOID] {policy.prose.soft_deny}")
-    return "\n".join(parts)
-
-
-def _j(value: str) -> str:
-    """JSON-encode one attacker-reachable scalar so it cannot break the line-oriented format.
-
-    POSIX filenames, the cwd, domains and the user's own request text may
-    legally contain a newline (or other control characters). This format has
-    no other escaping convention, so an un-escaped newline would let any of
-    those values forge a fake `[STAGE1]`/`[FLAGS]`/`[ACTION]` line ahead of
-    the real one. json.dumps renders a newline as the two characters `\n`
-    inside a quoted string — a real line break becomes impossible.
-    """
-    return json.dumps(value, ensure_ascii=False)
+    role = _ROLE + json.dumps(RESPONSE_JSON_SCHEMA, separators=(",", ":"))
+    return system_prompt(role, _profile_line(policy), policy.prose)
 
 
 def build_user_message(
@@ -102,11 +84,11 @@ def build_user_message(
 ) -> str:
     f = action.flags
     argv = json.dumps([c.argv for c in action.commands], separators=(",", ":"), ensure_ascii=False)
-    paths = ",".join(_j(p) for p in action.paths)
-    domains = ",".join(_j(d) for d in action.domains)
-    lines = [f"[TASK] {_j(intent)}"]
-    lines.extend(_history_lines(dialogue))
-    lines.append(f"[ACTION] tool={action.tool.value} cwd={_j(action.cwd)}")
+    paths = ",".join(j(p) for p in action.paths)
+    domains = ",".join(j(d) for d in action.domains)
+    lines = [f"[TASK] {j(intent)}"]
+    lines.extend(history_lines(dialogue))
+    lines.append(f"[ACTION] tool={action.tool.value} cwd={j(action.cwd)}")
     if action.tool.value == "shell":
         lines.append(f"argv={argv}")
     if action.mcp is not None:
@@ -119,18 +101,3 @@ def build_user_message(
     )
     lines.append(f"[STAGE1] {stage1_note}")
     return "\n".join(lines)
-
-
-def _history_lines(dialogue: Dialogue) -> list[str]:
-    if dialogue.is_empty:
-        return []
-    lines = [f"[HISTORY] turns={len(dialogue.turns)} omitted={dialogue.omitted}"]
-    for turn in dialogue.turns:
-        parts = [f"{turn.role.value}/{turn.author.value}"]
-        if turn.tool is not None:
-            parts.append(f"tool={_j(turn.tool)}")
-        if turn.call_id is not None:
-            parts.append(f"call={_j(turn.call_id)}")
-        parts.append(_j(turn.content))
-        lines.append(" ".join(parts))
-    return lines

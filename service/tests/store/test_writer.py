@@ -1,5 +1,6 @@
 import logging
 
+from agentgate.api.schemas import InspectVerdict
 from agentgate.domain.verdict import Verdict
 from agentgate.engine.decision import Decision
 from agentgate.store.writer import CompositeDecisionWriter, JsonlDecisionWriter, PostgresDecisionWriter
@@ -8,6 +9,8 @@ from tests.factories import (
     FakeSessionRecords,
     RecordingDecisionWriter,
     decision,
+    inspect_request,
+    inspection,
     session_state,
 )
 
@@ -141,3 +144,21 @@ async def test_postgres_writer_skips_the_cache_row_when_the_insert_was_skipped(c
         )
     assert sessions.cache_puts == []
     assert "01J0" in caplog.text
+
+
+async def test_writer_stores_an_inspection_without_touching_session_counters_or_cache():
+    sessions, decisions = FakeSessionRecords(), FakeDecisionRepo()
+    await PostgresDecisionWriter(decisions, sessions, 86400).write(
+        inspection(verdict=InspectVerdict.mask, replacement="x", workspace="/w")
+    )
+    assert len(decisions.inserted) == 1
+    assert sessions.upserts == [] and sessions.cache_puts == []
+    assert sessions.ensures == [("s1", "/w")]
+
+
+async def test_writer_ensures_no_session_row_for_a_sessionless_inspection():
+    sessions, decisions = FakeSessionRecords(), FakeDecisionRepo()
+    await PostgresDecisionWriter(decisions, sessions, 86400).write(
+        inspection(request=inspect_request(session_id=None))
+    )
+    assert sessions.ensures == [] and sessions.upserts == []
