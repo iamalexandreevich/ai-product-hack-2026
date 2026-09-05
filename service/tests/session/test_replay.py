@@ -20,7 +20,7 @@ def replay(key: str = "k", age_seconds: int = 0) -> Replay:
 def unprojectable_record(key: str = "bad"):
     """A record whose `kind` and `decision` disagree, as a downgrade/upgrade
     round trip of migration 0004 could once produce for an inspect row
-    backfilled with `kind='decide'` (see 0004's `_kind_from_decision`): the
+    backfilled with `kind='decide'` (0004 now backfills `kind` from `decision`): the
     `decision` column holds an `InspectVerdict` value ('pass') while `kind`
     says 'decide', so `Replay.of` builds the wrong projection and blows up
     validating a `DecideResponse` out of it.

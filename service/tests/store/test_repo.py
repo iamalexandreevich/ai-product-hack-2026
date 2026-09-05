@@ -303,8 +303,12 @@ async def test_ensure_creates_a_session_row_for_a_session_that_never_decided(ses
     await repo.ensure("s1", "/w")
     loaded = await repo.load_all()
     assert len(loaded) == 1
-    assert loaded[0].session_id == "s1" and loaded[0].workspace == "/w"
+    assert loaded[0].session_id == "s1"
+    assert loaded[0].workspace == "/w"
     assert loaded[0].decisions_total == 0
+    # The empty harness is the sentinel the in-memory store reads as
+    # "no decide has claimed this session yet"; see session/memory.py.
+    assert loaded[0].harness == ""
 
 
 async def test_ensure_does_not_touch_an_existing_session_row(session_factory):

@@ -32,7 +32,8 @@ class Detector:
     detector's patterns can match. `hints` covers the common case: casefolded
     substrings, and a line whose casefolded form contains none of them is
     skipped. `precheck` covers what a substring test cannot express (length,
-    character class).
+    character class). `scan` never consults a detector for an empty line,
+    so a detector must not rely on matching the empty string.
 
     `extra` is an escape hatch for a check a single regex cannot express
     without reintroducing the backtracking it was built to avoid -- the
@@ -84,6 +85,10 @@ def _html_comment_hides_a_hint(line: str) -> bool:
     up. Locating each comment's boundaries first with bounded `str.find`
     calls costs O(n) total -- `start` only ever moves forward -- and the
     word check then runs on a slice already known to be inside a comment.
+
+    This is deliberately narrower than the regex it replaces: a hint between
+    two separate comments (`<!-- a --> ignore <!-- b -->`) is visible text,
+    not hidden, and no longer counts.
     """
     start = 0
     while True:
