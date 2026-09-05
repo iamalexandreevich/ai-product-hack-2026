@@ -15,6 +15,8 @@ from agentgate.api.schemas import InspectVerdict
 from agentgate.inspect.detectors import INVISIBLE_CHARS, Action, Finding
 
 REPLACEMENT_LINE = "[gate: instruction-like text removed]"
+SECRET_REPLACEMENT = "[gate: secret redacted]"
+PRIVATE_KEY_REPLACEMENT = "[gate: private key redacted]"
 DROP_SHARE = 0.5
 
 
