@@ -60,7 +60,7 @@ _INJECTION_HINTS = (
 
 
 def _has_injection_hint(line: str) -> bool:
-    lowered = line.lower()
+    lowered = line.casefold()
     return any(hint in lowered for hint in _INJECTION_HINTS)
 
 
