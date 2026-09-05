@@ -1,0 +1,49 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/inspect",
+    "headers": {
+      "Authorization": "Bearer <AGENTGATE_TOKEN>",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "session_id": "examples-2026-09-06-inspect-a",
+      "harness": "claude-code",
+      "call_id": "call-inspect-0001",
+      "tool": "shell",
+      "tool_name": "Bash",
+      "status": "completed",
+      "output": "On branch main\nYour branch is up to date with 'origin/main'.\n\nChanges not staged for commit:\n  modified:   src/app.py\n\nno changes added to commit\n",
+      "provenance": {
+        "kind": "shell",
+        "command": "git status"
+      },
+      "args": {
+        "cwd": "/home/dev/repo"
+      },
+      "user_request": "покажи, что изменилось в рабочем дереве"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "verdict": "pass",
+      "output": null,
+      "reason": "",
+      "suggest": "",
+      "stage": 1,
+      "rule_id": null,
+      "model": null,
+      "latency_ms": {
+        "stage1": 0,
+        "stage2": null,
+        "total": 0
+      },
+      "cached": false,
+      "decision_id": "01M1SSM1WVZ2QHKJXC6QY5NZ3Z",
+      "protocol": 1,
+      "spans": [],
+      "redacted": 0
+    }
+  }
+}

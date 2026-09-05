@@ -1,0 +1,93 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/decide",
+    "headers": {
+      "Authorization": "Bearer <AGENTGATE_TOKEN>",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "session_id": "examples-2026-09-06-decide-b",
+      "harness": "claude-code",
+      "tool": "shell",
+      "raw": "pip install requests",
+      "args": {
+        "cwd": "/home/dev/repo"
+      },
+      "user_request": "добавь HTTP-клиент и напиши скрипт, который дёргает наш статус-эндпоинт",
+      "call_id": "call-shell-0002",
+      "rules": {
+        "version": 1,
+        "level": "medium",
+        "allow": [
+          "pytest*",
+          "git status"
+        ],
+        "ask": [
+          "pip install *"
+        ],
+        "deny": [
+          "rm -rf /*"
+        ]
+      },
+      "history": [
+        {
+          "role": "human",
+          "author": "human",
+          "content": "добавь HTTP-клиент и напиши скрипт, который дёргает наш статус-эндпоинт"
+        },
+        {
+          "role": "assistant",
+          "author": "agent",
+          "content": "Посмотрю, что уже есть в зависимостях проекта."
+        },
+        {
+          "role": "toolcall",
+          "author": "agent",
+          "content": "cat requirements.txt",
+          "tool": "shell"
+        },
+        {
+          "role": "toolresult",
+          "author": "system",
+          "content": "flask==3.0.3\npytest==8.3.2",
+          "tool": "shell"
+        },
+        {
+          "role": "assistant",
+          "author": "agent",
+          "content": "requests в зависимостях нет — поставлю его в окружение проекта."
+        },
+        {
+          "role": "human",
+          "author": "human",
+          "content": "да, ставь"
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "decision": "ask",
+      "reason": "",
+      "suggest": "",
+      "stage": 2,
+      "rule_id": "client.ask",
+      "model": "primary",
+      "latency_ms": {
+        "stage1": 1,
+        "stage2": 1869,
+        "total": 1871
+      },
+      "cached": false,
+      "decision_id": "01M1SSJKD70NHS7T0R5FTD8P58",
+      "protocol": 1,
+      "cost": {
+        "input_tokens": 829,
+        "output_tokens": 61,
+        "reasoning_tokens": 0
+      }
+    }
+  }
+}

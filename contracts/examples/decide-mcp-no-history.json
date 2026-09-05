@@ -1,0 +1,58 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/decide",
+    "headers": {
+      "Authorization": "Bearer <AGENTGATE_TOKEN>",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "session_id": "examples-2026-09-06-decide-c",
+      "harness": "claude-code",
+      "tool": "mcp_call",
+      "raw": "",
+      "args": {
+        "cwd": "/home/dev/repo",
+        "mcp": {
+          "server": "github",
+          "tool": "get_issue",
+          "arguments": {
+            "owner": "acme",
+            "repo": "widgets",
+            "issue_number": 412
+          }
+        }
+      },
+      "user_request": "посмотри issue 412",
+      "rules": {
+        "version": 1,
+        "level": "medium",
+        "allow": [
+          "github.get_*"
+        ],
+        "ask": [],
+        "deny": []
+      },
+      "call_id": "call-mcp-0001"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "decision": "allow",
+      "reason": "",
+      "suggest": "",
+      "stage": 1,
+      "rule_id": "client.allow",
+      "model": null,
+      "latency_ms": {
+        "stage1": 0,
+        "stage2": null,
+        "total": 0
+      },
+      "cached": false,
+      "decision_id": "01M1SSGGZ2523H76MXWNTJAKKA",
+      "protocol": 1
+    }
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/decide",
+    "headers": {
+      "Authorization": "Bearer <AGENTGATE_TOKEN>",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "harness": "claude-code",
+      "tool": "shell"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "decision": "ask",
+      "reason": "invalid request: args: Field required",
+      "suggest": "",
+      "stage": 0,
+      "rule_id": "api.invalid-request",
+      "model": null,
+      "latency_ms": {
+        "stage1": null,
+        "stage2": null,
+        "total": 0
+      },
+      "cached": false,
+      "decision_id": "01M1SSJ4KP0HSMZ7EJXRTKAFFS",
+      "protocol": 1
+    }
+  }
+}

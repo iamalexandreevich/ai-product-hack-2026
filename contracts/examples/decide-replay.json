@@ -1,0 +1,59 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/decide",
+    "headers": {
+      "Authorization": "Bearer <AGENTGATE_TOKEN>",
+      "Content-Type": "application/json",
+      "Idempotency-Key": "examples-2026-09-06-replay-0001"
+    },
+    "body": {
+      "session_id": "examples-2026-09-06-decide-e",
+      "harness": "claude-code",
+      "tool": "shell",
+      "raw": "git status",
+      "args": {
+        "cwd": "/home/dev/repo"
+      },
+      "user_request": "покажи, что изменилось в рабочем дереве"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "decision": "allow",
+      "reason": "",
+      "suggest": "",
+      "stage": 1,
+      "rule_id": "allowlist.readonly",
+      "model": null,
+      "latency_ms": {
+        "stage1": 0,
+        "stage2": null,
+        "total": 0
+      },
+      "cached": false,
+      "decision_id": "01M1SSJ553NCEB1H1YSYY97SJA",
+      "protocol": 1
+    }
+  },
+  "replay_response": {
+    "status": 200,
+    "body": {
+      "decision": "allow",
+      "reason": "",
+      "suggest": "",
+      "stage": 1,
+      "rule_id": "allowlist.readonly",
+      "model": null,
+      "latency_ms": {
+        "stage1": 0,
+        "stage2": null,
+        "total": 0
+      },
+      "cached": false,
+      "decision_id": "01M1SSJ553NCEB1H1YSYY97SJA",
+      "protocol": 1
+    }
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/inspect",
+    "headers": {
+      "Authorization": "Bearer <AGENTGATE_TOKEN>",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "session_id": "examples-2026-09-06-inspect-e",
+      "harness": "claude-code",
+      "call_id": "call-inspect-0005",
+      "tool": "shell",
+      "tool_name": "Bash",
+      "status": "completed",
+      "output": "<300 KB of text, elided>",
+      "provenance": {
+        "kind": "shell",
+        "command": "cat build.log"
+      },
+      "args": {
+        "cwd": "/home/dev/repo"
+      },
+      "user_request": "посмотри лог сборки"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "verdict": "drop",
+      "output": null,
+      "reason": "invalid request: output: Value error, output exceeds 262144 bytes",
+      "suggest": "",
+      "stage": 0,
+      "rule_id": "api.output-too-large",
+      "model": null,
+      "latency_ms": {
+        "stage1": null,
+        "stage2": null,
+        "total": 0
+      },
+      "cached": false,
+      "decision_id": "01M1SSNAWMBKG53ZY79NJ6VD4Z",
+      "protocol": 1,
+      "spans": [],
+      "redacted": 0
+    }
+  }
+}
