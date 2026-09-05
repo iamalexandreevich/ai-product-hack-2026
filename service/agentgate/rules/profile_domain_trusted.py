@@ -132,6 +132,10 @@ class ProfileDomainTrustedRule:
             return False
         exe = command.argv[0]
         if exe == "curl":
+            # `-H @file` makes curl read the headers from a local file and
+            # send them: an allowlisted flag becomes an exfiltration channel.
+            if any(n in ("-H", "--header") and v is not None and v.startswith("@") for n, v in options):
+                return False
             methods = [v.upper() for n, v in options if n in ("-X", "--request") and v is not None]
             return all(m in _READ_ONLY_METHODS for m in methods)
         if exe == "wget":

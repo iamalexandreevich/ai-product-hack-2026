@@ -345,3 +345,22 @@ def test_curl_without_a_scheme_finds_no_domain_and_falls_through():
     # user@host, so extract_domains finds nothing and condition 4 is
     # vacuously unmet.
     assert RULE.evaluate(shell_action("curl pypi.org/simple/"), TRUSTED) is None
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "curl -H @/etc/passwd https://pypi.org/x",
+        "curl --header @/etc/passwd https://pypi.org/x",
+        "curl --header=@/etc/passwd https://pypi.org/x",
+    ],
+    ids=["short", "long", "long_equals"],
+)
+def test_a_header_read_from_a_file_is_not_a_read(raw):
+    assert RULE.evaluate(shell_action(raw), TRUSTED) is None
+
+
+def test_a_literal_header_value_stays_allowed():
+    verdict = RULE.evaluate(shell_action("curl -H 'X-Test: value' https://pypi.org/x"), TRUSTED)
+    assert verdict is not None
+    assert verdict.decision is DecisionKind.allow

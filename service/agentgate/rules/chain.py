@@ -10,7 +10,8 @@ can forbid more but cannot permit what hard-deny or the profile forbids.
 `ProfileMcpRule` runs twice, mirroring `ClientRulesRule`.
 `ProfileMcpRule("refuse")` stands with the profile's other denials, above
 the user's `ask` floor, so an operator's `deny` on an MCP tool cannot be
-softened by it. `ProfileMcpRule("allow")` sits right after
+softened by it; its own `ask` is a floor as well, never a settling verdict,
+so it cannot silence a stage-2 `deny` either. `ProfileMcpRule("allow")` sits right after
 `ClientRulesRule("allow")` and before the server allowlist, so an
 operator's `allow` on an MCP tool is settled as `ask` at stage 1 when the
 user asked to confirm it -- an allow never outruns the user's floor,
