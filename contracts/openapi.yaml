@@ -679,6 +679,23 @@ components:
             $ref: '#/components/schemas/Turn'
           title: History
           type: array
+        rules:
+          anyOf:
+          - $ref: '#/components/schemas/RuleSet'
+          - type: 'null'
+          default: null
+          description: The user's deterministic policy for stage 1 (see `RuleSet`). Optional;
+            absent means the server profile alone decides. `deny` beats the server allowlist,
+            `allow` never beats hard-deny or the profile.
+        call_id:
+          anyOf:
+          - maxLength: 128
+            type: string
+          - type: 'null'
+          default: null
+          description: Harness identifier of this tool invocation. Pairs the decision with
+            the `POST /v1/inspect` of the same call in the feed.
+          title: Call Id
       required:
       - harness
       - tool
@@ -1247,6 +1264,49 @@ components:
           default: ''
       type: object
       title: Prose
+    RuleSet:
+      description: |-
+        The user's own deterministic policy, chosen at install time and edited by hand.
+
+        Patterns are matched against the canonical form of the normalized action
+        (argv joined by spaces, pipelines joined by ` | `) or against normalized
+        paths -- never against the raw command line. `allow` can never override
+        hard-deny or the server profile's denials.
+      properties:
+        version:
+          description: Shape version. This service reads `1`; any other value is refused as
+            `ask`.
+          title: Version
+          type: integer
+        level:
+          default: custom
+          description: '`low`, `medium`, `high`, or `custom` once edited. Recorded with the
+            decision, not interpreted.'
+          maxLength: 32
+          title: Level
+          type: string
+        allow:
+          description: Runs without asking, unless hard-deny or the profile forbids it.
+          items:
+            type: string
+          title: Allow
+          type: array
+        ask:
+          description: Goes to the human.
+          items:
+            type: string
+          title: Ask
+          type: array
+        deny:
+          description: Never runs.
+          items:
+            type: string
+          title: Deny
+          type: array
+      required:
+      - version
+      title: RuleSet
+      type: object
     Tool:
       type: string
       enum:

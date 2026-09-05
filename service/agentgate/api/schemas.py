@@ -24,6 +24,11 @@ HISTORY_MAX_BYTES = 131072
 TURN_TOOL_MAX_CHARS = 64
 TURN_CALL_ID_MAX_CHARS = 128
 IDEMPOTENCY_KEY_MAX_CHARS = 128
+RULES_VERSION = 1
+RULES_MAX_PATTERNS = 500
+RULES_MAX_BYTES = 16384
+RULE_PATTERN_MAX_CHARS = 200
+CALL_ID_MAX_CHARS = 128
 
 
 class HistoryTooLarge(ValueError):
@@ -32,6 +37,14 @@ class HistoryTooLarge(ValueError):
 
 class UnsupportedProtocol(ValueError):
     """`protocol` is not one this service speaks; refused as `api.unsupported-protocol`."""
+
+
+class UnsupportedRules(ValueError):
+    """`rules.version` is not one this service reads; refused as `api.unsupported-rules`."""
+
+
+class RulesTooLarge(ValueError):
+    """The wire limit on `rules` was exceeded; refused as `api.rules-too-large`."""
 
 
 class Tool(str, Enum):
@@ -139,6 +152,42 @@ class ActionArgs(BaseModel):
     )
 
 
+class RuleSet(BaseModel):
+    """The user's own deterministic policy, chosen at install time and edited by hand.
+
+    Patterns are matched against the canonical form of the normalized action
+    (argv joined by spaces, pipelines joined by ` | `) or against normalized
+    paths -- never against the raw command line. `allow` can never override
+    hard-deny or the server profile's denials.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    version: int = Field(description=f"Shape version. This service reads `{RULES_VERSION}`; any other value is refused as `ask`.")
+    level: str = Field(default="custom", max_length=32, description="`low`, `medium`, `high`, or `custom` once edited. Recorded with the decision, not interpreted.")
+    allow: list[str] = Field(default_factory=list, description="Runs without asking, unless hard-deny or the profile forbids it.")
+    ask: list[str] = Field(default_factory=list, description="Goes to the human.")
+    deny: list[str] = Field(default_factory=list, description="Never runs.")
+
+    @field_validator("version")
+    @classmethod
+    def _supported_version(cls, v: int) -> int:
+        if v != RULES_VERSION:
+            raise UnsupportedRules(f"unsupported rules version {v}; this service reads version {RULES_VERSION}")
+        return v
+
+    @model_validator(mode="after")
+    def _size(self) -> "RuleSet":
+        patterns = [*self.allow, *self.ask, *self.deny]
+        if len(patterns) > RULES_MAX_PATTERNS:
+            raise RulesTooLarge(f"rules exceed {RULES_MAX_PATTERNS} patterns")
+        if any(len(p) > RULE_PATTERN_MAX_CHARS for p in patterns):
+            raise RulesTooLarge(f"a rule pattern exceeds {RULE_PATTERN_MAX_CHARS} chars")
+        if sum(len(p.encode("utf-8", "surrogatepass")) for p in patterns) > RULES_MAX_BYTES:
+            raise RulesTooLarge(f"rules exceed {RULES_MAX_BYTES} bytes")
+        return self
+
+
 class DecideRequest(BaseModel):
     """One proposed agent action, plus the intent behind it."""
 
@@ -220,6 +269,22 @@ class DecideRequest(BaseModel):
             f"over which the request is refused fail-closed as `ask` with HTTP 200. "
             f"Rendered into the stage-2 prompt after per-role truncation; never seen "
             f"by stage 1. Empty for a v1 client, which changes nothing."
+        ),
+    )
+    rules: RuleSet | None = Field(
+        default=None,
+        description=(
+            "The user's deterministic policy for stage 1 (see `RuleSet`). Optional; "
+            "absent means the server profile alone decides. `deny` beats the server "
+            "allowlist, `allow` never beats hard-deny or the profile."
+        ),
+    )
+    call_id: str | None = Field(
+        default=None,
+        max_length=CALL_ID_MAX_CHARS,
+        description=(
+            "Harness identifier of this tool invocation. Pairs the decision with the "
+            "`POST /v1/inspect` of the same call in the feed."
         ),
     )
 

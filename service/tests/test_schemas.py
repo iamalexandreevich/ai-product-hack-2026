@@ -9,6 +9,9 @@ from agentgate.api.schemas import (
     METADATA_MAX_BYTES,
     PROTOCOL,
     RAW_MAX_BYTES,
+    RULE_PATTERN_MAX_CHARS,
+    RULES_MAX_BYTES,
+    RULES_MAX_PATTERNS,
     USER_REQUEST_MAX_CHARS,
     Author,
     DecideRequest,
@@ -269,3 +272,52 @@ def test_identity_digest_separates_requests_differing_only_in_paths():
     one = _req(tool="file_write", raw="", args={"cwd": "/r", "paths": ["/r/ok.txt"]})
     other = _req(tool="file_write", raw="", args={"cwd": "/r", "paths": ["/r/.env"]})
     assert one.identity_digest() != other.identity_digest()
+
+
+def _rules(**over) -> dict:
+    base = dict(version=1, level="medium", allow=["git status", "git diff*"], ask=["curl *"], deny=["sudo *", "**/.env"])
+    base.update(over)
+    return base
+
+
+def test_rules_default_to_none_and_call_id_to_none():
+    r = _req()
+    assert r.rules is None and r.call_id is None
+
+
+def test_rules_parse_and_are_immutable():
+    r = _req(rules=_rules())
+    assert r.rules.level == "medium" and r.rules.deny == ["sudo *", "**/.env"]
+    with pytest.raises(ValidationError):
+        r.rules.level = "high"
+
+
+def test_rules_level_defaults_to_custom():
+    assert _req(rules={k: v for k, v in _rules().items() if k != "level"}).rules.level == "custom"
+
+
+def test_unknown_rules_version_is_rejected():
+    with pytest.raises(ValidationError, match="unsupported rules version 2"):
+        _req(rules=_rules(version=2))
+
+
+def test_rules_over_pattern_count_are_rejected():
+    with pytest.raises(ValidationError, match=f"exceed {RULES_MAX_PATTERNS} patterns"):
+        _req(rules=_rules(allow=["a"] * (RULES_MAX_PATTERNS + 1), ask=[], deny=[]))
+
+
+def test_rules_pattern_over_length_is_rejected():
+    with pytest.raises(ValidationError, match=f"exceeds {RULE_PATTERN_MAX_CHARS} chars"):
+        _req(rules=_rules(deny=["x" * (RULE_PATTERN_MAX_CHARS + 1)]))
+
+
+def test_rules_over_byte_limit_are_rejected():
+    many = ["ж" * 100] * 90  # 9000 chars, 18000 bytes
+    with pytest.raises(ValidationError, match=f"exceed {RULES_MAX_BYTES} bytes"):
+        _req(rules=_rules(allow=many, ask=[], deny=[]))
+
+
+def test_call_id_is_capped():
+    assert _req(call_id="c" * 128).call_id == "c" * 128
+    with pytest.raises(ValidationError):
+        _req(call_id="c" * 129)
