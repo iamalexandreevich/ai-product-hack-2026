@@ -46,8 +46,23 @@ def test_long_base64_is_found_and_short_is_not():
     assert ids_of("QUJD" * 100) == []
 
 
+def test_encoded_blob_boundary_is_513_chars():
+    assert ids_of("A" * 512) == []
+    assert ids_of("A" * 513) == ["inspect.encoded"]
+
+
 def test_invisible_characters_are_found_with_a_clean_action():
     findings = scan("hello\u200bworld \u202eevil", INSPECT_STAGE1)
+    assert [f.rule_id for f in findings] == ["inspect.invisible"] and findings[0].action is Action.clean
+
+
+@pytest.mark.parametrize(
+    "line",
+    ["a\u2067b", "a\U000e0041b", "a\u00adb"],
+    ids=["bidi_isolate", "unicode_tag", "soft_hyphen"],
+)
+def test_invisible_characters_cover_extended_ranges(line):
+    findings = scan(line, INSPECT_STAGE1)
     assert [f.rule_id for f in findings] == ["inspect.invisible"] and findings[0].action is Action.clean
 
 
@@ -71,8 +86,20 @@ def test_findings_carry_line_numbers():
 
 
 def test_scan_p50_under_20ms_for_256kb_of_ordinary_log_lines():
-    lines = [f"[INFO] step {i}: build succeeded in {i % 7}.{i % 100}s" for i in range(4000)]
+    lines = []
+    total_bytes = 0
+    i = 0
+    while total_bytes < 262_144:
+        line = (
+            f"[INFO] step {i}: build succeeded in {i % 7}.{i % 100}s "
+            f"see README.md section {i % 50} for setup notes and troubleshooting tips"
+        )
+        lines.append(line)
+        total_bytes += len(line.encode()) + 1  # +1 for the joining newline
+        i += 1
     text = "\n".join(lines)
+    assert len(text.encode()) >= 262_144
+
     samples = []
     for _ in range(20):
         t0 = time.perf_counter()
