@@ -27,9 +27,8 @@ from agentgate.domain.domains import domain_allowed
 from agentgate.domain.policy import Policy
 from agentgate.domain.verdict import Verdict
 from agentgate.normalize.model import NormalizedAction, SimpleCommand
-from agentgate.normalize.paths import is_within, matches_any
 from agentgate.profiles.schema import NetworkMode
-from agentgate.rules.allowlist import _is_readonly, _matches_prefix
+from agentgate.rules.readonly import is_readonly, matches_prefix, paths_are_safe
 from agentgate.shell.argv import ParsedArgv
 from agentgate.shell.commands import Role, spec_for
 from agentgate.shell.paths import PathRole, command_paths, writes_a_file
@@ -90,9 +89,9 @@ class ProfileDomainTrustedRule:
         if _FORBIDDEN_ROLES & spec.roles:
             return False
         return (
-            _is_readonly(command)
+            is_readonly(command)
             or Role.NETWORK in spec.roles
-            or _matches_prefix(command, policy.safe_prefixes)
+            or matches_prefix(command, policy.safe_prefixes)
         )
 
     def _paths_are_safe(self, action: NormalizedAction, policy: Policy) -> bool:
@@ -102,8 +101,4 @@ class ProfileDomainTrustedRule:
             for c in action.commands
             for p in command_paths(c.argv, action.cwd, PathRole.ANY)
         ]
-        return all(
-            is_within(p, policy.allowed_paths)
-            and not matches_any(p, policy.protected_paths, policy.workspace)
-            for p in paths
-        )
+        return paths_are_safe(paths, policy)
