@@ -18,9 +18,11 @@ all, so "no rules" is its own digest rather than colliding with any
 real one.
 
 `inspect_cache_key` is for the inspect route, where `mask` and `drop`
-are cached too: a verdict on tool output is a function of the output,
-the policy and where the output came from, so those three are the whole
-key.
+are cached too. A stage-1 verdict is a function of the output, the
+policy and where the output came from; a stage-2 verdict also depends on
+the task and the dialogue it was judged against, so both digests are in
+the key. Hits mostly happen inside one task (a retry, parallel calls of
+one turn), where they match anyway.
 """
 
 import hashlib
@@ -35,5 +37,8 @@ def allow_cache_key(
     return hashlib.sha256(payload).hexdigest()
 
 
-def inspect_cache_key(profile_hash: str, provenance_kind: str, output_digest: str) -> str:
-    return f"{profile_hash}:{provenance_kind}:{output_digest}"
+def inspect_cache_key(
+    profile_hash: str, provenance_kind: str, output_digest: str, task_digest: str, history_digest: str,
+) -> str:
+    payload = f"{profile_hash}\n{provenance_kind}\n{output_digest}\n{task_digest}\n{history_digest}".encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()

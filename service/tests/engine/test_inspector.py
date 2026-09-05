@@ -2,7 +2,7 @@ from dataclasses import replace
 
 from agentgate.api.schemas import InspectVerdict
 from agentgate.inspect.detectors import Action
-from tests.factories import FakeInspectCache, FakeInspectClassifier, inspect_request, inspector
+from tests.factories import FakeInspectCache, FakeInspectClassifier, inspect_request, inspector, turn
 
 
 async def test_clean_output_passes_and_is_cached():
@@ -41,13 +41,38 @@ async def test_a_cache_hit_resets_the_first_calls_per_call_fields():
     assert second.raw_response is None
 
 
-async def test_cache_key_is_content_plus_profile_plus_provenance_kind():
+async def test_cache_key_depends_on_content_profile_and_provenance_kind():
     cache = FakeInspectCache()
     ins = inspector(cache=cache)
     await ins.inspect(inspect_request("x\n"))
     await ins.inspect(inspect_request("x\n", provenance={"kind": "web", "url": "https://a"}))
     await ins.inspect(inspect_request("x\n", profile_id="other"))
     assert cache.puts == 3
+
+
+async def test_cache_key_distinguishes_two_tasks_with_one_output():
+    cache = FakeInspectCache()
+    ins = inspector(cache=cache)
+    await ins.inspect(inspect_request("x\n", user_request="show the log"))
+    await ins.inspect(inspect_request("x\n", user_request="delete the log"))
+    assert cache.puts == 2
+
+
+async def test_cache_key_distinguishes_two_histories_with_one_output():
+    cache = FakeInspectCache()
+    ins = inspector(cache=cache)
+    await ins.inspect(inspect_request("x\n", history=[turn(content="a")]))
+    await ins.inspect(inspect_request("x\n", history=[turn(content="b")]))
+    assert cache.puts == 2
+
+
+async def test_the_task_comes_from_the_last_human_turn_when_user_request_is_empty():
+    cache = FakeInspectCache()
+    ins = inspector(cache=cache)
+    history = [turn(content="same")]
+    await ins.inspect(inspect_request("x\n", user_request="", history=history))
+    hit = await ins.inspect(inspect_request("x\n", user_request="same", history=history))
+    assert hit.cached is True
 
 
 async def test_flagged_output_is_masked_and_the_mask_is_cached_too():

@@ -41,6 +41,7 @@ class _Context:
 
     policy: Policy
     cache_key: str
+    dialogue: Dialogue
 
 
 @dataclass(frozen=True)
@@ -96,7 +97,7 @@ class Inspector:
         resolved = await self._resolve(inspection_id, request, timings, profile_id, workspace)
         if isinstance(resolved, Inspection):
             return resolved
-        policy, cache_key = resolved.policy, resolved.cache_key
+        policy, cache_key, dialogue = resolved.policy, resolved.cache_key, resolved.dialogue
 
         hit = await self._cached(cache_key)
         if hit is not None:
@@ -116,7 +117,7 @@ class Inspector:
         result = _Stage2Result.from_stage1(outcome)
         if self._should_classify(policy, outcome, findings):
             with timings.stage(2):
-                result = await self._run_stage2(request, profile_id, policy, findings, outcome, result)
+                result = await self._run_stage2(request, profile_id, policy, dialogue, findings, outcome, result)
 
         inspection = Inspection(
             id=inspection_id, ts=datetime.now(timezone.utc), request=request, verdict=result.verdict,
@@ -144,8 +145,12 @@ class Inspector:
                     f"unknown profile '{profile_id}'",
                 )
             policy = Policy.bind(profile, workspace)
-            cache_key = inspect_cache_key(policy.profile_hash, request.provenance.kind, _digest(request.output))
-            return _Context(policy=policy, cache_key=cache_key)
+            dialogue = Dialogue.of(request.history)
+            intent = request.user_request or dialogue.last_human_request() or ""
+            cache_key = inspect_cache_key(
+                policy.profile_hash, request.provenance.kind, _digest(request.output), _digest(intent), dialogue.digest(),
+            )
+            return _Context(policy=policy, cache_key=cache_key, dialogue=dialogue)
         except Exception:  # noqa: BLE001 - a bug resolving the policy must read as drop, never as pass
             log.exception("inspect prelude raised")
             return self._refuse(
@@ -154,10 +159,10 @@ class Inspector:
             )
 
     async def _run_stage2(
-        self, request: InspectRequest, profile_id: str, policy: Policy,
+        self, request: InspectRequest, profile_id: str, policy: Policy, dialogue: Dialogue,
         findings: list[Finding], outcome: Stage1Outcome, result: _Stage2Result,
     ) -> _Stage2Result:
-        classified = await self._classify(request, profile_id, policy, findings, outcome)
+        classified = await self._classify(request, profile_id, policy, dialogue, findings, outcome)
         if classified.error is not None:
             return replace(result, error=classified.error, model=classified.model)
         verdict, replacement, reason, rule_id = self._cap_stage2(request, findings, outcome, classified)
@@ -205,13 +210,13 @@ class Inspector:
         return verdict, replacement, reason, rule_id
 
     async def _classify(
-        self, request: InspectRequest, profile_id: str, policy: Policy,
+        self, request: InspectRequest, profile_id: str, policy: Policy, dialogue: Dialogue,
         findings: list[Finding], outcome: Stage1Outcome,
     ) -> InspectOutcome:
         classifier = self._classifier_for(profile_id, policy)
         if classifier is None:
             return InspectOutcome(verdict=outcome.verdict, reason=outcome.reason, model=None, error="unknown-model")
-        case = InspectCase.build(request, Dialogue.of(request.history), policy, findings, outcome)
+        case = InspectCase.build(request, dialogue, policy, findings, outcome)
         try:
             return await classifier.classify(case)
         except Exception as exc:  # noqa: BLE001 - a classifier bug falls back to stage 1, never to `pass`
