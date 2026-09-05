@@ -7,7 +7,7 @@ from agentgate.api.schemas import InspectVerdict
 from agentgate.classify.client import LLMClient, Stage2Error
 from agentgate.domain.dialogue import Dialogue
 from agentgate.inspect.classify import (
-    INSPECT_RESPONSE_JSON_SCHEMA,
+    INSPECT_STRUCTURED_OUTPUT,
     InspectCase,
     InspectOutput,
     build_inspect_prompt,
@@ -85,7 +85,7 @@ def test_stage2_error_carries_its_kind():
 def _inspect_client(handler) -> LLMClient:
     cfg = ModelConfig(base_url="http://llm/v1", model="q")
     http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    return LLMClient("m", cfg, http, schema=INSPECT_RESPONSE_JSON_SCHEMA, output_model=InspectOutput)
+    return LLMClient("m", cfg, http, INSPECT_STRUCTURED_OUTPUT)
 
 
 def _ok(content: str) -> httpx.Response:
@@ -95,7 +95,8 @@ def _ok(content: str) -> httpx.Response:
 async def test_llm_client_parses_a_valid_pmd_answer():
     client = _inspect_client(lambda request: _ok(json.dumps({"decision": "P", "reason": "quoted"})))
     out, _raw = await client.classify("sys", "usr")
-    assert out.decision == "P" and out.reason == "quoted"
+    assert out.decision == "P"
+    assert out.reason == "quoted"
 
 
 async def test_llm_client_raises_stage2_error_on_an_invalid_answer():

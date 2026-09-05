@@ -5,12 +5,13 @@ import pytest
 
 from agentgate.profiles.schema import ModelConfig
 from agentgate.classify.client import LLMClient, Stage2Error
+from agentgate.classify.schema import DECIDE_STRUCTURED_OUTPUT
 
 
 def make_client(handler, structured=True, timeout_ms=1000):
     cfg = ModelConfig(base_url="http://llm/v1", model="q", api_key_env="TEST_KEY", timeout_ms=timeout_ms, structured_output=structured)
     http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    return LLMClient("q", cfg, http)
+    return LLMClient("q", cfg, http, DECIDE_STRUCTURED_OUTPUT)
 
 
 def ok_body(content: str) -> dict:
@@ -33,6 +34,7 @@ async def test_structured_request_and_parse(monkeypatch):
     assert seen["auth"] == "Bearer k"
     assert seen["body"]["model"] == "q"
     assert seen["body"]["response_format"]["type"] == "json_schema"
+    assert seen["body"]["response_format"]["json_schema"]["name"] == "agentgate_decision"
     assert seen["body"]["messages"][0] == {"role": "system", "content": "sys"}
     assert seen["body"]["messages"][1] == {"role": "user", "content": "usr"}
     assert raw["id"] == "x"

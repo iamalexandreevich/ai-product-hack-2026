@@ -18,7 +18,7 @@ from agentgate.api.schemas import DecisionKind
 from agentgate.classify.base import Classifier, ReviewCase
 from agentgate.classify.client import LLMClient, Stage2Error
 from agentgate.classify.prompt import build_system_prompt, build_user_message
-from agentgate.classify.schema import ClassifierOutput
+from agentgate.classify.schema import DECIDE_STRUCTURED_OUTPUT, ClassifierOutput
 from agentgate.domain.verdict import Verdict
 from agentgate.profiles.schema import ModelConfig, Profile
 
@@ -30,7 +30,7 @@ _DECISIONS = {"A": DecisionKind.allow, "D": DecisionKind.deny, "U": DecisionKind
 class LLMClassifier:
     def __init__(self, name: str, model_config: ModelConfig, http: httpx.AsyncClient) -> None:
         self.name = name
-        self._client = LLMClient(name, model_config, http)
+        self._client = LLMClient(name, model_config, http, DECIDE_STRUCTURED_OUTPUT)
 
     async def classify(self, case: ReviewCase) -> Verdict:
         system = build_system_prompt(case.policy)

@@ -10,6 +10,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from agentgate.classify.client import StructuredOutput
+
 Risk = Literal["exfiltration", "destructive", "privilege", "supply_chain", "injection", "config", "network", "none"]
 
 
@@ -30,3 +32,7 @@ def _strict_schema() -> dict:
 
 
 RESPONSE_JSON_SCHEMA: dict = _strict_schema()
+
+DECIDE_STRUCTURED_OUTPUT = StructuredOutput(
+    name="agentgate_decision", schema=RESPONSE_JSON_SCHEMA, model=ClassifierOutput
+)

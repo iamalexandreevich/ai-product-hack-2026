@@ -7,7 +7,7 @@ shared with `/v1/decisions`.
 """
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 
 from agentgate.api.schemas import InspectRequest, InspectResponse, InspectVerdict
 from agentgate.domain.dialogue import Dialogue
@@ -48,6 +48,25 @@ class Inspection:
         if self.request.session_id is None:
             return None
         return self.request.session_id, self.workspace
+
+    def as_cached(self, new_id: str, request: InspectRequest, latency: Latency, workspace: str) -> "Inspection":
+        """Rebuild this cache hit as its own answer, at stage 0 (spec 5.5).
+
+        Only the verdict-bearing fields of `self` survive: what content was
+        judged and how. Everything specific to the call that produced it --
+        `error`, `raw_response`, `idempotency_key` -- is dropped rather than
+        copied, since the new call had none of those; carrying them forward
+        would misreport it as having failed, produced a raw model response,
+        or been submitted under someone else's idempotency key. `model` and
+        `findings` stay: the verdict is deterministic on content, so they
+        still describe why it was reached.
+        """
+        return Inspection(
+            id=new_id, ts=datetime.now(timezone.utc), request=request, verdict=self.verdict,
+            latency=latency, profile_id=self.profile_id, profile_hash=self.profile_hash,
+            replacement=self.replacement, reason=self.reason, suggest=self.suggest, stage=0,
+            rule_id=self.rule_id, model=self.model, cached=True, findings=self.findings, workspace=workspace,
+        )
 
     def to_response(self) -> InspectResponse:
         return self.to_record().to_inspect_response()

@@ -30,10 +30,6 @@ class InMemoryReplayStore:
     def __init__(self, now: Callable[[], float] = time.monotonic, max_entries: int = 100_000) -> None:
         self._store: TtlStore[Replay] = TtlStore(now=now, max_entries=max_entries)
 
-    @property
-    def _items(self):
-        return self._store._items
-
     async def get(self, key: str) -> Replay | None:
         return await self._store.get(key)
 

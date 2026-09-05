@@ -5,7 +5,7 @@ classifier is asked about, `InspectClassifier` is the protocol
 `Inspector` depends on, and `LLMInspectClassifier` is the production
 implementation, built once per model the profile declares (see
 `build_inspect_classifiers` in bootstrap.py). `classify` never raises:
-every failure comes back as an `InspectVerdictOutcome` carrying `error`,
+every failure comes back as an `InspectOutcome` carrying `error`,
 so a broken classifier cannot pass silently -- `Inspector` is the one
 place that turns `error` into "answer with stage 1's verdict instead",
 because it is also the only place that knows a finding was
@@ -15,8 +15,8 @@ The prompt is a closed list, same discipline as `classify/prompt.py`:
 [TASK], [HISTORY] (only when the dialogue is non-empty), [PROVENANCE],
 [FLAGS], [OUTPUT]. `metadata` and the agent's hidden reasoning never
 reach it. `output` is the one attacker-controlled value rendered here;
-`_j()` JSON-escapes it (and every other multi-line-capable field) so a
-newline inside it cannot forge a fake header line ahead of the real one.
+`render.j()` JSON-escapes it (and every other multi-line-capable field) so
+a newline inside it cannot forge a fake header line ahead of the real one.
 """
 
 import json
@@ -27,8 +27,9 @@ from typing import Literal, Protocol
 import httpx
 from pydantic import BaseModel, ConfigDict
 
-from agentgate.api.schemas import InspectRequest, InspectVerdict
-from agentgate.classify.client import LLMClient, Stage2Error
+from agentgate.api.schemas import InspectRequest, InspectVerdict, Provenance
+from agentgate.classify.client import LLMClient, Stage2Error, StructuredOutput
+from agentgate.classify.render import history_lines, j, system_prompt
 from agentgate.domain.dialogue import Dialogue
 from agentgate.domain.policy import Policy
 from agentgate.inspect.detectors import Finding
@@ -54,6 +55,10 @@ def _strict_schema() -> dict:
 
 INSPECT_RESPONSE_JSON_SCHEMA: dict = _strict_schema()
 
+INSPECT_STRUCTURED_OUTPUT = StructuredOutput(
+    name="agentgate_inspect", schema=INSPECT_RESPONSE_JSON_SCHEMA, model=InspectOutput
+)
+
 _ROLE = (
     "You are the result reviewer for an autonomous coding agent. A cheap "
     "detector already flagged part of one tool result as instruction-like, "
@@ -77,45 +82,12 @@ def _profile_line(policy: Policy) -> str:
 
 
 def build_inspect_system_prompt(policy: Policy) -> str:
-    parts = [_ROLE + json.dumps(INSPECT_RESPONSE_JSON_SCHEMA, separators=(",", ":")), "", _profile_line(policy)]
-    if policy.prose.environment:
-        parts.append(f"[ENVIRONMENT] {policy.prose.environment}")
-    if policy.prose.allow:
-        parts.append(f"[ALLOWED BY USER] {policy.prose.allow}")
-    if policy.prose.soft_deny:
-        parts.append(f"[AVOID] {policy.prose.soft_deny}")
-    return "\n".join(parts)
+    role = _ROLE + json.dumps(INSPECT_RESPONSE_JSON_SCHEMA, separators=(",", ":"))
+    return system_prompt(role, _profile_line(policy), policy.prose)
 
 
-def _j(value: str) -> str:
-    """JSON-encode one attacker-reachable scalar so it cannot break the line-oriented format.
-
-    Same rationale as classify/prompt.py's `_j`: `output`, provenance
-    fields, and every history turn's content may legally contain a
-    newline. json.dumps renders it as the two characters `\n` inside a
-    quoted string, so it cannot forge a fake `[FLAGS]`/`[OUTPUT]` line
-    ahead of the real one.
-    """
-    return json.dumps(value, ensure_ascii=False)
-
-
-def _provenance_line(provenance: BaseModel) -> str:
-    return " ".join(f"{key}={_j(str(value))}" for key, value in provenance.model_dump().items())
-
-
-def _history_lines(dialogue: Dialogue) -> list[str]:
-    if dialogue.is_empty:
-        return []
-    lines = [f"[HISTORY] turns={len(dialogue.turns)} omitted={dialogue.omitted}"]
-    for turn in dialogue.turns:
-        parts = [f"{turn.role.value}/{turn.author.value}"]
-        if turn.tool is not None:
-            parts.append(f"tool={_j(turn.tool)}")
-        if turn.call_id is not None:
-            parts.append(f"call={_j(turn.call_id)}")
-        parts.append(_j(turn.content))
-        lines.append(" ".join(parts))
-    return lines
+def _provenance_line(provenance: Provenance) -> str:
+    return " ".join(f"{key}={j(str(value))}" for key, value in provenance.model_dump().items())
 
 
 @dataclass(frozen=True)
@@ -142,17 +114,17 @@ class InspectCase:
 
 
 def build_inspect_prompt(case: InspectCase) -> str:
-    lines = [f"[TASK] {_j(case.intent)}"]
-    lines.extend(_history_lines(case.dialogue))
+    lines = [f"[TASK] {j(case.intent)}"]
+    lines.extend(history_lines(case.dialogue))
     lines.append(f"[PROVENANCE] {_provenance_line(case.request.provenance)}")
     flags = ",".join(sorted({finding.rule_id for finding in case.findings}))
     lines.append(f"[FLAGS] {flags}")
-    lines.append(f"[OUTPUT] {_j(case.request.output)}")
+    lines.append(f"[OUTPUT] {j(case.request.output)}")
     return "\n".join(lines)
 
 
 @dataclass(frozen=True)
-class InspectVerdictOutcome:
+class InspectOutcome:
     """What the classifier decided, or why it could not."""
 
     verdict: InspectVerdict
@@ -165,7 +137,7 @@ class InspectVerdictOutcome:
 class InspectClassifier(Protocol):
     name: str
 
-    async def classify(self, case: InspectCase) -> InspectVerdictOutcome: ...
+    async def classify(self, case: InspectCase) -> InspectOutcome: ...
 
 
 class LLMInspectClassifier:
@@ -180,11 +152,9 @@ class LLMInspectClassifier:
 
     def __init__(self, name: str, model_config: ModelConfig, http: httpx.AsyncClient) -> None:
         self.name = name
-        self._client = LLMClient(
-            name, model_config, http, schema=INSPECT_RESPONSE_JSON_SCHEMA, output_model=InspectOutput,
-        )
+        self._client = LLMClient(name, model_config, http, INSPECT_STRUCTURED_OUTPUT)
 
-    async def classify(self, case: InspectCase) -> InspectVerdictOutcome:
+    async def classify(self, case: InspectCase) -> InspectOutcome:
         system = build_inspect_system_prompt(case.policy)
         user = build_inspect_prompt(case)
         try:
@@ -196,17 +166,17 @@ class LLMInspectClassifier:
             return self._unavailable(case.stage1, f"unexpected ({type(exc).__name__})")
         return self._outcome_from(output, case.stage1)
 
-    def _outcome_from(self, output: InspectOutput, stage1: Stage1Outcome) -> InspectVerdictOutcome:
+    def _outcome_from(self, output: InspectOutput, stage1: Stage1Outcome) -> InspectOutcome:
         if output.decision == "P":
-            return InspectVerdictOutcome(verdict=InspectVerdict.pass_, replacement=None, reason=output.reason, model=self.name)
+            return InspectOutcome(verdict=InspectVerdict.pass_, replacement=None, reason=output.reason, model=self.name)
         if output.decision == "D":
-            return InspectVerdictOutcome(verdict=InspectVerdict.drop, replacement=None, reason=output.reason, model=self.name)
-        return InspectVerdictOutcome(
+            return InspectOutcome(verdict=InspectVerdict.drop, replacement=None, reason=output.reason, model=self.name)
+        return InspectOutcome(
             verdict=stage1.verdict, replacement=stage1.replacement, reason=stage1.reason, model=self.name,
         )
 
-    def _unavailable(self, stage1: Stage1Outcome, error: str) -> InspectVerdictOutcome:
-        return InspectVerdictOutcome(
+    def _unavailable(self, stage1: Stage1Outcome, error: str) -> InspectOutcome:
+        return InspectOutcome(
             verdict=stage1.verdict, replacement=stage1.replacement, reason=stage1.reason,
             model=self.name, error=error,
         )

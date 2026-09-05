@@ -19,7 +19,7 @@ from agentgate.engine.inspection import Inspection
 from agentgate.engine.inspector import Inspector
 from agentgate.engine.timings import Latency
 from agentgate.inspect.chain import INSPECT_STAGE1
-from agentgate.inspect.classify import InspectCase, InspectClassifier, InspectVerdictOutcome
+from agentgate.inspect.classify import InspectCase, InspectClassifier, InspectOutcome
 from agentgate.inspect.detectors import Detector
 from agentgate.normalize import normalize
 from agentgate.normalize.model import NormalizedAction
@@ -393,19 +393,19 @@ class FakeInspectClassifier:
         self._reason = reason
         self._error = error
 
-    async def classify(self, case: InspectCase) -> InspectVerdictOutcome:
+    async def classify(self, case: InspectCase) -> InspectOutcome:
         self.calls += 1
         self.cases.append(case)
         if self._error is not None:
-            return InspectVerdictOutcome(
+            return InspectOutcome(
                 verdict=case.stage1.verdict, replacement=case.stage1.replacement,
                 reason=case.stage1.reason, model=self.name, error=self._error,
             )
         if self._answer == "P":
-            return InspectVerdictOutcome(verdict=InspectVerdict.pass_, replacement=None, reason=self._reason, model=self.name)
+            return InspectOutcome(verdict=InspectVerdict.pass_, replacement=None, reason=self._reason, model=self.name)
         if self._answer == "D":
-            return InspectVerdictOutcome(verdict=InspectVerdict.drop, replacement=None, reason=self._reason, model=self.name)
-        return InspectVerdictOutcome(
+            return InspectOutcome(verdict=InspectVerdict.drop, replacement=None, reason=self._reason, model=self.name)
+        return InspectOutcome(
             verdict=case.stage1.verdict, replacement=case.stage1.replacement, reason=self._reason, model=self.name,
         )
 

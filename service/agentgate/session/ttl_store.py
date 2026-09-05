@@ -27,6 +27,9 @@ class TtlStore(Generic[T]):
         self._puts = 0
         self._items: OrderedDict[str, tuple[T, float]] = OrderedDict()
 
+    def __len__(self) -> int:
+        return len(self._items)
+
     async def get(self, key: str) -> T | None:
         item = self._items.get(key)
         if item is None:

@@ -47,7 +47,9 @@ async def test_an_expired_entry_is_swept_without_ever_being_read():
     clock.advance(11)
     for i in range(SWEEP_EVERY):
         await store.put(f"k{i}", replay(), 60)
-    assert "stale" not in store._items
+    # "stale" is gone without ever being `get` -- if the sweep had not run,
+    # the store would hold SWEEP_EVERY + 1 entries instead.
+    assert len(store._store) == SWEEP_EVERY
 
 
 async def test_the_oldest_entry_is_evicted_when_the_cap_is_reached():

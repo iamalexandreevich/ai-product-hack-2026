@@ -10,11 +10,11 @@ error is not representable here: the happy path is the only way to get a
 
 import json
 import os
+from dataclasses import dataclass
 
 import httpx
 from pydantic import BaseModel, ValidationError
 
-from agentgate.classify.schema import RESPONSE_JSON_SCHEMA, ClassifierOutput
 from agentgate.profiles.schema import ModelConfig
 
 
@@ -30,24 +30,33 @@ class Stage2Error(Exception):
         self.detail = detail
 
 
-class LLMClient:
-    """Talks to one OpenAI-compatible chat-completions endpoint.
+@dataclass(frozen=True)
+class StructuredOutput:
+    """The name, JSON schema and Pydantic model for one stage 2 call's
+    structured output.
 
-    `schema`/`output_model` default to stage 1's decide schema so existing
-    callers are unaffected; `agentgate.inspect.classify` passes its own P/M/D
-    schema through the same request/error-handling path instead of
-    duplicating it.
+    `name` is the `json_schema.name` the request declares -- two callers
+    with different schemas must not share it, or an OpenAI-compatible
+    provider that caches by name could hand one caller the other's shape.
+    `classify/schema.py` builds the decide value, `inspect/classify.py` its
+    own; `LLMClient` takes one explicitly rather than defaulting to either.
     """
 
+    name: str
+    schema: dict
+    model: type[BaseModel]
+
+
+class LLMClient:
+    """Talks to one OpenAI-compatible chat-completions endpoint."""
+
     def __init__(
-        self, name: str, config: ModelConfig, http: httpx.AsyncClient,
-        schema: dict = RESPONSE_JSON_SCHEMA, output_model: type[BaseModel] = ClassifierOutput,
+        self, name: str, config: ModelConfig, http: httpx.AsyncClient, structured_output: StructuredOutput,
     ) -> None:
         self.name = name
         self.config = config
         self._http = http
-        self._schema = schema
-        self._output_model = output_model
+        self._structured_output = structured_output
 
     def _headers(self) -> dict[str, str]:
         headers = {"content-type": "application/json"}
@@ -67,7 +76,9 @@ class LLMClient:
         if self.config.structured_output:
             body["response_format"] = {
                 "type": "json_schema",
-                "json_schema": {"name": "agentgate_decision", "strict": True, "schema": self._schema},
+                "json_schema": {
+                    "name": self._structured_output.name, "strict": True, "schema": self._structured_output.schema,
+                },
             }
         return body
 
@@ -122,7 +133,7 @@ class LLMClient:
             raise Stage2Error("invalid_json", content[:200]) from exc
 
         try:
-            return self._output_model.model_validate(data), raw
+            return self._structured_output.model.model_validate(data), raw
         except ValidationError as exc:
             raise Stage2Error("invalid_schema", str(exc)[:200]) from exc
 
