@@ -17,6 +17,17 @@ def replay(key: str = "k", age_seconds: int = 0) -> Replay:
     return Replay.of(record(key, age_seconds))
 
 
+def unprojectable_record(key: str = "bad"):
+    """A record whose `kind` and `decision` disagree, as a downgrade/upgrade
+    round trip of migration 0004 could once produce for an inspect row
+    backfilled with `kind='decide'` (see 0004's `_kind_from_decision`): the
+    `decision` column holds an `InspectVerdict` value ('pass') while `kind`
+    says 'decide', so `Replay.of` builds the wrong projection and blows up
+    validating a `DecideResponse` out of it.
+    """
+    return record(key).model_copy(update={"kind": "decide", "decision": "pass"})
+
+
 async def test_put_then_get_returns_the_same_entry():
     store = InMemoryReplayStore()
     stored = replay()
@@ -95,3 +106,18 @@ async def test_persistent_store_delegates_put_and_get():
     stored = replay()
     await store.put("k", stored, 60)
     assert await store.get("k") == stored
+
+
+async def test_restore_skips_one_unprojectable_record_without_failing_the_others(caplog):
+    good_before = record("before", age_seconds=100)
+    bad = unprojectable_record("bad")
+    good_after = record("after", age_seconds=100)
+    store = PersistentReplayStore(
+        InMemoryReplayStore(), FakeReplayRecords([good_before, bad, good_after]), ttl_seconds=86400,
+    )
+    with caplog.at_level(logging.WARNING):
+        await store.restore()
+    assert await store.get("before") is not None
+    assert await store.get("after") is not None
+    assert await store.get("bad") is None
+    assert bad.id in caplog.text

@@ -21,6 +21,14 @@ def upgrade() -> None:
     op.add_column('decisions', sa.Column('rules_digest', sa.String(length=64), nullable=True))
     op.add_column('decisions', sa.Column('provenance', postgresql.JSONB(astext_type=sa.Text()), nullable=True))
     op.add_column('decisions', sa.Column('replacement', sa.Text(), nullable=True))
+    # A row whose `decision` is `pass`, `mask` or `drop` is an inspect
+    # verdict, never a decide one -- `DecisionKind` has no such values -- so
+    # the server default above (needed only to satisfy the NOT NULL
+    # constraint while this UPDATE runs) is wrong for exactly those rows.
+    # Leaving it uncorrected would let `Replay.of` build a `DecideResponse`
+    # out of an `InspectVerdict`, which fails validation (see the per-record
+    # restore guard in agentgate/session/replay.py).
+    op.execute("UPDATE decisions SET kind = 'inspect' WHERE decision IN ('pass', 'mask', 'drop')")
     op.create_index('ix_decisions_kind_id', 'decisions', ['kind', 'id'])
     op.create_index('ix_decisions_call_id', 'decisions', ['call_id'])
     # The server default above exists only to backfill this migration's own

@@ -58,8 +58,14 @@ class PersistentReplayStore:
             return
         for record in records:
             remaining = self._ttl_seconds - int((now - record.ts).total_seconds())
-            if remaining > 0 and record.idempotency_key is not None:
-                await self._inner.put(record.idempotency_key, Replay.of(record), remaining)
+            if remaining <= 0 or record.idempotency_key is None:
+                continue
+            try:
+                replay = Replay.of(record)
+            except Exception:  # noqa: BLE001 - one unprojectable row must not fail the whole restore
+                log.warning("replay store restore skipped unprojectable record id=%s", record.id, exc_info=True)
+                continue
+            await self._inner.put(record.idempotency_key, replay, remaining)
 
     async def get(self, key: str) -> Replay | None:
         return await self._inner.get(key)
