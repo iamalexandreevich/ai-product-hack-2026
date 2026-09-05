@@ -7,7 +7,7 @@ import pytest
 from agentgate.api.schemas import InspectRequest
 from agentgate.inspect.detectors import Action
 from agentgate.inspect.mask import PRIVATE_KEY_REPLACEMENT, SECRET_REPLACEMENT
-from agentgate.inspect.secrets import entropy_candidates_allowed, scan_secrets
+from agentgate.inspect.secrets import NEEDLE_FORMS, entropy_candidates_allowed, scan_secrets
 from tests.factories import WORKSPACE, inspect_request
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -34,10 +34,13 @@ FORMS = [
     ("DATABASE_PASSWORD=correct-horse-battery", f"DATABASE_PASSWORD={SECRET_REPLACEMENT}"),
     ('  "api_key": "abcdefghijklmnop",', f'  "api_key": "{SECRET_REPLACEMENT}",'),
     ("credential: hunter2hunter2", f"credential: {SECRET_REPLACEMENT}"),
+    ("X-Api-Key\t: 9f8e7d6c5b4a39281706f5e4d3c2b1a0", f"X-Api-Key\t: {SECRET_REPLACEMENT}"),
+    ("Authorization : Bearer abcdefghijklmn", f"Authorization : Bearer {SECRET_REPLACEMENT}"),
 ]
 FORM_IDS = [
     "aws_akia", "aws_asia", "aws_secret", "github_ghp", "github_pat", "gitlab", "openai", "anthropic", "slack",
     "jwt_bearer", "jwt_bare", "x_api_key", "proxy_basic", "name_password", "name_json_api_key", "name_credential",
+    "x_api_key_spaced_colon", "authorization_spaced_colon",
 ]
 
 
@@ -49,6 +52,14 @@ def test_recognized_forms_are_redacted_by_value_and_keep_the_key(line, expected)
     assert findings[0].rule_id == "inspect.secret"
     assert findings[0].candidate_key is None
     assert findings[0].rewritten == expected
+
+
+@pytest.mark.parametrize(("line", "_expected"), FORMS, ids=FORM_IDS)
+def test_a_needle_prefilter_admits_every_line_its_own_pattern_matches(line, _expected):
+    """The prefilter may only skip a line the pattern would certainly miss."""
+    for form in NEEDLE_FORMS:
+        if form.pattern.search(line):
+            assert any(needle in line.lower() for needle in form.needles), (form.needles, line)
 
 
 def test_a_jwt_whose_header_is_not_json_is_not_a_secret():

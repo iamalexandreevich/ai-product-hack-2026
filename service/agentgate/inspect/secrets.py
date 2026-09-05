@@ -120,8 +120,11 @@ JWT = Form(
     re.compile(r"(?P<value>eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})"),
     _jwt_is_a_token,
 )
+# The needles carry no colon: the pattern tolerates space before it, and a
+# needle stricter than its own pattern silently skips lines the pattern
+# would have matched.
 AUTH_HEADER = Form(
-    ("authorization:", "x-api-key:"),
+    ("authorization", "x-api-key"),
     re.compile(
         r"^\s*[<>*]?\s*(?:proxy-)?(?:authorization|x-api-key)\s*:\s*(?:(?:bearer|basic|token)\s+)?(?P<value>\S.*?)\s*$",
         re.I,
