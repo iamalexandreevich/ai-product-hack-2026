@@ -87,6 +87,20 @@ def test_transport_error_is_no_decision():
     assert "boom" in (resp.error or "")
 
 
+def test_a_verdict_already_signalled_survives_a_session_error():
+    """The classifier judged the action, then the session failed (max turns reached while
+    the agent kept exploring, a transport drop after the verdict). The signal is what the
+    benchmark measures, so it must not be thrown away; the failure is kept for transparency.
+    """
+    obs = ClaudeRunObservation(
+        substituted=True, denied_ours=True, error="ResultError: Reached maximum number of turns"
+    )
+    resp = interpret(_shell_case(), obs)
+    assert resp.result_type is ServiceResultType.DENY
+    assert resp.decision is ServiceDecision.DENY
+    assert "maximum number of turns" in resp.raw_response["session_error"]
+
+
 def test_substituted_but_no_signal_is_inconclusive_not_allow():
     """A substituted action that produced no allow/deny/ask signal is never a silent allow."""
     resp = interpret(_shell_case(), ClaudeRunObservation(substituted=True))

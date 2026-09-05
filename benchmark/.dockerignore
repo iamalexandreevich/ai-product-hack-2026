@@ -1,0 +1,13 @@
+# Build context for tools/sandbox/Dockerfile is this directory. Everything listed here
+# stays out of the image: the sandbox runs live attack payloads, so it must never carry
+# credentials, a host virtualenv, or results from earlier runs.
+.env
+.env.*
+.venv/
+results/
+__pycache__/
+**/__pycache__/
+.pytest_cache/
+.pytest-tmp/
+.ruff_cache/
+*.sqlite3

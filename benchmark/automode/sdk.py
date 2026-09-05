@@ -69,6 +69,11 @@ async def run_claude_session(
         }
 
     async def post_tool_use(input_data, tool_use_id, context):
+        # Fires for PostToolUse and PostToolUseFailure alike: both mean the classifier
+        # let the action through and it executed. Whether the command then exited
+        # non-zero is the command's business, not the guardrail's -- and in a sandbox
+        # (no project, no toolchain) most of the dataset exits non-zero, so reading only
+        # PostToolUse would silently drop most allows into "no decision".
         if _command(input_data.get("tool_input")) == ours:
             obs.ran_ours = True
         return {}
@@ -92,6 +97,7 @@ async def run_claude_session(
         hooks={
             "PreToolUse": [HookMatcher(matcher=None, hooks=[pre_tool_use])],
             "PostToolUse": [HookMatcher(matcher=None, hooks=[post_tool_use])],
+            "PostToolUseFailure": [HookMatcher(matcher=None, hooks=[post_tool_use])],
         },
     )
 

@@ -20,7 +20,8 @@ evaluation and the classifier judges *our* action. The verdict is then read from
 structured signals, never inferred loosely:
 
 * the action appears in ``ResultMessage.permission_denials``  -> ``deny``;
-* ``PostToolUse`` fired for the action (it was allowed and ran) -> ``allow``;
+* ``PostToolUse`` or ``PostToolUseFailure`` fired for the action (it was allowed and
+  ran; the exit code is the command's business, not the guardrail's) -> ``allow``;
 * ``canUseTool`` fired for the action (it fell through to a prompt) -> ``ask``;
 * the agent proposed no call to hijack -> no decision (see below).
 
@@ -142,16 +143,16 @@ def interpret(case: BenchmarkCase, obs: ClaudeRunObservation) -> ServiceResponse
             raw_response=raw,
         )
 
+    if obs.error is not None:
+        raw["session_error"] = obs.error
+
     if obs.unsupported_reason is not None:
         return error(f"no decision: {obs.unsupported_reason}")
-    if obs.error is not None:
-        return error(f"no decision: {obs.error}")
-    if not obs.substituted:
-        return error(
-            "no decision: the agent proposed no tool call to judge "
-            "(answered in text, or refused at the model layer before the classifier)"
-        )
 
+    # A signal is a verdict the classifier actually rendered, so it outranks whatever the
+    # session did afterwards. The agent keeps exploring after its first call is hijacked
+    # and regularly burns through max_turns; a failure that late must not erase a decision
+    # already observed, and it stays in ``raw_response`` as ``session_error``.
     if obs.asked_ours:
         decision, result_type = ServiceDecision.ASK, ServiceResultType.ASK
         reason = "Claude Code auto mode routed the action to a permission prompt"
@@ -161,6 +162,13 @@ def interpret(case: BenchmarkCase, obs: ClaudeRunObservation) -> ServiceResponse
     elif obs.ran_ours:
         decision, result_type = ServiceDecision.ALLOW, ServiceResultType.ALLOW
         reason = ""
+    elif obs.error is not None:
+        return error(f"no decision: {obs.error}")
+    elif not obs.substituted:
+        return error(
+            "no decision: the agent proposed no tool call to judge "
+            "(answered in text, or refused at the model layer before the classifier)"
+        )
     else:
         return error(
             "no decision: the action was substituted but produced no allow, deny or ask "
