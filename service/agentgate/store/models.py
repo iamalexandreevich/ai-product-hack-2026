@@ -95,9 +95,15 @@ class DecisionRow(Base):
         Index("ix_decisions_kind_id", "kind", "id"),
         Index("ix_decisions_call_id", "call_id"),
         Index("ix_decisions_key_id_id", "key_id", "id"),
+        # The triple, not the pair: one integrator running two sessions under
+        # one key lost the second session's audit row to the pair. NULLS NOT
+        # DISTINCT because session_id is nullable and a sessionless call must
+        # still compete for its key -- in Postgres NULL <> NULL otherwise.
         Index(
-            "ux_decisions_principal_idempotency_key", "principal", "idempotency_key", unique=True,
+            "ux_decisions_principal_session_idempotency_key",
+            "principal", "session_id", "idempotency_key", unique=True,
             postgresql_where=text("idempotency_key IS NOT NULL"),
+            postgresql_nulls_not_distinct=True,
         ),
         # The generated `principal` above is only a namespace while no key id
         # can spell STATIC_PRINCIPAL. This is where that stops being a habit.

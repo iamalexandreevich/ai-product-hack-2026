@@ -617,3 +617,35 @@ async def test_a_null_key_id_is_still_allowed(session_factory):
     repo = DecisionRepo(session_factory)
 
     assert await repo.insert(replace(rec(), key_id=None)) is True
+
+
+# --- v3.3: one idempotency key per principal *and* session -------------------
+
+
+async def test_one_key_in_two_sessions_of_one_principal_writes_two_rows(session_factory):
+    await _seed_session(session_factory, "s1")
+    await _seed_session(session_factory, "s2")
+    repo = DecisionRepo(session_factory)
+
+    first = replace(rec(session_id="s1"), idempotency_key="same", key_id=KEY_A)
+    second = replace(rec(session_id="s2"), idempotency_key="same", key_id=KEY_A)
+
+    assert await repo.insert(first) is True
+    assert await repo.insert(second) is True
+
+
+async def test_one_key_twice_in_one_session_still_writes_one_row(session_factory):
+    await _seed_session(session_factory, "s1")
+    repo = DecisionRepo(session_factory)
+
+    assert await repo.insert(replace(rec(session_id="s1"), idempotency_key="dup3", key_id=KEY_A)) is True
+    assert await repo.insert(replace(rec(session_id="s1"), idempotency_key="dup3", key_id=KEY_A)) is False
+
+
+async def test_two_sessionless_calls_still_compete_for_the_key(session_factory):
+    # NULL <> NULL in Postgres, so without NULLS NOT DISTINCT this pair would
+    # both land and the uniqueness we are here to keep would be gone.
+    repo = DecisionRepo(session_factory)
+
+    assert await repo.insert(replace(rec(session_id=None), idempotency_key="dup4", key_id=KEY_A)) is True
+    assert await repo.insert(replace(rec(session_id=None), idempotency_key="dup4", key_id=KEY_A)) is False
