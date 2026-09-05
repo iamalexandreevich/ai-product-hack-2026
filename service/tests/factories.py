@@ -204,6 +204,16 @@ def mcp_action(
     ))
 
 
+def network_action(
+    domains: tuple[str, ...] = ("github.com",), method: str | None = None, cwd: str = WORKSPACE
+) -> NormalizedAction:
+    """What a `tool: network` request normalizes to: domains and a method, no commands."""
+    args = {"cwd": cwd, "domains": list(domains)}
+    if method is not None:
+        args["method"] = method
+    return normalize(DecideRequest(harness="t", tool="network", raw="", args=args, user_request="x"))
+
+
 def unparseable_action(cwd: str = WORKSPACE) -> NormalizedAction:
     """An action whose command bashlex could not parse: a single
     unterminated quote leaves commands, paths and domains empty.

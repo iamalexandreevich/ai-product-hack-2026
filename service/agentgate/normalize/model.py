@@ -9,6 +9,10 @@ Every part of it is frozen: action_hash() is an allow-cache key, so an
 action that can be rewritten after the hash was taken is a cache that can
 answer for a command it never saw. The action is built once, complete,
 and never edited afterwards.
+
+`method` is the HTTP method of a `network` action, already validated
+against a closed set by the schema. A shell command's method lives in
+its argv and is read there by the rule -- there is no second source.
 """
 
 import hashlib
@@ -60,6 +64,7 @@ class NormalizedAction:
     domains: list[str] = field(default_factory=list)
     flags: Flags = field(default_factory=Flags)
     mcp: McpArgs | None = None
+    method: str | None = None
 
     def executables(self) -> list[str]:
         return [c.argv[0] for c in self.commands if c.argv]

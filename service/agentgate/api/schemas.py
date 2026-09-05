@@ -41,6 +41,7 @@ RULES_MAX_BYTES = 16384
 RULE_PATTERN_MAX_CHARS = 200
 CALL_ID_MAX_CHARS = 128
 OUTPUT_MAX_BYTES = 262144
+HTTP_METHODS = frozenset({"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"})
 
 
 class HistoryTooLarge(ValueError):
@@ -233,6 +234,26 @@ class ActionArgs(BaseModel):
         default=None,
         description="Server, tool and arguments of an MCP call. Used for `tool: mcp_call`.",
     )
+    method: str | None = Field(
+        default=None,
+        description=(
+            "HTTP method of a `network` action, uppercase: GET, HEAD, POST, PUT, PATCH, "
+            "DELETE, OPTIONS. Optional — omitted means unknown, and unknown never earns "
+            "a positive verdict. Ignored for tools other than `network`."
+        ),
+    )
+
+    @field_validator("method")
+    @classmethod
+    def _known_method(cls, v: str | None) -> str | None:
+        # A closed set, so a rule never has to argue that an arbitrary verb
+        # is a read: the schema settles it once.
+        if v is None:
+            return None
+        method = v.strip().upper()
+        if method not in HTTP_METHODS:
+            raise ValueError(f"unknown HTTP method {v!r}")
+        return method
 
 
 class RuleSet(BaseModel):

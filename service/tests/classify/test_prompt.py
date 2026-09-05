@@ -6,7 +6,7 @@ from agentgate.domain.policy import Policy
 from agentgate.normalize import normalize
 from agentgate.profiles.schema import Profile
 from agentgate.classify.prompt import build_system_prompt, build_user_message
-from tests.factories import dialogue, turn
+from tests.factories import dialogue, network_action, turn
 
 WS = "/home/u/repo"
 PROFILE_DATA = {
@@ -200,3 +200,17 @@ def test_system_prompt_names_history_as_data_not_intent():
     assert "[HISTORY]" in s
     assert "human/human" in s
     assert "never" in s.lower() and "intent" in s.lower()
+
+
+def test_the_action_block_shows_the_method_of_a_network_action():
+    action = network_action(method="GET")
+
+    message = build_user_message(action, "fetch it", Dialogue.of([]), "no rule matched")
+
+    assert "\nmethod=GET\n" in message
+
+
+def test_the_action_block_has_no_method_line_without_one():
+    message = build_user_message(network_action(), "fetch it", Dialogue.of([]), "no rule matched")
+
+    assert "method=" not in message

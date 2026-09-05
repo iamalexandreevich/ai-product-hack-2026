@@ -19,7 +19,9 @@ def normalize(req: DecideRequest) -> NormalizedAction:
         return _file_action(req, cwd)
     if req.tool is Tool.network:
         domains = sorted({d.lower() for d in req.args.domains})
-        return NormalizedAction(tool=req.tool, cwd=cwd, raw=req.raw, domains=domains)
+        return NormalizedAction(
+            tool=req.tool, cwd=cwd, raw=req.raw, domains=domains, method=req.args.method
+        )
     if req.tool is Tool.mcp_call:
         return NormalizedAction(tool=req.tool, cwd=cwd, raw=req.raw, mcp=req.args.mcp)
     return NormalizedAction(tool=req.tool, cwd=cwd, raw=req.raw)
