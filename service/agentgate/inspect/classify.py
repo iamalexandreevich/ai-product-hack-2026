@@ -216,9 +216,9 @@ class LLMInspectClassifier:
         except Exception as exc:  # noqa: BLE001 - fail closed on anything, not just Stage2Error
             log.warning("inspect classifier raised an unexpected error", exc_info=True)
             return self._unavailable(case.stage1, f"unexpected ({type(exc).__name__})")
-        return self._outcome_from(output, case.stage1, usage)
+        return self._outcome_from(output, usage)
 
-    def _outcome_from(self, output: InspectOutput, stage1: Stage1Outcome, usage: Usage | None) -> InspectOutcome:
+    def _outcome_from(self, output: InspectOutput, usage: Usage | None) -> InspectOutcome:
         cost = Cost.for_model(usage, self._config)
         return InspectOutcome(
             verdict=InspectVerdict(output.verdict), reason=output.reason, model=self.name, cost=cost,

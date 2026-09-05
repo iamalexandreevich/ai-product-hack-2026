@@ -1,4 +1,5 @@
-"""The inspect pipeline: cache -> detectors -> mask -> classifier by flag.
+"""The inspect pipeline: cache -> secrets -> detectors -> mask -> segments
+-> classifier by mode -> reconcile.
 
 `drop` is the fail-closed answer here: there is no human to ask about a
 result that already exists, and passing it unjudged is the one thing this
@@ -7,6 +8,13 @@ raises means `drop` with `api.internal-error`. Stage 2 is the one place
 this invariant relaxes on purpose: an error there falls back to stage 1's
 verdict, not to `drop` -- stage 1 already produced a safe answer, and the
 classifier only ever re-judges it.
+
+Secrets are scanned first, before anything leaves this process: the
+segments the prompt renders are built from the *redacted* lines, and the
+`raw` of the stored record is that same redacted text, line count kept.
+A value recognized as a secret is therefore never in the prompt, the
+database, the JSONL or the answer -- only the model's `unredact` can
+release a line, and only one flagged by entropy alone.
 """
 
 import hashlib
@@ -17,7 +25,7 @@ from datetime import datetime, timezone
 
 from ulid import ULID
 
-from agentgate.api.schemas import Cost, InspectRequest, InspectVerdict
+from agentgate.api.schemas import Cost, InspectRequest, InspectVerdict, Span
 from agentgate.domain.dialogue import Dialogue
 from agentgate.domain.inspect_cache import InspectCache
 from agentgate.domain.policy import Policy
@@ -25,7 +33,11 @@ from agentgate.engine.inspection import Inspection
 from agentgate.engine.timings import Timings
 from agentgate.inspect.classify import InspectCase, InspectClassifier, InspectOutcome
 from agentgate.inspect.detectors import Action, Detector, Finding, scan
-from agentgate.inspect.mask import Stage1Outcome, apply
+from agentgate.inspect.mask import Stage1Outcome, apply, redacted_lines
+from agentgate.inspect.reconcile import reconcile
+from agentgate.inspect.secrets import entropy_candidates_allowed, scan_secrets
+from agentgate.inspect.segments import Segments
+from agentgate.inspect.segments import build as build_segments
 from agentgate.profiles.loader import detect_workspace
 from agentgate.profiles.schema import Profile
 from agentgate.session.cache_key import inspect_cache_key
@@ -33,6 +45,7 @@ from agentgate.session.cache_key import inspect_cache_key
 log = logging.getLogger(__name__)
 
 _INVISIBLE_RULE = "inspect.invisible"
+_SECRET_RULE = "inspect.secret"
 
 
 @dataclass(frozen=True)
@@ -48,7 +61,7 @@ class _Context:
 class _Stage2Result:
     """The verdict this inspection currently stands on, and how it got
     there -- seeded from stage 1's `Stage1Outcome` and replaced exactly
-    once, by `_cap_stage2`, if stage 2 runs and answers.
+    once, by `_run_stage2`, if stage 2 runs and answers.
     """
 
     verdict: InspectVerdict
@@ -59,12 +72,15 @@ class _Stage2Result:
     model: str | None
     error: str | None
     cost: Cost | None = None
+    spans: tuple[Span, ...] = ()
+    redacted: int = 0
+    spans_rejected: int = 0
 
     @classmethod
     def from_stage1(cls, outcome: Stage1Outcome) -> "_Stage2Result":
         return cls(
             verdict=outcome.verdict, replacement=outcome.replacement, reason=outcome.reason,
-            stage=1, rule_id=outcome.rule_id, model=None, error=None,
+            stage=1, rule_id=outcome.rule_id, model=None, error=None, spans=outcome.spans, redacted=outcome.redacted,
         )
 
 
@@ -105,8 +121,10 @@ class Inspector:
 
         try:
             with timings.stage(1):
-                findings = scan(request.output, self._detectors)
+                lines = request.output.split("\n")
+                findings = self._scan(request, policy, workspace)
                 outcome = apply(request.output, findings)
+                redacted = redacted_lines(lines, findings)
         except Exception:  # noqa: BLE001 - a detector bug must read as drop, never as pass
             log.exception("inspect stage 1 raised")
             return self._refuse(
@@ -115,9 +133,12 @@ class Inspector:
             )
 
         result = _Stage2Result.from_stage1(outcome)
-        if self._should_classify(policy, outcome, findings):
+        if self._should_classify(policy, findings):
             with timings.stage(2):
-                result = await self._run_stage2(request, profile_id, policy, dialogue, findings, outcome, result)
+                segments = build_segments(redacted, findings, policy.inspect.model_budget)
+                result = await self._run_stage2(
+                    request, profile_id, policy, dialogue, findings, outcome, segments, result,
+                )
 
         inspection = Inspection(
             id=inspection_id, ts=datetime.now(timezone.utc), request=request, verdict=result.verdict,
@@ -125,6 +146,8 @@ class Inspector:
             replacement=result.replacement, reason=result.reason, stage=result.stage, rule_id=result.rule_id,
             model=result.model, error=result.error, findings=tuple(f.rule_id for f in findings), workspace=workspace,
             cost=result.cost,
+            spans=result.spans, redacted=result.redacted, spans_rejected=result.spans_rejected,
+            redacted_output="\n".join(redacted) if any(f.action is Action.redact for f in findings) else None,
         )
         if inspection.error is None:
             # An inspection whose stage 2 failed carries stage 1's verdict
@@ -158,65 +181,55 @@ class Inspector:
                 error="unexpected",
             )
 
+    def _scan(self, request: InspectRequest, policy: Policy, workspace: str) -> list[Finding]:
+        """Stage 1's findings, secrets first: a value hidden here is hidden
+        everywhere downstream, whatever a detector or the model says about
+        the same line (`mask.resolve` ranks `redact` above the rest)."""
+        findings: list[Finding] = []
+        if policy.inspect.secrets == "on":
+            candidates = entropy_candidates_allowed(request.provenance, workspace)
+            findings.extend(scan_secrets(request.output, entropy_candidates=candidates))
+        findings.extend(scan(request.output, self._detectors))
+        return findings
+
     async def _run_stage2(
         self, request: InspectRequest, profile_id: str, policy: Policy, dialogue: Dialogue,
-        findings: list[Finding], outcome: Stage1Outcome, result: _Stage2Result,
+        findings: list[Finding], outcome: Stage1Outcome, segments: Segments, result: _Stage2Result,
     ) -> _Stage2Result:
-        classified = await self._classify(request, profile_id, policy, dialogue, findings, outcome)
+        classified = await self._classify(request, profile_id, policy, dialogue, findings, outcome, segments)
         if classified.error is not None:
             return replace(result, error=classified.error, model=classified.model)
-        verdict, replacement, reason, rule_id = self._cap_stage2(request, findings, outcome, classified)
-        return replace(result, verdict=verdict, replacement=replacement, reason=reason, rule_id=rule_id,
-                       stage=2, model=classified.model, cost=classified.cost)
+        merged = reconcile(request.output, findings, outcome, classified, segments, policy.inspect.model_budget)
+        if merged.error is not None:
+            # A `mask` with nothing to apply is a stage-2 error: stage 1's
+            # verdict stands, the rejection count is still worth recording.
+            return replace(result, error=merged.error, model=classified.model, spans_rejected=merged.spans_rejected)
+        return replace(
+            result, verdict=merged.verdict, replacement=merged.replacement, reason=merged.reason,
+            rule_id=merged.rule_id, stage=2, model=classified.model, cost=classified.cost,
+            spans=merged.spans, redacted=merged.redacted, spans_rejected=merged.spans_rejected,
+        )
 
-    def _should_classify(self, policy: Policy, outcome: Stage1Outcome, findings: list[Finding]) -> bool:
-        if policy.inspect.classifier != "on-flag":
+    def _should_classify(self, policy: Policy, findings: list[Finding]) -> bool:
+        mode = policy.inspect.classifier
+        if mode == "off":
             return False
-        if outcome.verdict is InspectVerdict.pass_:
-            return False
-        # A finding this route never lets the classifier soften: if every
-        # flagged line is `inspect.invisible`, stage 2 is not even asked.
-        return any(f.rule_id != _INVISIBLE_RULE for f in findings)
-
-    def _cap_stage2(
-        self, request: InspectRequest, findings: list[Finding], outcome: Stage1Outcome, result: InspectOutcome,
-    ) -> tuple[InspectVerdict, str | None, str, str | None]:
-        """Apply the two caps spec 5.3 puts on a classifier answer, then derive `rule_id`.
-
-        The drop threshold is a module constant, not model-negotiable: a
-        `pass` cannot lift a stage-1 `drop`. Separately, `inspect.invisible`
-        cleaning can never be undone: if the output carries a `clean`
-        finding and the classifier says `pass`, the cleaned lines still
-        reach the model while the rest of the output is restored -- reusing
-        `mask.apply` on just the `clean` findings, since that is exactly
-        the rewrite this route already trusts for that job. A verdict that
-        stays `pass` after both caps carries no `rule_id`: stage 1's rule
-        did not actually hold.
-        """
-        verdict, reason = result.verdict, result.reason
-        # The classifier returns no text: a `mask` answer means stage 1's
-        # own rewrite stands.
-        replacement = outcome.replacement if verdict is InspectVerdict.mask else None
-        rule_id = outcome.rule_id
-        clean_findings = [f for f in findings if f.action is Action.clean]
-        if outcome.verdict is InspectVerdict.drop and verdict is InspectVerdict.pass_:
-            verdict, replacement = InspectVerdict.drop, None
-            reason = f"stage 1 drop threshold stands despite model disagreement ({reason}): {outcome.reason}"
-        elif clean_findings and verdict is InspectVerdict.pass_:
-            cleaned = apply(request.output, clean_findings)
-            verdict, replacement, reason, rule_id = InspectVerdict.mask, cleaned.replacement, cleaned.reason, _INVISIBLE_RULE
-        if verdict is InspectVerdict.pass_:
-            rule_id = None
-        return verdict, replacement, reason, rule_id
+        if mode == "always":
+            # Unconditional on purpose: a zero-width character or a token
+            # in the output must not switch the semantic check off.
+            return True
+        # on-flag: something the model can actually re-judge -- not an
+        # invisible-character cleanup, not a secret recognized by form.
+        return any(_asks_the_model(f) for f in findings)
 
     async def _classify(
         self, request: InspectRequest, profile_id: str, policy: Policy, dialogue: Dialogue,
-        findings: list[Finding], outcome: Stage1Outcome,
+        findings: list[Finding], outcome: Stage1Outcome, segments: Segments,
     ) -> InspectOutcome:
         classifier = self._classifier_for(profile_id, policy)
         if classifier is None:
             return InspectOutcome(verdict=outcome.verdict, reason=outcome.reason, model=None, error="unknown-model")
-        case = InspectCase.build(request, dialogue, policy, findings, outcome)
+        case = InspectCase.build(request, dialogue, policy, findings, outcome, segments)
         try:
             return await classifier.classify(case)
         except Exception as exc:  # noqa: BLE001 - a classifier bug falls back to stage 1, never to `pass`
@@ -256,6 +269,20 @@ class Inspector:
             latency=timings.finish(), profile_id=profile_id, profile_hash=profile_hash,
             stage=0, rule_id=rule_id, reason=reason, error=error, workspace=workspace,
         )
+
+
+def _asks_the_model(finding: Finding) -> bool:
+    """Whether this finding leaves the model anything to re-judge.
+
+    Invisible characters are cleaned, never softened, and a secret matched
+    by form is not the model's call at all -- only a candidate flagged by
+    entropy alone is, since only that one can be released.
+    """
+    if finding.rule_id == _INVISIBLE_RULE:
+        return False
+    if finding.rule_id == _SECRET_RULE:
+        return finding.candidate_key is not None
+    return True
 
 
 def _digest(output: str) -> str:
