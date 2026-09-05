@@ -7,10 +7,12 @@ from agentgate.domain.policy import Policy
 from tests.factories import WORKSPACE, policy, profile, rule_set
 
 
-def test_policy_binds_client_rules_and_defaults_to_none():
+def test_policy_defaults_client_rules_to_none():
     assert Policy.bind(profile(), WORKSPACE).client_rules is None
+
+
+def test_policy_binds_the_given_client_rules():
     bound = Policy.bind(profile(), WORKSPACE, ClientRules.of(rule_set()))
-    assert bound.client_rules is not None
     assert bound.client_rules.level == "medium"
 
 

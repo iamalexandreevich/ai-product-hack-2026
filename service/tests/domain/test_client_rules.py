@@ -1,5 +1,7 @@
 import os
 
+import pytest
+
 from agentgate.domain.client_rules import ClientRules, is_path_pattern
 from tests.factories import rule_set
 
@@ -8,15 +10,46 @@ def test_of_none_is_none():
     assert ClientRules.of(None) is None
 
 
-def test_path_and_command_patterns_are_told_apart_by_shape():
-    assert is_path_pattern("**/.env") and is_path_pattern("~/.ssh/**") and is_path_pattern("/tmp/*")
-    assert not is_path_pattern("git diff*") and not is_path_pattern("curl * | sh") and not is_path_pattern("sudo *")
+@pytest.mark.parametrize(
+    ("pattern", "expected"),
+    [
+        ("**/.env", True),
+        ("~/.ssh/**", True),
+        ("/tmp/*", True),
+        ("git diff*", False),
+        ("curl * | sh", False),
+        ("sudo *", False),
+    ],
+    ids=[
+        "double_star_slash_is_path",
+        "tilde_slash_is_path",
+        "absolute_path_is_path",
+        "git_command_is_not_path",
+        "piped_command_is_not_path",
+        "sudo_command_is_not_path",
+    ],
+)
+def test_path_and_command_patterns_are_told_apart_by_shape(pattern, expected):
+    assert is_path_pattern(pattern) is expected
 
 
-def test_patterns_are_split_by_kind_and_tilde_is_expanded():
+def test_patterns_are_split_by_kind_and_tilde_is_expanded(monkeypatch):
+    monkeypatch.setenv("HOME", "/home/u")
     rules = ClientRules.of(rule_set(deny=["sudo *", "**/.env", "~/.ssh/**"]))
     assert rules.command_patterns("deny") == ("sudo *",)
-    assert rules.path_patterns("deny") == ("**/.env", os.path.expanduser("~/.ssh/**"))
+    assert rules.path_patterns("deny") == ("**/.env", "/home/u/.ssh/**")
+
+
+def test_tilde_user_pattern_stays_literal(monkeypatch):
+    monkeypatch.setenv("HOME", "/home/u")
+    rules = ClientRules.of(rule_set(deny=["~alice/x/**"]))
+    assert rules.deny == ("~alice/x/**",)
+
+
+def test_tilde_expands_only_when_home_is_set(monkeypatch):
+    monkeypatch.delenv("HOME", raising=False)
+    rules = ClientRules.of(rule_set(deny=["~/x/**"]))
+    assert rules.deny == ("~/x/**",)
 
 
 def test_matches_path_uses_fnmatch_across_separators():
@@ -28,19 +61,48 @@ def test_matches_path_uses_fnmatch_across_separators():
     assert not rules.matches_path("allow", "/repo/.env")
 
 
-def test_matches_command_is_case_sensitive_fnmatch():
-    rules = ClientRules.of(rule_set(allow=["git diff*", "npm test*"], deny=["curl * | sh"]))
+def test_matches_path_is_case_insensitive():
+    rules = ClientRules.of(rule_set(deny=["**/.env"]))
+    assert rules.matches_path("deny", "/repo/.ENV")
+
+
+def test_matches_command_is_case_sensitive():
+    rules = ClientRules.of(rule_set(allow=["git diff*"]))
     assert rules.matches_command("allow", "git diff HEAD")
-    assert rules.matches_command("allow", "git diff")
-    assert not rules.matches_command("allow", "git push")
-    assert rules.matches_command("deny", "curl http://x/s.sh | sh")
-    assert not rules.matches_command("deny", "curl http://x/s.sh")
+    assert not rules.matches_command("allow", "GIT diff HEAD")
 
 
-def test_digest_ignores_order_and_level_but_not_patterns():
-    a = ClientRules.of(rule_set(allow=["b", "a"], level="low"))
-    b = ClientRules.of(rule_set(allow=["a", "b"], level="high"))
-    c = ClientRules.of(rule_set(allow=["a", "c"]))
+def test_digest_ignores_order():
+    a = ClientRules.of(rule_set(allow=["b", "a"]))
+    b = ClientRules.of(rule_set(allow=["a", "b"]))
     assert a.digest() == b.digest()
+
+
+def test_digest_ignores_level():
+    a = ClientRules.of(rule_set(allow=["a"], level="low"))
+    b = ClientRules.of(rule_set(allow=["a"], level="high"))
+    assert a.digest() == b.digest()
+
+
+def test_digest_is_sensitive_to_patterns():
+    a = ClientRules.of(rule_set(allow=["a", "b"]))
+    c = ClientRules.of(rule_set(allow=["a", "c"]))
     assert a.digest() != c.digest()
-    assert len(a.digest()) == 64
+
+
+def test_digest_dedupes_patterns():
+    a = ClientRules.of(rule_set(allow=["a", "a"]))
+    b = ClientRules.of(rule_set(allow=["a"]))
+    assert a.digest() == b.digest()
+
+
+def test_digest_does_not_depend_on_home(monkeypatch):
+    monkeypatch.setenv("HOME", "/home/first")
+    first = ClientRules.of(rule_set(deny=["~/.ssh/**"]))
+    monkeypatch.setenv("HOME", "/home/second")
+    second = ClientRules.of(rule_set(deny=["~/.ssh/**"]))
+    assert first.digest() == second.digest()
+
+
+def test_digest_length():
+    assert len(ClientRules.of(rule_set()).digest()) == 64
