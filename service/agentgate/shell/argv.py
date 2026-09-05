@@ -7,12 +7,18 @@ They are one parse now, and the callers ask it questions.
 
 Which flags take a separate value is per-command knowledge the caller
 supplies; this module only knows the shapes (`-o value`, `-o=value`,
-`--output=value`, `--`). Whether `--` ends the options at all is
-per-command knowledge too -- not every command implements the
+`-ovalue`, `--output=value`, `--`). Whether `--` ends the options at all
+is per-command knowledge too -- not every command implements the
 convention -- so it is off unless the caller asks for it. That default
 is the permissive one on purpose: a security rule that keeps reading
 flags past `--` can only look at more of an argv than it should, never
 less.
+
+The attached short form (`-oout.html`) is a shape of its own, distinct
+from `-o=out.html`: only a two-character flag in `value_flags` (`-o`,
+not `--output`) can own the rest of the token as its value, and only
+when the token is longer than the flag -- `-O` alone stays a bare flag,
+never `-O` plus an empty-string value.
 """
 
 from collections.abc import Sequence
@@ -57,6 +63,10 @@ class ParsedArgv:
             name, separator, inline_value = token.partition("=")
             if separator:
                 options.append(Option(name, inline_value, inline=True))
+                continue
+            short = token[:2]
+            if not token.startswith("--") and len(token) > 2 and short in value_flags:
+                options.append(Option(short, token[2:], inline=True))
                 continue
             if name in value_flags and index < len(argv):
                 options.append(Option(name, argv[index], inline=False))

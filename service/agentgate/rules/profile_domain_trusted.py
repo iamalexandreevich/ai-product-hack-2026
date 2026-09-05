@@ -26,7 +26,6 @@ from agentgate.api.schemas import Tool
 from agentgate.domain.domains import domain_allowed
 from agentgate.domain.policy import Policy
 from agentgate.domain.verdict import Verdict
-from agentgate.normalize.domains import extract_domains
 from agentgate.normalize.model import NormalizedAction, SimpleCommand
 from agentgate.normalize.paths import is_within, matches_any
 from agentgate.profiles.schema import NetworkMode
@@ -92,7 +91,7 @@ class ProfileDomainTrustedRule:
             return False
         return (
             _is_readonly(command)
-            or bool(extract_domains(command.argv))
+            or Role.NETWORK in spec.roles
             or _matches_prefix(command, policy.safe_prefixes)
         )
 

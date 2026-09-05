@@ -1570,17 +1570,22 @@ TRUSTED = trusted_policy()
     [
         "curl https://pypi.org/simple/",
         "curl -sSL https://pypi.org/simple/",
-        "git fetch https://github.com/org/repo",
         "curl https://files.pypi.org/x",
         "curl https://pypi.org/a && curl https://github.com/b",
         "curl https://pypi.org/simple/ | head -5",
     ],
-    ids=["plain_get", "with_flags", "git_fetch", "subdomain", "two_trusted_domains", "piped_into_a_reader"],
+    ids=["plain_get", "with_flags", "subdomain", "two_trusted_domains", "piped_into_a_reader"],
 )
 def test_a_read_from_a_trusted_domain_is_allowed(raw):
     verdict = RULE.evaluate(shell_action(raw), TRUSTED)
     assert verdict is not None and verdict.rule_id == "profile.domain-trusted"
-    assert verdict.decision.value == "allow"
+    assert verdict.decision is DecisionKind.allow
+
+
+def test_git_fetch_falls_through_to_stage_two():
+    # `git` carries no `Role.NETWORK` -- condition 10 refuses it, same as
+    # before v3.1.
+    assert RULE.evaluate(shell_action("git fetch https://github.com/org/repo"), TRUSTED) is None
 
 
 @pytest.mark.parametrize(
@@ -2124,12 +2129,16 @@ Expected: `decision: "ask"`, `stage: 1`, `rule_id: "client.ask"`, `model: null`.
 - [ ] **Step 3: Критерий 3 — доверенные домены**
 
 ```bash
-for raw in "curl https://pypi.org/simple/" "git fetch https://github.com/org/repo"; do
-  curl -s localhost:8400/v1/decide -H 'Authorization: Bearer $AGENTGATE_TOKEN' -H 'Content-Type: application/json' \
-    -d "{\"harness\":\"t\",\"tool\":\"shell\",\"raw\":\"$raw\",\"args\":{\"cwd\":\"/home/u/repo\"},\"user_request\":\"install\"}" | jq -c '{decision,stage,rule_id}'
-done
+curl -s localhost:8400/v1/decide -H 'Authorization: Bearer $AGENTGATE_TOKEN' -H 'Content-Type: application/json' \
+  -d '{"harness":"t","tool":"shell","raw":"curl https://pypi.org/simple/","args":{"cwd":"/home/u/repo"},"user_request":"install"}' | jq -c '{decision,stage,rule_id}'
 ```
-Expected: обе строки — `{"decision":"allow","stage":1,"rule_id":"profile.domain-trusted"}`.
+Expected: `{"decision":"allow","stage":1,"rule_id":"profile.domain-trusted"}`.
+
+```bash
+curl -s localhost:8400/v1/decide -H 'Authorization: Bearer $AGENTGATE_TOKEN' -H 'Content-Type: application/json' \
+  -d '{"harness":"t","tool":"shell","raw":"git fetch https://github.com/org/repo","args":{"cwd":"/home/u/repo"},"user_request":"install"}' | jq -c '{decision,stage,rule_id}'
+```
+Expected: `stage: 2` -- `git` carries no `Role.NETWORK`, so it falls through to the classifier, same as before v3.1 (spec §5.2).
 
 - [ ] **Step 4: Критерий 2 — MCP-кейсы ATBench**
 

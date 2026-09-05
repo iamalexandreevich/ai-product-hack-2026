@@ -212,7 +212,10 @@ COMMANDS: Mapping[str, CommandSpec] = {
         _row("wc", Role.READONLY, path_arguments=_EVERY),
         _row("wget", Role.NETWORK, Role.DOWNLOADER,
              upload_flags=("--post-file", "--post-data"),
-             output_flags=("-O", "--output-document", "-P", "--directory-prefix")),
+             output_flags=(
+                 "-O", "--output-document", "-P", "--directory-prefix",
+                 "-o", "--output-file",
+             )),
         _row("which", Role.READONLY),
         _row("xargs", value_flags=(
             "-n", "--max-args", "-P", "--max-procs", "-I", "-d", "--delimiter",

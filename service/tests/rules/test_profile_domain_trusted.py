@@ -5,6 +5,7 @@ is the only shape a refusal takes here: this rule never denies.
 
 import pytest
 
+from agentgate.api.schemas import DecisionKind
 from agentgate.rules.profile_domain_trusted import ProfileDomainTrustedRule
 from tests.factories import mcp_action, shell_action, stage1_policy, trusted_policy, unparseable_action
 
@@ -17,17 +18,47 @@ TRUSTED = trusted_policy()
     [
         "curl https://pypi.org/simple/",
         "curl -sSL https://pypi.org/simple/",
-        "git fetch https://github.com/org/repo",
         "curl https://files.pypi.org/x",
         "curl https://pypi.org/a && curl https://github.com/b",
         "curl https://pypi.org/simple/ | head -5",
     ],
-    ids=["plain_get", "with_flags", "git_fetch", "subdomain", "two_trusted_domains", "piped_into_a_reader"],
+    ids=["plain_get", "with_flags", "subdomain", "two_trusted_domains", "piped_into_a_reader"],
 )
 def test_a_read_from_a_trusted_domain_is_allowed(raw):
     verdict = RULE.evaluate(shell_action(raw), TRUSTED)
     assert verdict is not None and verdict.rule_id == "profile.domain-trusted"
-    assert verdict.decision.value == "allow"
+    assert verdict.decision is DecisionKind.allow
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "git fetch https://github.com/org/repo",
+        "git push https://github.com/org/repo main",
+        "git submodule add https://github.com/org/repo lib",
+        "pip install foo -i https://pypi.org/simple",
+        "npm install --registry https://pypi.org/",
+        "totallyunknownbin https://pypi.org/x",
+    ],
+    ids=[
+        "git_fetch", "git_push", "git_submodule_add",
+        "pip_install_with_index", "npm_install_with_registry", "unknown_executable",
+    ],
+)
+def test_condition_10_a_url_in_argv_alone_is_not_a_network_read(raw):
+    # `git` carries no `Role.NETWORK` row, and neither `pip`, `npm`, nor an
+    # unrecognized binary has any row at all: a URL among the arguments is
+    # not by itself proof of a network read, so these fall through to
+    # stage 2 exactly as they did before profile.domain-trusted existed.
+    assert RULE.evaluate(shell_action(raw), TRUSTED) is None
+
+
+def test_git_fetch_without_a_scheme_finds_no_domain_and_falls_through():
+    # extract_domains recognizes a URL, an scp-like remote, or a bare
+    # user@host -- a bare hostname argument matches none of those, so
+    # condition 4 (every domain listed) is vacuously unmet regardless of
+    # condition 10.
+    assert RULE.evaluate(shell_action("git fetch github.com"), TRUSTED) is None
 
 
 @pytest.mark.parametrize(
@@ -170,3 +201,11 @@ def test_a_package_manager_download_is_left_to_stage_two():
     # `pip` has no row in COMMANDS, so condition 10 is not met. Deliberate:
     # package installs belong to the packages module, not to a network rule.
     assert RULE.evaluate(shell_action("pip download requests"), TRUSTED) is None
+
+
+def test_curl_without_a_scheme_finds_no_domain_and_falls_through():
+    # Same pre-existing normalizer gap as git fetch without a scheme:
+    # `pypi.org/simple/` is not a URL, an scp-like remote, or a bare
+    # user@host, so extract_domains finds nothing and condition 4 is
+    # vacuously unmet.
+    assert RULE.evaluate(shell_action("curl pypi.org/simple/"), TRUSTED) is None

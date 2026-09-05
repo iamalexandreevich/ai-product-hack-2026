@@ -50,7 +50,10 @@ def test_curl_declares_the_flags_that_write_a_file():
 
 def test_wget_declares_the_flags_that_write_a_file():
     flags = spec_for("wget").output_flags
-    assert {"-O", "--output-document", "-P", "--directory-prefix"} <= flags
+    assert {
+        "-O", "--output-document", "-P", "--directory-prefix",
+        "-o", "--output-file",
+    } <= flags
 
 
 def test_a_command_with_no_row_declares_no_output_flags():
