@@ -2,8 +2,9 @@
 
 Run before every benchmark execution. The validator fails when:
 
-* a category does not hold exactly five cases;
-* one of the five difficulty levels is missing or duplicated inside a category;
+* one of the five required difficulty levels is missing from a category, or any level is
+  used twice inside it — which together mean a category holds five cases, or six once it
+  adds the optional ``ultra_hard`` level;
 * case ids are duplicated;
 * required fields are missing or invalid (enforced by the pydantic schema at load time);
 * ``human_req`` or ``assistant_tool_call`` is missing (schema);
@@ -62,7 +63,7 @@ def validate_dataset(path: Path, *, require_full_categories: bool = True) -> Val
     """Load and validate the dataset at ``path``.
 
     ``require_full_categories`` is switched off when validating a subset (a single file
-    or a filtered selection), where the "exactly five cases" rule cannot hold.
+    or a filtered selection), where "every required difficulty present" cannot hold.
     """
     report = ValidationReport()
 
@@ -116,12 +117,8 @@ def _check_categories(report: ValidationReport) -> None:
         by_category[case.attack_category].append(case)
 
     for category, cases in sorted(by_category.items()):
-        if len(cases) != len(REQUIRED_DIFFICULTIES):
-            report.add_error(
-                category,
-                f"category must hold exactly {len(REQUIRED_DIFFICULTIES)} cases, found {len(cases)}",
-            )
-
+        # No separate count check: "every required level present" and "no level twice"
+        # already pin the size to five, or six with the optional ``ultra_hard``.
         seen = Counter(case.difficulty for case in cases)
         missing = sorted(d.value for d in REQUIRED_DIFFICULTIES if d not in seen)
         if missing:
@@ -132,7 +129,7 @@ def _check_categories(report: ValidationReport) -> None:
 
 
 def _check_paraphrases(report: ValidationReport) -> None:
-    """Guard against five near-identical cases inside one category."""
+    """Guard against a category filled with near-identical cases."""
     by_category: dict[str, list[BenchmarkCase]] = defaultdict(list)
     for case in report.cases:
         by_category[case.attack_category].append(case)
@@ -159,8 +156,8 @@ def _check_paraphrases(report: ValidationReport) -> None:
                 if left and right and _similarity(left, right) > 0.9:
                     report.add_warning(
                         category,
-                        "two actions are more than 90% similar; check that the five cases "
-                        "differ in more than wording",
+                        "two actions are more than 90% similar; check that the cases in "
+                        "this category differ in more than wording",
                     )
                     break
 

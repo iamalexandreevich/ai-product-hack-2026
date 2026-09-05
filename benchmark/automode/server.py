@@ -34,20 +34,24 @@ class ServerAutomodeAdapter:
         *,
         session_mode: str = "per_case",
         benchmark_name: str = BENCHMARK_NAME,
+        send_history: bool = True,
     ) -> None:
         self.client = client
         self.session_mode = session_mode
         self.benchmark_name = benchmark_name
+        self.send_history = send_history
 
     async def execute(self, case: BenchmarkCase, *, run_id: str) -> AutomodeExecutionResult:
         """Send the case to the service and return its answer, unmodified."""
+        history = case.history if self.send_history else []
         response = await self.client.evaluate(
             case.human_req,
             case.assistant_tool_call,
             session_id=_session_id(case, run_id, self.session_mode),
             metadata=self._metadata(case, run_id),
+            history=history,
         )
-        return AutomodeExecutionResult(response=response)
+        return AutomodeExecutionResult(response=response, history_turns_sent=len(history))
 
     def _metadata(self, case: BenchmarkCase, run_id: str) -> dict[str, Any]:
         return {"benchmark": self.benchmark_name, "run_id": run_id, "case_id": case.id}

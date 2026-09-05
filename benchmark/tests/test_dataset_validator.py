@@ -36,10 +36,37 @@ def test_full_category_validates(tmp_path):
 
 
 def test_category_with_four_cases_fails(tmp_path):
+    """Size is not checked directly: a short category is a category missing a level."""
     _category(tmp_path, count=4)
     report = validate_dataset(tmp_path)
     assert not report.ok
-    assert any("exactly 5 cases" in str(i) for i in report.errors)
+    assert any("missing difficulty levels" in str(i) for i in report.errors)
+
+
+def test_category_with_the_optional_sixth_level_validates(tmp_path):
+    """``ultra_hard`` is allowed on top of the five, and required nowhere."""
+    _category(tmp_path, count=6, difficulties=[*DIFFICULTIES, "ultra_hard"])
+    report = validate_dataset(tmp_path)
+    assert report.ok, [str(i) for i in report.errors]
+    assert len(report.cases) == 6
+
+
+def test_a_seventh_case_duplicates_a_level_and_fails(tmp_path):
+    _category(tmp_path, count=7, difficulties=[*DIFFICULTIES, "ultra_hard"])
+    report = validate_dataset(tmp_path)
+    assert not report.ok
+    assert any("duplicated difficulty levels: easy" in str(i) for i in report.errors)
+
+
+def test_two_ultra_hard_cases_in_one_category_fail(tmp_path):
+    _category(
+        tmp_path,
+        count=7,
+        difficulties=[*DIFFICULTIES, "ultra_hard", "ultra_hard"],
+    )
+    report = validate_dataset(tmp_path)
+    assert not report.ok
+    assert any("ultra_hard" in str(i) for i in report.errors)
 
 
 def test_missing_difficulty_fails(tmp_path):

@@ -40,7 +40,7 @@ from reporting.report import (
 from runner.executor import BenchmarkRunner
 from runner.recorder import Recorder
 from schemas.case import DatasetSource
-from schemas.result import ExecutionMode, RunConfig
+from schemas.result import ExecutionMode, HistoryMode, RunConfig
 from storage.sqlite import BenchmarkStore
 
 DEFAULT_DATASET = "attacks/cases"
@@ -175,6 +175,7 @@ def _cmd_benchmark(args: argparse.Namespace) -> int:
         pricing_table_path=service_config.pricing.source_path,
         session_mode=args.session_mode,
         execution_mode=ExecutionMode(args.execution_mode),
+        history_mode=_history_mode(args),
     )
 
     if args.dry_run:
@@ -240,6 +241,7 @@ def _run_claude_code(args: argparse.Namespace, cases: list, dataset_path: Path) 
         dataset_path=str(dataset_path),
         session_mode="per_case",
         execution_mode=ExecutionMode(args.execution_mode),
+        history_mode=_history_mode(args),
     )
 
     if args.dry_run:
@@ -252,7 +254,10 @@ def _run_claude_code(args: argparse.Namespace, cases: list, dataset_path: Path) 
     store = None if args.no_db else BenchmarkStore(Path(args.db))
     out_dir = Path(args.out)
     adapter = ClaudeCodeAutomodeAdapter(
-        args.sandbox, sandbox_confirmed=True, model=args.claude_model
+        args.sandbox,
+        sandbox_confirmed=True,
+        model=args.claude_model,
+        send_history=run_config.history_mode is HistoryMode.FULL,
     )
 
     try:
@@ -353,7 +358,11 @@ async def _execute(
                 version = payload.get("version") or payload.get("service_version")
                 service_version = str(version) if version else None
 
-        adapter = ServerAutomodeAdapter(client, session_mode=run_config.session_mode)
+        adapter = ServerAutomodeAdapter(
+            client,
+            session_mode=run_config.session_mode,
+            send_history=run_config.history_mode is HistoryMode.FULL,
+        )
         return await _run_with_adapter(
             adapter=adapter,
             cases=cases,
@@ -543,6 +552,15 @@ def _add_execution_args(parser: argparse.ArgumentParser) -> None:
             "whole task including deny-retry and ask-wait loops"
         ),
     )
+    parser.add_argument(
+        "--no-history",
+        action="store_true",
+        help=(
+            "drop the dialogue history the cases carry and send the action alone. Pair it "
+            "with a normal run and compare the two: the difference is what the history "
+            "itself did to the decision"
+        ),
+    )
     parser.add_argument("--strict", action="store_true", help="score only the primary expectation")
     parser.add_argument("--db", default=DEFAULT_DB)
     parser.add_argument("--no-db", action="store_true")
@@ -571,6 +589,11 @@ def _has_filters(args: argparse.Namespace) -> bool:
         or getattr(args, "case_id", None)
         or getattr(args, "dataset_source", None)
     )
+
+
+def _history_mode(args: argparse.Namespace) -> HistoryMode:
+    """``--no-history`` strips the dialogue; the run records which of the two it was."""
+    return HistoryMode.STRIPPED if getattr(args, "no_history", False) else HistoryMode.FULL
 
 
 def _endpoint_allowed(url: str, *, allow_remote: bool) -> bool:

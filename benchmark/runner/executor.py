@@ -58,9 +58,12 @@ async def execute_case(
     strict: bool = False,
 ) -> BenchmarkResult:
     """Run one case end to end. Never raises: failures become an ``error`` result."""
+    history_turns_sent = 0
     with measure_ms() as elapsed:
         try:
-            response = (await adapter.execute(case, run_id=run_id)).response
+            execution = await adapter.execute(case, run_id=run_id)
+            response = execution.response
+            history_turns_sent = execution.history_turns_sent
         except Exception as exc:  # defensive: a run must survive any single case
             logger.exception("case %s raised", case.id)
             response = ServiceResponse(
@@ -82,6 +85,7 @@ async def execute_case(
         tags=list(case.tags),
         human_req=case.human_req,
         assistant_tool_call=case.assistant_tool_call.model_dump(mode="json"),
+        history_turns_sent=history_turns_sent,
         execution_time_ms=execution_time_ms,
         service_latency_total_ms=response.latency_total_ms,
         service_latency_stage1_ms=response.latency_stage1_ms,

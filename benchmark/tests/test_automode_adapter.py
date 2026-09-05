@@ -33,7 +33,7 @@ from schemas.result import (
     ServiceResponse,
     ServiceResultType,
 )
-from tests.conftest import DECISION_DENY, VALID_CASE
+from tests.conftest import DECISION_DENY, HISTORY_CASE, VALID_CASE
 
 
 def _cases(n: int) -> list[BenchmarkCase]:
@@ -94,9 +94,69 @@ def test_the_envelope_carries_the_client_response_unchanged(service_config):
     assert outcome.response.model_dump() == direct.model_dump()
 
 
-def test_the_envelope_has_exactly_one_field():
-    """Whole-task fields are added by whoever writes the second adapter, not guessed."""
-    assert list(AutomodeExecutionResult.model_fields) == ["response"]
+def test_the_envelope_carries_the_outcome_and_what_was_put_in_front_of_it():
+    """Whole-task fields are added by whoever writes the second adapter, not guessed.
+
+    ``history_turns_sent`` is not a whole-task field: it says what the adapter presented
+    for this one decision, which only the adapter knows.
+    """
+    assert list(AutomodeExecutionResult.model_fields) == ["response", "history_turns_sent"]
+
+
+def test_the_adapter_sends_the_dialogue_history_the_case_carries(service_config):
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        return httpx.Response(200, json=DECISION_DENY)
+
+    case = BenchmarkCase.model_validate(copy.deepcopy(HISTORY_CASE))
+    result = _with_adapter(
+        handler, service_config, lambda adapter: adapter.execute(case, run_id="run-1")
+    )
+
+    assert len(seen[0]["history"]) == 5
+    assert result.history_turns_sent == 5
+
+
+def test_stripping_history_removes_it_from_the_request_and_changes_nothing_else(service_config):
+    """The ablation must differ in the dialogue alone, or the comparison means nothing."""
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        return httpx.Response(200, json=DECISION_DENY)
+
+    case = BenchmarkCase.model_validate(copy.deepcopy(HISTORY_CASE))
+    full = _with_adapter(
+        handler, service_config, lambda adapter: adapter.execute(case, run_id="run-1")
+    )
+    stripped = _with_adapter(
+        handler,
+        service_config,
+        lambda adapter: adapter.execute(case, run_id="run-1"),
+        send_history=False,
+    )
+
+    assert "history" not in seen[1]
+    assert stripped.history_turns_sent == 0
+    assert full.history_turns_sent == 5
+    assert seen[0] == seen[1] | {"history": seen[0]["history"]}
+
+
+def test_the_result_records_how_many_turns_were_put_in_front_of_the_automode(service_config):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=DECISION_DENY)
+
+    case = BenchmarkCase.model_validate(copy.deepcopy(HISTORY_CASE))
+
+    async def scenario():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+            client = SecurityServiceClient(service_config, client=http_client)
+            adapter = ServerAutomodeAdapter(client)
+            return await execute_case(case, adapter, run_id="run-1")
+
+    assert asyncio.run(scenario()).history_turns_sent == 5
 
 
 # -- 2. the request the client used to send ----------------------------------

@@ -146,6 +146,20 @@ class ExecutionMode(StrEnum):
     HARNESS_LOOP = "harness_loop"
 
 
+class HistoryMode(StrEnum):
+    """Whether a run sent the dialogue history its cases carry.
+
+    ``full`` sends it; ``stripped`` drops it and sends nothing else differently. The
+    pair is the ablation that measures the history itself: run the same population both
+    ways and compare, rather than reading a single run's ASR and guessing how much of it
+    the dialogue caused. Recorded on the run so the two can never be mistaken for each
+    other after the fact.
+    """
+
+    FULL = "full"
+    STRIPPED = "stripped"
+
+
 class RunConfig(BaseModel):
     """Configuration of one benchmark run; stored verbatim with the run.
 
@@ -174,6 +188,7 @@ class RunConfig(BaseModel):
     pricing_table_path: str | None = None
     session_mode: str = "per_case"
     execution_mode: ExecutionMode = ExecutionMode.SINGLE_DECISION
+    history_mode: HistoryMode = HistoryMode.FULL
 
 
 class BenchmarkResult(BaseModel):
@@ -199,6 +214,10 @@ class BenchmarkResult(BaseModel):
 
     human_req: str
     assistant_tool_call: dict[str, Any]
+    # Turns of dialogue history actually sent with this decision. Zero both for a case
+    # that carries none and for a stripped run, which is why the run records its
+    # ``history_mode`` too; together they make a stored result self-describing.
+    history_turns_sent: int = 0
 
     execution_time_ms: float
     service_latency_total_ms: float | None = None

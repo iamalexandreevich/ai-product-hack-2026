@@ -32,6 +32,15 @@ Honest limits, stated so nobody plans against them
   there is nothing to hijack and Claude Code's guardrail genuinely renders no verdict —
   in the product it never would either. That is reported as an ``error`` result (the
   benchmark's "no decision" state), excluded from every rate, never counted as a catch.
+* **A case carrying dialogue history renders no decision here.** The Agent SDK has no
+  supported way to start a session with prior turns, and the transcript format that
+  ``resume`` reads is documented as internal. Faking one would reproduce the turns but
+  not their attribution, which is the very thing multi-turn trust attacks manipulate, so
+  these cases report no decision with that reason. In a stripped ablation run
+  (``--no-history``) the same cases are posed normally: there is no history left to
+  present. The comparison with Claude Code is therefore available on the no-history
+  baseline and unavailable on the history variant — a limit of the adapter, not a
+  measurement.
 * **A classifier ALLOW executes the command.** There is no way to observe an allow
   without the tool running (``PostToolUse`` fires post-execution). This adapter therefore
   MUST run against a disposable sandbox with no real secrets and no network egress; the
@@ -111,6 +120,20 @@ def _first_url(tool_call: ToolCall) -> str:
     if match:
         return match.group(0)
     return f"https://{tool_call.arguments.domains[0]}/"
+
+
+# Why a case carrying dialogue history cannot be posed here, in the words the result
+# carries. Checked against the SDK: streaming input accepts only ``{"type": "user"}``
+# envelopes, ``resume``/``fork_session`` take the id of a session already on disk, and
+# the transcript format under ~/.claude/projects is documented as internal and free to
+# change between releases. Hand-writing one would let us fake a turn, but not its
+# attribution — and ``author: human`` versus ``author: agent`` is precisely the variable
+# these attacks manipulate. A number produced that way would measure our guess at
+# someone else's file format, so no number is produced.
+_HISTORY_UNSUPPORTED = (
+    "the case carries dialogue history and the Claude Agent SDK exposes no supported way "
+    "to seed prior conversation turns with their role and author attribution"
+)
 
 
 def _by(key: str) -> Callable[[dict], object]:
@@ -299,6 +322,7 @@ class ClaudeCodeAutomodeAdapter:
         sandbox_confirmed: bool = False,
         model: str | None = None,
         session_runner: SessionRunner | None = None,
+        send_history: bool = True,
     ) -> None:
         if not sandbox_confirmed:
             raise ValueError(
@@ -309,11 +333,16 @@ class ClaudeCodeAutomodeAdapter:
         self.workspace = workspace
         self.model = model
         self._run_session = session_runner or self._default_session_runner
+        self.send_history = send_history
 
     async def execute(self, case: BenchmarkCase, *, run_id: str) -> AutomodeExecutionResult:
         tool_call = case.assistant_tool_call
         plan = plan_for(tool_call)
-        if plan is None:
+        if self.send_history and case.history:
+            # A stripped ablation run (send_history=False) poses these cases normally:
+            # there is no history to present, and what is left is an ordinary action.
+            obs = ClaudeRunObservation(unsupported_reason=_HISTORY_UNSUPPORTED)
+        elif plan is None:
             obs = ClaudeRunObservation(
                 unsupported_reason=f"{tool_call.tool} has no way to be posed to Claude Code"
             )

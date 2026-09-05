@@ -2,10 +2,21 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from pydantic import ValidationError
 
-from schemas.case import BenchmarkCase, DatasetSource, Difficulty, ServiceDecision
+from schemas.case import (
+    HISTORY_MAX_BYTES,
+    HISTORY_MAX_TURNS,
+    BenchmarkCase,
+    DatasetSource,
+    Difficulty,
+    ServiceDecision,
+    TurnAuthor,
+    TurnRole,
+)
 
 
 def test_valid_case_parses(valid_case_dict):
@@ -182,3 +193,91 @@ def test_dataset_source_can_declare_an_imported_baseline(valid_case_dict):
 def test_unknown_dataset_source_is_rejected(valid_case_dict):
     with pytest.raises(ValidationError):
         BenchmarkCase.model_validate(valid_case_dict | {"dataset_source": "borrowed"})
+
+
+# -- dialogue history --------------------------------------------------------
+
+
+def test_a_case_without_history_has_an_empty_one(valid_case_dict):
+    """Every case written at the v1 boundary stays valid and sends no dialogue."""
+    assert BenchmarkCase.model_validate(valid_case_dict).history == []
+
+
+def test_history_turn_parses_every_contract_field(history_case_dict):
+    case = BenchmarkCase.model_validate(history_case_dict)
+    assert [t.role for t in case.history][:2] == [TurnRole.HUMAN, TurnRole.HUMAN]
+    toolresult = case.history[-1]
+    assert toolresult.role is TurnRole.TOOLRESULT
+    assert toolresult.author is TurnAuthor.SYSTEM
+    assert (toolresult.tool, toolresult.call_id) == ("bash", "c1")
+
+
+def test_a_turn_may_forge_its_author(history_case_dict):
+    """role=human with author=agent is legal on the wire, and is an attack to measure."""
+    history_case_dict["history"][1]["author"] = "agent"
+    case = BenchmarkCase.model_validate(history_case_dict)
+    assert case.history[1].role is TurnRole.HUMAN
+    assert case.history[1].author is TurnAuthor.AGENT
+
+
+def test_unknown_role_or_author_is_rejected(history_case_dict):
+    for field, value in (("role", "operator"), ("author", "root")):
+        payload = json.loads(json.dumps(history_case_dict))
+        payload["history"][0][field] = value
+        with pytest.raises(ValidationError):
+            BenchmarkCase.model_validate(payload)
+
+
+def test_extra_keys_on_a_turn_are_rejected(history_case_dict):
+    history_case_dict["history"][0]["trusted"] = True
+    with pytest.raises(ValidationError):
+        BenchmarkCase.model_validate(history_case_dict)
+
+
+def test_attack_location_history_requires_a_dialogue(history_case_dict):
+    history_case_dict["history"] = []
+    with pytest.raises(ValidationError, match="requires a non-empty history"):
+        BenchmarkCase.model_validate(history_case_dict)
+
+
+def test_a_benign_case_may_carry_history(benign_case_dict, history_case_dict):
+    """The friction control: a long legitimate dialogue in front of a legitimate action."""
+    benign_case_dict["history"] = history_case_dict["history"]
+    case = BenchmarkCase.model_validate(benign_case_dict)
+    assert case.is_benign
+    assert len(case.history) == 5
+
+
+def test_history_longer_than_the_wire_limit_is_rejected(history_case_dict):
+    """A case the service refuses at stage 0 measures nothing, so it may not exist."""
+    turn = {"role": "human", "author": "human", "content": "x"}
+    history_case_dict["history"] = [turn] * (HISTORY_MAX_TURNS + 1)
+    with pytest.raises(ValidationError, match="200 turns"):
+        BenchmarkCase.model_validate(history_case_dict)
+
+
+def test_tool_and_call_id_count_against_the_byte_budget(history_case_dict):
+    """Exactly how the service counts: content plus tool plus call_id, not content alone."""
+    filling = "x" * (HISTORY_MAX_BYTES - 4)
+    turn = {
+        "role": "toolresult",
+        "author": "system",
+        "content": filling,
+        "tool": "abcd",
+        "call_id": "e",
+    }
+    history_case_dict["history"] = [turn]
+    with pytest.raises(ValidationError, match="bytes"):
+        BenchmarkCase.model_validate(history_case_dict)
+
+    turn.pop("tool")
+    turn.pop("call_id")
+    assert len(BenchmarkCase.model_validate(history_case_dict).history) == 1
+
+
+# -- difficulty --------------------------------------------------------------
+
+
+def test_ultra_hard_is_a_difficulty_a_case_may_declare(history_case_dict):
+    case = BenchmarkCase.model_validate(history_case_dict | {"difficulty": "ultra_hard"})
+    assert case.difficulty is Difficulty.ULTRA_HARD

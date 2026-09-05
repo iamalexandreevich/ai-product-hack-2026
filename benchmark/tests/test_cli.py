@@ -9,7 +9,7 @@ import pytest
 
 import cli
 from dataset.validator import validate_dataset
-from schemas.case import REQUIRED_DIFFICULTIES
+from schemas.case import REQUIRED_DIFFICULTIES, AttackLocation, ServiceDecision
 from tests.conftest import DATASET_PATH, VALID_CASE, write_case
 
 DIFFICULTIES = ["easy", "medium", "hard", "adversarial", "realistic_production"]
@@ -36,7 +36,7 @@ def test_validate_command_on_a_valid_dataset(tiny_dataset, capsys):
 def test_validate_command_fails_on_an_incomplete_category(tiny_dataset, capsys):
     (tiny_dataset / "sample_category" / "SAMPLE_005.yaml").unlink()
     assert cli.main(["validate", "--path", str(tiny_dataset)]) == 1
-    assert "exactly 5 cases" in capsys.readouterr().err
+    assert "missing difficulty levels" in capsys.readouterr().err
 
 
 def test_dry_run_sends_nothing(tiny_dataset, capsys):
@@ -115,14 +115,43 @@ def test_shipped_dataset_is_valid():
     assert report.ok, "\n".join(str(issue) for issue in report.errors)
 
 
-def test_shipped_dataset_has_five_cases_per_category():
+def test_shipped_dataset_covers_every_required_difficulty_per_category():
     report = validate_dataset(DATASET_PATH)
     by_category: dict[str, set[str]] = {}
     for case in report.cases:
         by_category.setdefault(case.attack_category, set()).add(case.difficulty.value)
     assert by_category, "dataset is empty"
+    required = {d.value for d in REQUIRED_DIFFICULTIES}
     for category, difficulties in by_category.items():
-        assert difficulties == {d.value for d in REQUIRED_DIFFICULTIES}, category
+        assert required <= difficulties, category
+        assert difficulties - required <= {"ultra_hard"}, category
+
+
+def test_multi_turn_cases_carry_a_dialogue_and_can_only_be_caught_at_stage_2():
+    """The constraint the category lives under, written as a test.
+
+    History never reaches stage 1: ``Rule.evaluate`` takes an action and a policy and no
+    dialogue. So an action that stage 1 settles by itself would be settled identically
+    with the history and without it, and the case would measure nothing. Every case here
+    must therefore declare stage 2 and carry a dialogue to declare it about.
+    """
+    report = validate_dataset(DATASET_PATH)
+    cases = [c for c in report.cases if c.attack_category == "multi_turn_trust_escalation"]
+    assert cases, "the multi-turn category is missing from the shipped dataset"
+    for case in cases:
+        assert case.history, case.id
+        assert case.expected_stage == 2, case.id
+        assert AttackLocation.HISTORY in case.attack_location, case.id
+
+
+def test_the_friction_control_puts_a_long_dialogue_in_front_of_a_benign_action():
+    """Without it the dataset would only measure what history unlocks, never what it locks."""
+    report = validate_dataset(DATASET_PATH)
+    controls = [c for c in report.cases if c.is_benign and c.history]
+    assert controls, "no benign case carries dialogue history"
+    for case in controls:
+        assert len(case.history) >= 10, case.id
+        assert case.expected_service_result is ServiceDecision.ALLOW, case.id
 
 
 def test_shipped_dataset_covers_both_boundary_fields():

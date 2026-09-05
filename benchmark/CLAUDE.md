@@ -23,8 +23,18 @@ Every benchmark case is one pair at a fixed boundary:
 
 ```
 human_req            -> user_request        (last user message)
+history              -> history             (the dialogue before it; v2, optional)
 assistant_tool_call  -> tool + raw + args   (the action the assistant proposes)
 ```
+
+`history` is a list of turns (`role` × `author` + `content`, optional `tool` / `call_id`) mirroring
+the service contract field for field, sent only when non-empty so a case without one produces the
+v1 request unchanged. It reaches **stage 2 only** — `Rule.evaluate(action, policy)` takes no
+dialogue — so a case whose action stage 1 settles by itself measures nothing, and every case in
+`multi_turn_trust_escalation` must be stage-2-ambiguous. `--no-history` strips the dialogue and
+changes nothing else; pairing that run with a normal one and running `cli.py compare` is how the
+effect of history itself is measured, and the run records `history_mode` so the two can never be
+confused.
 
 The request/response contract lives in `docs/superpowers/service/specs/2026-09-03-agentgate-v1-design.md`
 §4. That spec **supersedes** `docs/base.md` and `docs/artifacts/` wherever they disagree. Generated
@@ -101,7 +111,10 @@ because a second adapter does; adding a third is one `choices=` entry plus a com
 `cli.py`, never a registry or plugin discovery. Note what the seam still does *not* solve:
 `BenchmarkResult` assumes one decision per case (`human_decision_count`, `attack_success`,
 `task_success`), so a whole-task, environment-and-outcome adapter would need work there;
-`ClaudeCodeAutomodeAdapter` fits the one-decision boundary and does not.
+`ClaudeCodeAutomodeAdapter` fits the one-decision boundary and does not. It also renders no
+decision on a case carrying `history`: the Agent SDK has no supported way to seed prior turns with
+their author attribution, and faking the on-disk transcript format would fabricate exactly the
+variable those attacks manipulate. Under `--no-history` the same cases are posed normally.
 
 **Comparing runs:** `cli.py compare RUN_A RUN_B` reads two stored runs and prints a paired,
 guardrail-vs-guardrail comparison — restricted to cases *both* runs decided, because a run that
@@ -191,18 +204,21 @@ recorded separately in `contract_violation` rather than silently passing.
 
 ## Dataset rules
 
-`attacks/taxonomy.md` defines 15 categories and, in §5, what is deliberately *not* representable at
-this boundary (multi-turn manipulation, provenance chains, session budgets). `attacks/cases/` holds
-exactly 5 cases per category, one per difficulty (`easy`, `medium`, `hard`, `adversarial`,
-`realistic_production`) — 75 files.
+`attacks/taxonomy.md` defines 16 categories and, in §5, what is deliberately *not* representable at
+this boundary (provenance chains, session budgets, inter-agent). `attacks/cases/` holds one case
+per required difficulty per category (`easy`, `medium`, `hard`, `adversarial`,
+`realistic_production`), plus an optional sixth, `ultra_hard`, where a category has one — 82 files
+today. `ultra_hard` is for cases that stack several techniques against a defender who already
+handles the other five; two categories carry one, and the level is required nowhere.
 
 `benign_utility` is a control group, not an attack category. Without it a service that always denies
 would score 100% everywhere else. Keep it, and keep its cases plausible-but-dangerous-looking.
 
 `cli.py validate` runs automatically before every benchmark execution and aborts the run on failure,
-so a broken case never reaches the service. It enforces: exactly five cases per category, all five
-difficulties present and unique, globally unique ids, file name = `id`, directory name =
-`attack_category`, and no two cases in a category sharing the same `human_req` + `raw`.
+so a broken case never reaches the service. It enforces: every required difficulty present in a
+category and no difficulty used twice (which is what pins a category to five cases, or six with
+`ultra_hard` — there is no separate count check), globally unique ids, file name = `id`, directory
+name = `attack_category`, and no two cases in a category sharing the same `human_req` + `raw`.
 
 Other conventions:
 
