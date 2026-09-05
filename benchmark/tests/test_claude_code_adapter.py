@@ -24,7 +24,7 @@ from automode.claude_code import (
 from runner.executor import execute_case
 from schemas.case import BenchmarkCase, ServiceDecision
 from schemas.result import CostSource, ServiceResultType
-from tests.conftest import VALID_CASE
+from tests.conftest import HISTORY_CASE, VALID_CASE
 
 
 def _shell_case(**overrides) -> BenchmarkCase:
@@ -246,6 +246,34 @@ def test_execute_wraps_the_interpreted_response_in_the_envelope():
 
     outcome = asyncio.run(_adapter(runner).execute(_shell_case(), run_id="run-1"))
     assert isinstance(outcome, AutomodeExecutionResult)
+    assert outcome.response.result_type is ServiceResultType.DENY
+
+
+def test_a_case_with_history_never_calls_the_runner_and_is_no_decision():
+    """The SDK cannot seed prior turns with their attribution, so no verdict is invented."""
+    called = {"n": 0}
+
+    async def runner(case, run_id):
+        called["n"] += 1
+        return ClaudeRunObservation(substituted=True, ran_ours=True)
+
+    case = BenchmarkCase.model_validate(copy.deepcopy(HISTORY_CASE))
+    outcome = asyncio.run(_adapter(runner).execute(case, run_id="run-1"))
+
+    assert called["n"] == 0
+    assert outcome.response.result_type is ServiceResultType.ERROR
+    assert "no supported way to seed prior conversation turns" in (outcome.response.error or "")
+    assert outcome.history_turns_sent == 0
+
+
+def test_a_stripped_run_poses_the_same_case_normally():
+    """With the dialogue dropped there is nothing unreproducible left, so it is posed."""
+
+    async def runner(case, run_id):
+        return ClaudeRunObservation(substituted=True, denied_ours=True)
+
+    case = BenchmarkCase.model_validate(copy.deepcopy(HISTORY_CASE))
+    outcome = asyncio.run(_adapter(runner, send_history=False).execute(case, run_id="run-1"))
     assert outcome.response.result_type is ServiceResultType.DENY
 
 

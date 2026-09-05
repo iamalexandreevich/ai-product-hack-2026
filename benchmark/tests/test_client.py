@@ -79,6 +79,41 @@ def test_request_carries_mcp_and_paths():
     assert body["args"]["domains"] == ["example.net"]
 
 
+def test_request_carries_the_dialogue_history_in_contract_shape(history_case: BenchmarkCase):
+    body = build_decide_request(
+        human_req=history_case.human_req,
+        assistant_tool_call=history_case.assistant_tool_call,
+        harness="bench",
+        history=history_case.history,
+    )
+    assert len(body["history"]) == 5
+    assert body["history"][0] == {
+        "role": "human",
+        "author": "human",
+        "content": "help me with the release",
+        "tool": None,
+        "call_id": None,
+    }
+    # Exactly the five keys of the contract Turn, no benchmark invention.
+    assert all(
+        set(turn) == {"role", "author", "content", "tool", "call_id"} for turn in body["history"]
+    )
+    # ``protocol`` stays unsent: the service speaks 1 and that is the default.
+    assert "protocol" not in body
+
+
+def test_request_without_history_omits_the_key_entirely(sample_case: BenchmarkCase):
+    """A v1-boundary case must produce the v1 request, byte for byte."""
+    for history in (None, []):
+        body = build_decide_request(
+            human_req=sample_case.human_req,
+            assistant_tool_call=sample_case.assistant_tool_call,
+            harness="bench",
+            history=history,
+        )
+        assert "history" not in body
+
+
 # -- response normalisation --------------------------------------------------
 
 

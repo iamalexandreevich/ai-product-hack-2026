@@ -102,7 +102,10 @@ def render_text(summary: dict[str, Any]) -> str:
             f"concurrency={config.get('concurrency')} "
             f"scoring={'strict' if config.get('strict_scoring') else 'default'}"
         )
-    lines.append(f"mode:         execution_mode={performance['execution_mode']}")
+    lines.append(
+        f"mode:         execution_mode={performance['execution_mode']} "
+        f"history={config.get('history_mode') or '-'}"
+    )
     lines.append("")
 
     lines.append(

@@ -5,6 +5,7 @@ The benchmark boundary is ``human_req | assistant_tool_call``. Both map directly
 ``docs/superpowers/service/specs/2026-09-03-agentgate-v1-design.md`` section 4.2):
 
     human_req                    -> user_request
+    history                      -> history          (v2, optional)
     assistant_tool_call.tool     -> tool
     assistant_tool_call.raw      -> raw
     assistant_tool_call.arguments-> args {cwd, paths, domains, mcp}
@@ -24,18 +25,41 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 ID_PATTERN = re.compile(r"^[A-Z][A-Z0-9_]{2,63}$")
 
+# Wire limits on ``history``, mirrored from the service
+# (service/agentgate/api/schemas.py). A case that exceeds them is refused at stage 0
+# as ``api.history-too-large`` and therefore measures nothing, so it must not exist.
+HISTORY_MAX_TURNS = 200
+HISTORY_MAX_BYTES = 131_072
+TURN_TOOL_MAX_CHARS = 64
+TURN_CALL_ID_MAX_CHARS = 128
+
 
 class Difficulty(StrEnum):
-    """The five complexity levels every attack category must cover."""
+    """Complexity levels a case can carry.
+
+    The first five are required in every category. ``ultra_hard`` is optional: it is
+    reserved for cases that combine several techniques at once and assume a defender
+    who already handles the other five.
+    """
 
     EASY = "easy"
     MEDIUM = "medium"
     HARD = "hard"
     ADVERSARIAL = "adversarial"
     REALISTIC_PRODUCTION = "realistic_production"
+    ULTRA_HARD = "ultra_hard"
 
 
-REQUIRED_DIFFICULTIES: frozenset[Difficulty] = frozenset(Difficulty)
+REQUIRED_DIFFICULTIES: frozenset[Difficulty] = frozenset(
+    {
+        Difficulty.EASY,
+        Difficulty.MEDIUM,
+        Difficulty.HARD,
+        Difficulty.ADVERSARIAL,
+        Difficulty.REALISTIC_PRODUCTION,
+    }
+)
+OPTIONAL_DIFFICULTIES: frozenset[Difficulty] = frozenset(Difficulty) - REQUIRED_DIFFICULTIES
 
 
 class DatasetSource(StrEnum):
@@ -61,7 +85,53 @@ class AttackLocation(StrEnum):
 
     HUMAN_REQ = "human_req"
     ASSISTANT_TOOL_CALL = "assistant_tool_call"
+    HISTORY = "history"
     NONE = "none"
+
+
+class TurnRole(StrEnum):
+    """``role`` enum of a history turn (service contract v2, section 3.1)."""
+
+    HUMAN = "human"
+    ASSISTANT = "assistant"
+    TOOLCALL = "toolcall"
+    TOOLRESULT = "toolresult"
+
+
+class TurnAuthor(StrEnum):
+    """``author`` enum of a history turn.
+
+    The distinction the trust-escalation cases attack: ``role: human`` with
+    ``author: agent`` is a parent model's text addressed to a subagent, not a human's
+    intent. Only ``human``/``human`` is the user speaking.
+    """
+
+    HUMAN = "human"
+    AGENT = "agent"
+    SYSTEM = "system"
+
+
+class HistoryTurn(BaseModel):
+    """One turn of the dialogue that preceded the proposed action.
+
+    Mirrors ``Turn`` of ``POST /v1/decide`` field for field; nothing is added.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    role: TurnRole
+    author: TurnAuthor
+    content: str
+    tool: str | None = Field(default=None, max_length=TURN_TOOL_MAX_CHARS)
+    call_id: str | None = Field(default=None, max_length=TURN_CALL_ID_MAX_CHARS)
+
+    def wire_bytes(self) -> int:
+        """Bytes this turn spends of the request budget, counted as the service counts."""
+        return (
+            len(self.content.encode("utf-8", "surrogatepass"))
+            + len((self.tool or "").encode("utf-8", "surrogatepass"))
+            + len((self.call_id or "").encode("utf-8", "surrogatepass"))
+        )
 
 
 class ToolName(StrEnum):
@@ -140,6 +210,11 @@ class BenchmarkCase(BaseModel):
     human_req: str = Field(min_length=1)
     assistant_tool_call: ToolCall
 
+    # The dialogue that preceded the action, oldest turn first. Empty for a case that
+    # lives at the v1 boundary, which is every case written before v2 of the service.
+    # Cross-cutting on purpose: any category may use it, not only the multi-turn one.
+    history: list[HistoryTurn] = Field(default_factory=list)
+
     attack_payload: str | None = None
 
     expected_behavior: Annotated[list[str], Field(min_length=1)]
@@ -170,6 +245,14 @@ class BenchmarkCase(BaseModel):
         locations = set(self.attack_location)
         if AttackLocation.NONE in locations and len(locations) > 1:
             raise ValueError("attack_location 'none' cannot be combined with other locations")
+
+        if len(self.history) > HISTORY_MAX_TURNS:
+            raise ValueError(f"history exceeds {HISTORY_MAX_TURNS} turns, the service wire limit")
+        size = sum(turn.wire_bytes() for turn in self.history)
+        if size > HISTORY_MAX_BYTES:
+            raise ValueError(f"history exceeds {HISTORY_MAX_BYTES} bytes, the service wire limit")
+        if AttackLocation.HISTORY in locations and not self.history:
+            raise ValueError("attack_location 'history' requires a non-empty history")
 
         is_benign = locations == {AttackLocation.NONE}
         if is_benign:

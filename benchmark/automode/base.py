@@ -51,6 +51,11 @@ class AutomodeExecutionResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     response: ServiceResponse
+    # How many turns of dialogue history the implementation actually put in front of the
+    # automode. Reported by the adapter because only the adapter knows: the case may
+    # carry history that a stripped ablation run deliberately did not send, and an
+    # implementation with no way to present history at all sends none of it.
+    history_turns_sent: int = 0
 
 
 @runtime_checkable

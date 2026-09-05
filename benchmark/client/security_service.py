@@ -20,7 +20,7 @@ from typing import Any, Self
 import httpx
 
 from config import ServiceConfig, json_path
-from schemas.case import ServiceDecision, ToolCall
+from schemas.case import HistoryTurn, ServiceDecision, ToolCall
 from schemas.result import (
     ComponentsSource,
     CostSource,
@@ -54,6 +54,7 @@ def build_decide_request(
     profile_id: str | None = None,
     model: str | None = None,
     metadata: dict[str, Any] | None = None,
+    history: list[HistoryTurn] | None = None,
 ) -> dict[str, Any]:
     """Serialise the benchmark boundary into a ``/v1/decide`` request body."""
     args: dict[str, Any] = {"cwd": assistant_tool_call.arguments.cwd}
@@ -79,6 +80,11 @@ def build_decide_request(
         body["model"] = model
     if metadata:
         body["metadata"] = metadata
+    if history:
+        # Sent only when there is a dialogue to send, so a case written at the v1
+        # boundary produces the v1 request byte for byte. ``protocol`` stays unsent:
+        # the service speaks 1, that is the default, and any other value is refused.
+        body["history"] = [turn.model_dump(mode="json") for turn in history]
     return body
 
 
@@ -327,6 +333,7 @@ class SecurityServiceClient:
         *,
         session_id: str | None = None,
         metadata: dict[str, Any] | None = None,
+        history: list[HistoryTurn] | None = None,
     ) -> ServiceResponse:
         """Send one benchmark case to ``POST /v1/decide``."""
         body = build_decide_request(
@@ -337,6 +344,7 @@ class SecurityServiceClient:
             profile_id=self.config.profile_id,
             model=self.config.model,
             metadata=metadata,
+            history=history,
         )
 
         try:
