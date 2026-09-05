@@ -4,7 +4,9 @@ The caps, in the order they are applied (spec 4.7):
 
 - a stage-1 `drop` stands whatever the model says;
 - `pass` lifts every `mask` finding at once -- the model answers about
-  the result as a whole -- but never a `clean` or a `redact`;
+  the result as a whole -- but never a `clean` or a `redact`, and when
+  one of those survives, so does stage 1's reason for it: the model
+  argued for `pass`, not for the mask that remains;
 - `mask` may only *add*: the model's validated spans join stage 1's
   findings, and `mask.apply` decides the text and the drop threshold from
   the merged set; a `mask` with no usable span is a contradiction and
@@ -20,7 +22,7 @@ from dataclasses import dataclass, replace
 from agentgate.api.schemas import InspectVerdict, Span
 from agentgate.inspect.classify import InspectOutcome
 from agentgate.inspect.detectors import Action, Finding
-from agentgate.inspect.mask import Stage1Outcome, apply
+from agentgate.inspect.mask import SEMANTIC_RULE, Stage1Outcome, apply
 from agentgate.inspect.segments import Segments
 from agentgate.inspect.spans import validate
 from agentgate.profiles.schema import ModelBudget
@@ -46,16 +48,32 @@ def reconcile(
 ) -> Reconciled:
     kept = _without_released_candidates(findings, answer.unredact)
     if stage1.verdict is InspectVerdict.drop and answer.verdict is InspectVerdict.pass_:
-        return _drop(stage1, f"stage 1 drop threshold stands despite model disagreement ({answer.reason}): {stage1.reason}")
+        return _drop(stage1, (
+            f"stage 1 drop threshold stands despite model disagreement "
+            f"({answer.reason}): {stage1.reason}"
+        ))
     if answer.verdict is InspectVerdict.drop:
-        return Reconciled(InspectVerdict.drop, None, answer.reason, stage1.rule_id, (), 0, 0)
+        return Reconciled(InspectVerdict.drop, None, answer.reason, stage1.rule_id or SEMANTIC_RULE, (), 0, 0)
     if answer.verdict is InspectVerdict.pass_:
-        return _from_findings(output, [f for f in kept if f.action is not Action.mask], answer.reason, rejected=0)
+        return _lifted(output, kept, answer.reason)
     validated = validate(answer.spans, len(output.split("\n")), segments, budget)
     if not validated.findings:
-        outcome = _from_findings(output, kept, stage1.reason, rejected=validated.rejected)
-        return replace(outcome, error=EMPTY_SPANS)
+        return Reconciled(
+            stage1.verdict, stage1.replacement, stage1.reason, stage1.rule_id, stage1.spans, stage1.redacted,
+            validated.rejected, error=EMPTY_SPANS,
+        )
     return _from_findings(output, kept + list(validated.findings), answer.reason, rejected=validated.rejected)
+
+
+def _lifted(output: str, kept: list[Finding], model_reason: str) -> Reconciled:
+    """What survives a `pass`: the `clean` and `redact` findings, described
+    the way stage 1 described them. Only when nothing survives does the
+    model's sentence become the reason -- it is then the reason the result
+    passed."""
+    outcome = _from_findings(output, [f for f in kept if f.action is not Action.mask], "", rejected=0)
+    if outcome.verdict is InspectVerdict.pass_:
+        return replace(outcome, reason=model_reason)
+    return outcome
 
 
 def _without_released_candidates(findings: list[Finding], unredact: tuple[int, ...]) -> list[Finding]:

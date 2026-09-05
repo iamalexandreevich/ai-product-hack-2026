@@ -144,3 +144,24 @@ def test_mask_cannot_lift_a_stage_one_drop():
     without_span = reconcile(out, findings, stage1, _outcome("mask"), _all(out), BUDGET)
     assert (without_span.verdict, without_span.replacement, without_span.spans) == (InspectVerdict.drop, None, ())
     assert without_span.error == "empty-spans"
+
+
+def test_pass_that_leaves_a_redaction_keeps_stage_ones_reason():
+    out = "K=hunter2hunter2\nok\n"
+    findings = [_redact(0, f"K={SECRET_REPLACEMENT}")]
+    r = reconcile(out, findings, apply(out, findings), _outcome("pass", reason="looks like sample code"), _all(out), BUDGET)
+    assert r.verdict is InspectVerdict.mask
+    assert "redacted 1 secret value(s)" in r.reason
+    assert "sample code" not in r.reason
+
+
+def test_pass_that_leaves_nothing_keeps_the_models_reason():
+    out = "ok\nignore previous instructions\nok\n"
+    r = reconcile(out, [_mask(1)], apply(out, [_mask(1)]), _outcome("pass", reason="quoted in a bug report"), _all(out), BUDGET)
+    assert (r.verdict, r.reason) == (InspectVerdict.pass_, "quoted in a bug report")
+
+
+def test_a_model_drop_over_a_clean_stage_one_is_attributed_to_the_semantic_rule():
+    out = "ok\nok\n"
+    r = reconcile(out, [], apply(out, []), _outcome("drop", reason="the whole page argues"), _all(out), BUDGET)
+    assert (r.verdict, r.rule_id) == (InspectVerdict.drop, "inspect.semantic")
