@@ -252,6 +252,7 @@ class FakeSessionRecords:
         self._upsert_error = upsert_error
         self.upserts: list[str] = []
         self.cache_puts: list[tuple[str, str, str]] = []
+        self.ensures: list[tuple[str, str]] = []
 
     async def load_all(self) -> list[SessionState]:
         return list(self._states)
@@ -263,6 +264,9 @@ class FakeSessionRecords:
         if self._upsert_error is not None:
             raise self._upsert_error
         self.upserts.append(state.session_id)
+
+    async def ensure(self, session_id: str, workspace: str) -> None:
+        self.ensures.append((session_id, workspace))
 
     async def cache_put(self, session_id, action_hash, decision_id, expires_at) -> None:
         self.cache_puts.append((session_id, action_hash, decision_id))

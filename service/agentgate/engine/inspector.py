@@ -55,25 +55,29 @@ class Inspector:
         timings = Timings()
         inspection_id = str(ULID())
         profile_id = request.profile_id or self._default_profile
+        # Resolved up front, independent of profile lookup: every `Inspection`
+        # this method returns -- refused or not -- carries the workspace its
+        # session row (if any) needs, and detect_workspace needs only `cwd`.
+        workspace = detect_workspace(request.args.cwd)
         try:
             profile = self._profiles.get(profile_id)
             if profile is None:
                 return self._refuse(
-                    inspection_id, request, timings, profile_id, "", "api.unknown-profile",
+                    inspection_id, request, timings, profile_id, "", workspace, "api.unknown-profile",
                     f"unknown profile '{profile_id}'",
                 )
-            policy = Policy.bind(profile, detect_workspace(request.args.cwd))
+            policy = Policy.bind(profile, workspace)
             key = inspect_cache_key(policy.profile_hash, request.provenance.kind, _digest(request.output))
         except Exception:  # noqa: BLE001 - a bug resolving the policy must read as drop, never as pass
             log.exception("inspect prelude raised")
             return self._refuse(
-                inspection_id, request, timings, profile_id, "", "api.internal-error", "internal error",
+                inspection_id, request, timings, profile_id, "", workspace, "api.internal-error", "internal error",
                 error="unexpected",
             )
 
         hit = await self._cached(key)
         if hit is not None:
-            return self._from_cache(hit, inspection_id, request, timings)
+            return self._from_cache(hit, inspection_id, request, timings, workspace)
 
         try:
             with timings.stage(1):
@@ -82,7 +86,7 @@ class Inspector:
         except Exception:  # noqa: BLE001 - a detector bug must read as drop, never as pass
             log.exception("inspect stage 1 raised")
             return self._refuse(
-                inspection_id, request, timings, profile_id, policy.profile_hash,
+                inspection_id, request, timings, profile_id, policy.profile_hash, workspace,
                 "api.internal-error", "internal error", error="unexpected",
             )
 
@@ -103,13 +107,13 @@ class Inspector:
             id=inspection_id, ts=datetime.now(timezone.utc), request=request, verdict=verdict,
             latency=timings.finish(), profile_id=profile_id, profile_hash=policy.profile_hash,
             replacement=replacement, reason=reason, stage=stage, rule_id=rule_id, model=model,
-            error=cls_error, findings=tuple(f.rule_id for f in findings),
+            error=cls_error, findings=tuple(f.rule_id for f in findings), workspace=workspace,
         )
         await self._remember(key, inspection)
         return inspection
 
     def _from_cache(
-        self, hit: Inspection, inspection_id: str, request: InspectRequest, timings: Timings,
+        self, hit: Inspection, inspection_id: str, request: InspectRequest, timings: Timings, workspace: str,
     ) -> Inspection:
         """Rebuild a cache hit as its own answer, at stage 0 (spec 5.5).
 
@@ -126,7 +130,7 @@ class Inspector:
             id=inspection_id, ts=datetime.now(timezone.utc), request=request, verdict=hit.verdict,
             latency=timings.finish(), profile_id=hit.profile_id, profile_hash=hit.profile_hash,
             replacement=hit.replacement, reason=hit.reason, suggest=hit.suggest, stage=0,
-            rule_id=hit.rule_id, model=hit.model, cached=True, findings=hit.findings,
+            rule_id=hit.rule_id, model=hit.model, cached=True, findings=hit.findings, workspace=workspace,
         )
 
     def _should_classify(self, policy: Policy, outcome: Stage1Outcome, findings: list[Finding]) -> bool:
@@ -209,12 +213,12 @@ class Inspector:
 
     def _refuse(
         self, inspection_id: str, request: InspectRequest, timings: Timings, profile_id: str,
-        profile_hash: str, rule_id: str, reason: str, error: str | None = None,
+        profile_hash: str, workspace: str, rule_id: str, reason: str, error: str | None = None,
     ) -> Inspection:
         return Inspection(
             id=inspection_id, ts=datetime.now(timezone.utc), request=request, verdict=InspectVerdict.drop,
             latency=timings.finish(), profile_id=profile_id, profile_hash=profile_hash,
-            stage=0, rule_id=rule_id, reason=reason, error=error,
+            stage=0, rule_id=rule_id, reason=reason, error=error, workspace=workspace,
         )
 
 

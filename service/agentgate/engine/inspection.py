@@ -11,7 +11,6 @@ from datetime import datetime
 
 from agentgate.api.schemas import InspectRequest, InspectResponse, InspectVerdict
 from agentgate.domain.dialogue import Dialogue
-from agentgate.domain.session import SessionState
 from agentgate.engine.decision import DecisionRecord
 from agentgate.engine.timings import Latency
 
@@ -36,9 +35,19 @@ class Inspection:
     cached: bool = False
     findings: tuple[str, ...] = ()
     idempotency_key: str | None = None
-    # Always None: inspect never touches session state or the allow cache,
-    # but the writer's `Stored` protocol reads this field on every outcome.
-    state: SessionState | None = None
+    # The workspace `detect_workspace(request.args.cwd)` resolved, kept so
+    # `session_ref` can hand the writer a row to ensure without resolving it
+    # a second time or importing the profile loader into `store`.
+    workspace: str = ""
+
+    def session_ref(self) -> tuple[str, str] | None:
+        """`(session_id, workspace)` the writer must make sure has a session
+        row, without inventing counters for it -- inspect never touches
+        session state or the allow cache, but `decisions.session_id` is
+        still a foreign key to `sessions.id`."""
+        if self.request.session_id is None:
+            return None
+        return self.request.session_id, self.workspace
 
     def to_response(self) -> InspectResponse:
         return self.to_record().to_inspect_response()

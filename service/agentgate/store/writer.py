@@ -22,23 +22,9 @@ from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 from typing import Protocol
 
-from agentgate.domain.session import SessionState
-from agentgate.engine.decision import DecisionRecord
+from agentgate.store.protocols import Stored
 
 log = logging.getLogger(__name__)
-
-
-class Stored(Protocol):
-    """What the writer needs from an outcome, whether it is a `Decision` or
-    an `Inspection`: a row to store, and where -- if anywhere -- to cache it.
-    """
-
-    id: str
-    state: SessionState | None
-    idempotency_key: str | None
-
-    def to_record(self) -> DecisionRecord: ...
-    def allow_cache_entry(self) -> tuple[str, str] | None: ...
 
 
 class DecisionWriter(Protocol):
@@ -60,8 +46,18 @@ class PostgresDecisionWriter:
         self._cache_ttl_seconds = cache_ttl_seconds
 
     async def write(self, stored: Stored) -> None:
-        if stored.state is not None:
-            await self._sessions.upsert(stored.state)
+        state = getattr(stored, "state", None)
+        if state is not None:
+            await self._sessions.upsert(state)
+        else:
+            session_ref = getattr(stored, "session_ref", None)
+            # `Decision.state`, above, already guarantees its session row
+            # exists; `session_ref` is the other half of `Stored` -- an
+            # `Inspection` tied to a session but owning no counters -- and
+            # only ensures the bare row the decision row's FK requires.
+            ref = session_ref() if session_ref is not None else None
+            if ref is not None:
+                await self._sessions.ensure(*ref)
         inserted = await self._decisions.insert(stored)
         if inserted is False:
             # Only an explicit False means "skipped" -- a fake repo whose

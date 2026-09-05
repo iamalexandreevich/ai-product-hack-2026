@@ -16,7 +16,7 @@ from agentgate.domain.session import RECENT_MAXLEN, SessionState
 from agentgate.engine.decision import DecisionRecord
 from agentgate.store.mapper import record_from_row
 from agentgate.store.models import AllowCacheRow, DecisionRow, SessionRow
-from agentgate.store.writer import Stored
+from agentgate.store.protocols import Stored
 
 
 class DecisionRepo:
@@ -123,6 +123,25 @@ class SessionRepo:
         stmt = pg_insert(SessionRow).values(**values)
         update = {k: v for k, v in values.items() if k not in ("id", "created_at")}
         stmt = stmt.on_conflict_do_update(index_elements=[SessionRow.id], set_=update)
+        async with self._sf() as s:
+            await s.execute(stmt)
+            await s.commit()
+
+    async def ensure(self, session_id: str, workspace: str) -> None:
+        """Make sure a bare session row exists for `session_id`, without
+        touching the counters or workspace of a row that already exists.
+
+        Used by the writer for an `Inspection`: it needs
+        `decisions.session_id`'s foreign key satisfied, but it never decided
+        anything itself, so it must not invent counters for -- or overwrite
+        the workspace of -- a session `upsert` (above) already owns.
+        """
+        now = datetime.now(timezone.utc)
+        stmt = pg_insert(SessionRow).values(
+            id=session_id, harness="", profile_id="", workspace=workspace,
+            created_at=now, last_seen_at=now, deny_consecutive=0, deny_total=0,
+            decisions_total=0, recent_decisions=[],
+        ).on_conflict_do_nothing(index_elements=[SessionRow.id])
         async with self._sf() as s:
             await s.execute(stmt)
             await s.commit()
