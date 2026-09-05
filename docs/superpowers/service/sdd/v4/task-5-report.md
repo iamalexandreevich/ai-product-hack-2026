@@ -1,0 +1,13 @@
+STATUS: DONE_WITH_CONCERNS
+
+**Коммит:** `10f3a97` — `feat(inspect): stage 2 answers with word verdicts, spans and unredact; prompt renders [SEGMENTS] and [CANDIDATES]` (база `e2c9627` проверена до начала работы). Отчёт не коммичен.
+
+**Доказательство падения (шаг 2).** `uv run pytest tests/inspect/test_classify.py -q` → `21 failed, 3 passed`, ведущая ошибка `TypeError: InspectCase.build() takes 6 positional arguments but 7 were given`, плюс `ValidationError` на `verdict`/`spans`/`unredact`. После реализации — `24 passed`.
+
+**Что сделано.** Ровно по брифу, без отступлений: `ModelSpan` поднят выше `InspectOutput`; `InspectOutput` — `verdict: pass|mask|drop`, `spans`, `unredact`, `reason`, `extra="forbid"`; строгая схема с `required` из четырёх полей и `max_tokens=1500`; `_ROLE` — текст брифа дословно; `InspectCase.segments` со значением по умолчанию `Segments()` и свойством `candidates`; промпт рендерит `[SEGMENTS]` (заголовок `#N lines A-B`, каждая строка через `j()`), строку об опущенном, `[CANDIDATES]` только при наличии кандидатов и голый `[FLAGS]`, когда ступень 1 ничего не нашла; `[OUTPUT]` удалён; `_outcome_from` возвращает вердикт модели со спанами и `unredact`; докстринги модуля и класса заменены по брифу. `engine/inspector.py` не тронут — его вызов `InspectCase.build` с пятью позиционными аргументами продолжает работать за счёт значения по умолчанию.
+
+**Прогоны.** `tests/inspect tests/engine` — `170 passed`. Полный прогон без БД — `985 passed, 68 skipped`. `scripts/export_contracts.py` + `export_openapi.py` + `git diff --exit-code ../contracts` — контракты не изменились.
+
+**Concern 1: полный прогон с `AGENTGATE_TEST_DB_URL=…/agentgate_test_v4` нестабилен, причина внешняя.** Шесть прогонов дали разные наборы падений (16, 2, 11, 10, 1, 3 failed), всегда только среди `requires_db`-тестов, с ошибками вида `relation "sessions" does not exist` и потерянными строками. Любой из упавших тестов проходит поодиночке. Проверено, что это не мой код: я временно вернул оба файла к версии `e2c9627` (`git checkout e2c9627 -- <два пути>`), прогнал `tests/store` трижды — `7 failed`, `4 failed`, `6 failed`, — и восстановил свои версии из копии. Причина: фикстура `db_engine` в `tests/conftest.py` делает `drop_all`/`create_all` на каждый тест, а базу `agentgate_test_v4` одновременно используют соседние worktree `v4-t1/t2/t4/t7/t9/t10`. Требование брифа «полный прогон зелёный» на общей базе недостижимо, пока соседние задачи идут параллельно; изменённый код к БД не обращается.
+
+**Concern 2 (мелкий).** Параметр `stage1` в `_outcome_from` после правки не используется — так в коде брифа; сигнатуру оставил как задано, чтобы не расходиться с постановкой. Кандидат на удаление при финальной сборке v4.
