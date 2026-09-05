@@ -35,7 +35,7 @@ from agentgate.normalize.model import NormalizedAction
 from agentgate.profiles.loader import detect_workspace
 from agentgate.profiles.schema import Profile
 from agentgate.rules.base import RuleChain
-from agentgate.session.cache_key import allow_cache_key
+from agentgate.session.cache_key import NO_RULES_DIGEST, allow_cache_key
 from agentgate.session.escalation import should_escalate
 
 log = logging.getLogger(__name__)
@@ -90,8 +90,9 @@ class Gate:
             )
 
         action = normalize(request)
+        rules_digest = resolved.policy.client_rules.digest() if resolved.policy.client_rules is not None else NO_RULES_DIGEST
         cache_key = allow_cache_key(
-            resolved.policy.profile_hash, action.action_hash(), request.user_request, history_digest
+            resolved.policy.profile_hash, action.action_hash(), request.user_request, history_digest, rules_digest
         )
         if await self._cache_hit(resolved, cache_key):
             return self._finish(
