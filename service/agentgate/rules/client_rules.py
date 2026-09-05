@@ -25,6 +25,15 @@ the "singles" are the same single string. Case is not folded -- MCP tool
 names are case-sensitive -- and the call's `arguments` never take part in
 matching: they are arbitrary JSON, and globbing their serialization would
 be deciding on untrusted text.
+
+A `network` action's canonical units are its domains, each one on its
+own, also returned as both units and singles: `deny`/`ask` fire when any
+one domain matches, `allow` requires every domain to match -- mirroring
+the MCP branch. Domains in a `NormalizedAction` are already lowercase and
+`matches_command` is case-sensitive, so a pattern written in another case
+never matches. A pattern containing `/` is read by `is_path_pattern` as a
+path pattern and matched against paths instead; a network action has
+none, so such a pattern can never name a host.
 """
 
 from typing import Literal
@@ -48,6 +57,8 @@ def canonical_units(action: NormalizedAction) -> tuple[list[str], list[str]]:
     if action.tool is Tool.mcp_call:
         units = [action.mcp_name] if action.mcp_name is not None else []
         return (units, units)
+    if action.tool is Tool.network:
+        return (list(action.domains), list(action.domains))
     by_pipeline: dict[int, list[str]] = {}
     for command in action.commands:
         by_pipeline.setdefault(command.pipeline_id, []).append(" ".join(command.argv))
@@ -84,14 +95,17 @@ class ClientRulesRule:
 
     def _allow(self, action: NormalizedAction, rules: ClientRules) -> Verdict | None:
         if action.tool is Tool.mcp_call:
-            return self._allow_mcp(action, rules)
+            return self._allow_units(action, rules)
+        if action.tool is Tool.network:
+            return self._allow_units(action, rules)
         if action.tool is not Tool.shell:
             return self._allow_paths(action, rules)
         return self._allow_shell(action, rules)
 
-    def _allow_mcp(self, action: NormalizedAction, rules: ClientRules) -> Verdict | None:
-        # No eval, no substitution, no redirect to refuse: an MCP call
-        # is a name and a JSON body, and only the name is matched.
+    def _allow_units(self, action: NormalizedAction, rules: ClientRules) -> Verdict | None:
+        # No eval, no substitution, no redirect to refuse: an MCP call is a
+        # name and a JSON body, a network action a list of domains -- only
+        # the units themselves are matched.
         units, _ = canonical_units(action)
         if units and all(rules.matches_command("allow", u) for u in units):
             return Verdict.allow(self.id)

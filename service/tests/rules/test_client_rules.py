@@ -7,7 +7,7 @@ from agentgate.normalize import normalize
 from agentgate.profiles.schema import Profile
 from agentgate.rules.chain import STAGE1
 from agentgate.rules.client_rules import ClientRulesRule, canonical_units
-from tests.factories import WORKSPACE, mcp_action, rule_set, shell_action, stage1_policy
+from tests.factories import WORKSPACE, mcp_action, network_action, rule_set, shell_action, stage1_policy, trusted_policy
 
 
 def policy_with(**rules) -> Policy:
@@ -202,3 +202,59 @@ def test_a_server_name_with_a_slash_falls_into_the_path_patterns_and_never_match
 
 def test_an_mcp_call_with_no_matching_rule_is_left_to_stage_two():
     assert STAGE1.evaluate(mcp_action("github", "create_pr"), stage1_policy()) is None
+
+
+def trusted_policy_with(**rules) -> Policy:
+    base = trusted_policy()
+    empty = dict(allow=[], ask=[], deny=[])
+    empty.update(rules)
+    return Policy.bind(base.profile, WORKSPACE, ClientRules.of(rule_set(**empty)))
+
+
+@pytest.mark.parametrize(
+    ("domains", "rules", "expected", "rule_id"),
+    [
+        (("github.com",), dict(deny=["github.com"]), DecisionKind.deny, "client.deny"),
+        (("api.github.com",), dict(deny=["*.github.com"]), DecisionKind.deny, "client.deny"),
+        (("github.com",), dict(deny=["*"]), DecisionKind.deny, "client.deny"),
+        (("github.com",), dict(allow=["github.com"]), DecisionKind.allow, "client.allow"),
+        (("github.com", "pypi.org"), dict(allow=["github.com"]), None, None),
+        (("github.com", "pypi.org"), dict(allow=["*"]), DecisionKind.allow, "client.allow"),
+        (("github.com",), dict(deny=["GitHub.com"]), None, None),
+        (("github.com",), dict(deny=["github.com/org"]), None, None),
+    ],
+    ids=[
+        "deny_exact_domain", "deny_wildcard_subdomain", "deny_wildcard_any",
+        "allow_exact_domain", "allow_requires_every_domain", "allow_wildcard_any",
+        "deny_case_sensitive_no_match", "deny_pattern_with_slash_is_a_path_pattern",
+    ],
+)
+def test_client_rules_on_network_actions(domains, rules, expected, rule_id):
+    verdict = STAGE1.evaluate(network_action(domains=domains, method="GET"), policy_with(**rules))
+    if expected is None:
+        assert verdict is None or not verdict.rule_id.startswith("client.")
+    else:
+        assert verdict is not None
+        assert verdict.decision is expected
+        assert verdict.rule_id == rule_id
+
+
+def test_client_ask_on_a_network_action_is_a_floor():
+    outcome = STAGE1.run(network_action(domains=("github.com",), method="GET"), policy_with(ask=["*"]))
+    assert outcome.verdict is None
+    assert outcome.floor is not None and outcome.floor.rule_id == "client.ask" and outcome.floor.floor is True
+
+
+def test_client_ask_floor_survives_a_trusted_domain_allow():
+    outcome = STAGE1.run(
+        network_action(domains=("github.com",), method="GET"), trusted_policy_with(ask=["*"])
+    )
+    assert outcome.settled().rule_id == "client.ask"
+
+
+def test_client_deny_outranks_a_trusted_domain_allow():
+    outcome = STAGE1.run(
+        network_action(domains=("github.com",), method="GET"), trusted_policy_with(deny=["github.com"])
+    )
+    assert outcome.settled().decision is DecisionKind.deny
+    assert outcome.settled().rule_id == "client.deny"
