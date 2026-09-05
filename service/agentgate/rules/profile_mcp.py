@@ -1,9 +1,14 @@
 """MCP calls against the operator's own lists.
 
 `server.tool` (`github.get_issue`) is matched with `fnmatch.fnmatchcase`
-against `mcp.deny`, `mcp.ask` and `mcp.allow`, in that order: when several
-lists match, the strictest wins, and it is one check in one rule rather
-than three positions in the chain.
+against `mcp.deny`, `mcp.ask` and `mcp.allow`. Two instances of this rule
+sit at two different points of `STAGE1`, mirroring `ClientRulesRule`:
+`ProfileMcpRule("refuse")` checks `deny` then `ask`, right after the
+profile's other denials, so an operator's refusal cannot be softened by
+anything below it. `ProfileMcpRule("allow")` checks only `allow`, right
+before the server allowlist -- below the user's own `ask` floor, so an
+operator's `allow` on an MCP tool is settled as `ask` at stage 1 when the
+user asked to confirm it, exactly like every other allow in the chain.
 
 There is deliberately no hard-deny here. A name proves nothing:
 `filesystem.write_file` may be a sandbox, and `notes.append` may be a
@@ -14,28 +19,31 @@ The call's `arguments` are never read.
 """
 
 import fnmatch
+from typing import Literal
 
-from agentgate.api.schemas import Tool
 from agentgate.domain.policy import Policy
 from agentgate.domain.verdict import Verdict
 from agentgate.normalize.model import NormalizedAction
 
-
-def mcp_name(action: NormalizedAction) -> str | None:
-    """`server.tool` of an MCP call, or None for anything else."""
-    if action.tool is not Tool.mcp_call or action.mcp is None:
-        return None
-    return f"{action.mcp.server}.{action.mcp.tool}"
+Mode = Literal["refuse", "allow"]
 
 
 class ProfileMcpRule:
-    id = "profile.mcp"
     hard = False
 
+    def __init__(self, mode: Mode) -> None:
+        self.mode = mode
+        self.id = f"profile.mcp-{mode}"
+
     def evaluate(self, action: NormalizedAction, policy: Policy) -> Verdict | None:
-        name = mcp_name(action)
+        name = action.mcp_name
         if name is None:
             return None
+        if self.mode == "refuse":
+            return self._refuse(name, policy)
+        return self._allow(name, policy)
+
+    def _refuse(self, name: str, policy: Policy) -> Verdict | None:
         mcp = policy.mcp
         if _matches(name, mcp.deny):
             return Verdict.deny(
@@ -44,7 +52,10 @@ class ProfileMcpRule:
             )
         if _matches(name, mcp.ask):
             return Verdict.ask("profile.mcp-ask", f"MCP tool {name} needs confirmation by the profile")
-        if _matches(name, mcp.allow):
+        return None
+
+    def _allow(self, name: str, policy: Policy) -> Verdict | None:
+        if _matches(name, policy.mcp.allow):
             return Verdict.allow("profile.mcp-allow")
         return None
 

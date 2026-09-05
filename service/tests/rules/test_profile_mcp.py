@@ -4,12 +4,21 @@ from agentgate.api.schemas import DecisionKind
 from agentgate.rules.profile_mcp import ProfileMcpRule
 from tests.factories import mcp_action, mcp_policy, shell_action, stage1_policy
 
-RULE = ProfileMcpRule()
+REFUSE = ProfileMcpRule("refuse")
+ALLOW = ProfileMcpRule("allow")
 POLICY = mcp_policy(
     allow=["github.get_*", "github.list_*"],
     ask=["github.create_*"],
     deny=["*.delete_*", "shell.*"],
 )
+
+
+def _evaluate(server: str, tool: str, policy=POLICY):
+    """What the chain settles on: refuse (deny/ask) first, then allow --
+    mirroring the two instances' positions in STAGE1.
+    """
+    action = mcp_action(server, tool)
+    return REFUSE.evaluate(action, policy) or ALLOW.evaluate(action, policy)
 
 
 @pytest.mark.parametrize(
@@ -25,7 +34,7 @@ POLICY = mcp_policy(
     ids=["allow_get", "allow_list", "ask_create", "deny_delete", "deny_whole_server", "no_match"],
 )
 def test_the_operators_mcp_lists(server, tool, expected, rule_id):
-    verdict = RULE.evaluate(mcp_action(server, tool), POLICY)
+    verdict = _evaluate(server, tool)
     if expected is None:
         assert verdict is None
     else:
@@ -34,12 +43,12 @@ def test_the_operators_mcp_lists(server, tool, expected, rule_id):
 
 def test_deny_wins_over_ask_and_allow_when_several_lists_match():
     policy = mcp_policy(allow=["github.*"], ask=["github.*"], deny=["github.*"])
-    assert RULE.evaluate(mcp_action("github", "get_issue"), policy).rule_id == "profile.mcp-deny"
+    assert _evaluate("github", "get_issue", policy).rule_id == "profile.mcp-deny"
 
 
 def test_ask_wins_over_allow_when_both_match():
     policy = mcp_policy(allow=["github.*"], ask=["github.get_*"])
-    assert RULE.evaluate(mcp_action("github", "get_issue"), policy).rule_id == "profile.mcp-ask"
+    assert _evaluate("github", "get_issue", policy).rule_id == "profile.mcp-ask"
 
 
 @pytest.mark.parametrize(
@@ -56,12 +65,23 @@ def test_ask_wins_over_allow_when_both_match():
 def test_an_obfuscated_name_is_not_matched_and_falls_through_to_stage_two(server, tool):
     # A near-miss must not silently become allow, and must not silently become
     # deny either: the rule says nothing and stage 2 sees the call.
-    assert RULE.evaluate(mcp_action(server, tool), POLICY) is None
+    assert _evaluate(server, tool) is None
 
 
 def test_an_empty_mcp_section_says_nothing():
-    assert RULE.evaluate(mcp_action("github", "delete_repo"), stage1_policy()) is None
+    assert _evaluate("github", "delete_repo", stage1_policy()) is None
 
 
 def test_a_shell_action_is_none_of_this_rules_business():
-    assert RULE.evaluate(shell_action("rm -rf ./dist"), POLICY) is None
+    action = shell_action("rm -rf ./dist")
+    assert REFUSE.evaluate(action, POLICY) is None
+    assert ALLOW.evaluate(action, POLICY) is None
+
+
+def test_an_operators_allow_settles_as_ask_when_the_user_asked_to_confirm():
+    # The blocking fix: `refuse` says nothing here (no deny/ask match), so
+    # `allow` fires -- but in STAGE1 that allow sits below the user's
+    # `client.ask` floor and is turned into `ask` by the chain/gate, not
+    # by this rule. This test documents the rule's own half of the story.
+    assert REFUSE.evaluate(mcp_action("github", "get_issue"), POLICY) is None
+    assert ALLOW.evaluate(mcp_action("github", "get_issue"), POLICY).rule_id == "profile.mcp-allow"
