@@ -522,3 +522,27 @@ async def test_list_filters_by_kind(session_factory):
     await repo.insert(rec())
     assert len(await repo.list(session_id=None, model=None, limit=10, before=None, kind="decide")) == 1
     assert await repo.list(session_id=None, model=None, limit=10, before=None, kind="inspect") == []
+
+
+# --- v4: spans, redaction count, redacted raw --------------------------------
+
+
+async def test_inspect_spans_and_redaction_roundtrip_through_postgres(session_factory):
+    from agentgate.api.schemas import Span
+
+    repo = DecisionRepo(session_factory)
+    await SessionRepo(session_factory).ensure("s1", WORKSPACE)
+    stored = inspection(
+        id=str(ULID()), verdict=InspectVerdict.mask, replacement="K=[gate: secret redacted]\n",
+        spans=(Span(line_start=0, line_end=0, kind="secret", source="detector"), Span(line_start=2, line_end=3, kind="instruction", source="model", confidence=0.7)),
+        redacted=1, spans_rejected=1, redacted_output="K=[gate: secret redacted]\n",
+    )
+    await repo.insert(stored)
+    rows = await repo.list(session_id="s1", model=None, limit=10, before=None, kind="inspect")
+    record = rows[0]
+    assert [s.model_dump() for s in record.spans] == [
+        {"line_start": 0, "line_end": 0, "kind": "secret", "source": "detector"},
+        {"line_start": 2, "line_end": 3, "kind": "instruction", "source": "model", "confidence": 0.7},
+    ]
+    assert (record.redacted, record.spans_rejected) == (1, 1)
+    assert record.raw == "K=[gate: secret redacted]\n"
