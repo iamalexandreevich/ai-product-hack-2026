@@ -27,7 +27,7 @@ from agentgate.domain.verdict import Verdict
 from agentgate.normalize.model import NormalizedAction, SimpleCommand
 from agentgate.normalize.paths import is_within, matches_any
 from agentgate.shell.commands import Role, commands_with_role, spec_for
-from agentgate.shell.paths import PathRole, command_paths
+from agentgate.shell.paths import PathRole, command_paths, writes_a_file
 
 READONLY = commands_with_role(Role.READONLY)
 
@@ -74,7 +74,7 @@ def _paths_are_safe(action: NormalizedAction, policy: Policy) -> bool:
 
 def _is_readonly(cmd: SimpleCommand) -> bool:
     exe = cmd.argv[0]
-    if any(r.op.endswith((">", ">>")) for r in cmd.redirects):
+    if writes_a_file(cmd):
         return False
     if exe in READONLY:
         return True

@@ -21,8 +21,8 @@ from agentgate.api.schemas import Tool
 from agentgate.domain.client_rules import ClientRules
 from agentgate.domain.policy import Policy
 from agentgate.domain.verdict import Verdict
-from agentgate.normalize.model import NormalizedAction, SimpleCommand
-from agentgate.shell.paths import PathRole, command_paths, redirect_targets
+from agentgate.normalize.model import NormalizedAction
+from agentgate.shell.paths import PathRole, command_paths, redirect_targets, writes_a_file
 
 Mode = Literal["allow", "ask", "deny"]
 
@@ -50,6 +50,9 @@ class ClientRulesRule:
             return None
         if self.mode == "allow":
             return self._allow(action, rules)
+        return self._refuse_if_matched(action, rules)
+
+    def _refuse_if_matched(self, action: NormalizedAction, rules: ClientRules) -> Verdict | None:
         if self._any_match(action, rules):
             return self._refusal()
         return None
@@ -68,7 +71,7 @@ class ClientRulesRule:
             return None
         if not action.commands or action.flags.unparseable or action.flags.has_eval or action.flags.has_subst:
             return None
-        if any(_writes_a_file(c) for c in action.commands):
+        if any(writes_a_file(c) for c in action.commands):
             return None
         units, _ = canonical_units(action)
         if all(rules.matches_command("allow", u) for u in units):
@@ -89,7 +92,3 @@ def _paths(action: NormalizedAction) -> list[str]:
             paths += redirect_targets(command)
         return paths
     return list(action.paths)
-
-
-def _writes_a_file(command: SimpleCommand) -> bool:
-    return any(r.op.endswith((">", ">>")) for r in command.redirects)

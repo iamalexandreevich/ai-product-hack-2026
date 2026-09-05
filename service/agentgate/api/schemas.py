@@ -131,6 +131,65 @@ class Turn(BaseModel):
     )
 
 
+USER_REQUEST_DESCRIPTION = (
+    f"The user's last message, used as intent for the classifier. Not "
+    f"rejected when long: the server truncates it to "
+    f"{USER_REQUEST_MAX_CHARS} characters **keeping the tail**."
+)
+METADATA_DESCRIPTION = (
+    f"Arbitrary JSON, stored with the decision and echoed back by the "
+    f"decision feed. It never reaches the decision logic or the stage-2 "
+    f"prompt. At most {METADATA_MAX_BYTES} bytes when serialized as "
+    f"UTF-8 JSON."
+)
+PROTOCOL_DESCRIPTION = (
+    f"Protocol version the client speaks. This service speaks `{PROTOCOL}`; any "
+    f"other value is refused fail-closed as `ask` with HTTP 200."
+)
+HISTORY_DESCRIPTION = (
+    f"The dialogue that preceded this action, oldest turn first; the last "
+    f"turn is the one immediately before the proposed action. At most "
+    f"{HISTORY_MAX_TURNS} turns and {HISTORY_MAX_BYTES} bytes of UTF-8 text "
+    f"summed over `content`, `tool` and `call_id`, "
+    f"over which the request is refused fail-closed as `ask` with HTTP 200. "
+    f"Rendered into the stage-2 prompt after per-role truncation; never seen "
+    f"by stage 1. Empty for a v1 client, which changes nothing."
+)
+
+
+def _truncate_user_request(v: str) -> str:
+    if len(v) > USER_REQUEST_MAX_CHARS:
+        return v[-USER_REQUEST_MAX_CHARS:]
+    return v
+
+
+def _check_metadata_size(v: dict[str, Any]) -> dict[str, Any]:
+    size = len(json.dumps(v, ensure_ascii=False).encode("utf-8"))
+    if size > METADATA_MAX_BYTES:
+        raise ValueError(f"metadata exceeds {METADATA_MAX_BYTES} bytes")
+    return v
+
+
+def _check_protocol(v: int) -> int:
+    if v != PROTOCOL:
+        raise UnsupportedProtocol(f"unsupported protocol {v}; this service speaks protocol {PROTOCOL}")
+    return v
+
+
+def _check_history_size(v: list[Turn]) -> list[Turn]:
+    if len(v) > HISTORY_MAX_TURNS:
+        raise HistoryTooLarge(f"history exceeds {HISTORY_MAX_TURNS} turns")
+    size = sum(
+        len(turn.content.encode("utf-8", "surrogatepass"))
+        + len((turn.tool or "").encode("utf-8", "surrogatepass"))
+        + len((turn.call_id or "").encode("utf-8", "surrogatepass"))
+        for turn in v
+    )
+    if size > HISTORY_MAX_BYTES:
+        raise HistoryTooLarge(f"history exceeds {HISTORY_MAX_BYTES} bytes")
+    return v
+
+
 class McpArgs(BaseModel):
     server: str = Field(description="Name of the MCP server.")
     tool: str = Field(description="Name of the tool being called on that server.")
@@ -241,13 +300,7 @@ class DecideRequest(BaseModel):
         ),
     )
     args: ActionArgs = Field(description="Structured arguments of the action.")
-    user_request: str = Field(
-        description=(
-            f"The user's last message, used as intent for the classifier. Not "
-            f"rejected when long: the server truncates it to "
-            f"{USER_REQUEST_MAX_CHARS} characters **keeping the tail**."
-        )
-    )
+    user_request: str = Field(description=USER_REQUEST_DESCRIPTION)
     profile_id: str | None = Field(
         default=None,
         max_length=64,
@@ -264,34 +317,9 @@ class DecideRequest(BaseModel):
             "profile's `models.default`."
         ),
     )
-    metadata: dict[str, Any] = Field(
-        default_factory=dict,
-        description=(
-            f"Arbitrary JSON, stored with the decision and echoed back by the "
-            f"decision feed. It never reaches the decision logic or the stage-2 "
-            f"prompt. At most {METADATA_MAX_BYTES} bytes when serialized as "
-            f"UTF-8 JSON."
-        ),
-    )
-    protocol: int = Field(
-        default=PROTOCOL,
-        description=(
-            f"Protocol version the client speaks. This service speaks `{PROTOCOL}`; any "
-            f"other value is refused fail-closed as `ask` with HTTP 200."
-        ),
-    )
-    history: list[Turn] = Field(
-        default_factory=list,
-        description=(
-            f"The dialogue that preceded this action, oldest turn first; the last "
-            f"turn is the one immediately before the proposed action. At most "
-            f"{HISTORY_MAX_TURNS} turns and {HISTORY_MAX_BYTES} bytes of UTF-8 text "
-            f"summed over `content`, `tool` and `call_id`, "
-            f"over which the request is refused fail-closed as `ask` with HTTP 200. "
-            f"Rendered into the stage-2 prompt after per-role truncation; never seen "
-            f"by stage 1. Empty for a v1 client, which changes nothing."
-        ),
-    )
+    metadata: dict[str, Any] = Field(default_factory=dict, description=METADATA_DESCRIPTION)
+    protocol: int = Field(default=PROTOCOL, description=PROTOCOL_DESCRIPTION)
+    history: list[Turn] = Field(default_factory=list, description=HISTORY_DESCRIPTION)
     rules: RuleSet | None = Field(
         default=None,
         description=(
@@ -318,40 +346,23 @@ class DecideRequest(BaseModel):
 
     @field_validator("user_request")
     @classmethod
-    def _truncate_user_request(cls, v: str) -> str:
-        if len(v) > USER_REQUEST_MAX_CHARS:
-            return v[-USER_REQUEST_MAX_CHARS:]
-        return v
+    def _validate_user_request(cls, v: str) -> str:
+        return _truncate_user_request(v)
 
     @field_validator("metadata")
     @classmethod
-    def _metadata_size(cls, v: dict[str, Any]) -> dict[str, Any]:
-        size = len(json.dumps(v, ensure_ascii=False).encode("utf-8"))
-        if size > METADATA_MAX_BYTES:
-            raise ValueError(f"metadata exceeds {METADATA_MAX_BYTES} bytes")
-        return v
+    def _validate_metadata(cls, v: dict[str, Any]) -> dict[str, Any]:
+        return _check_metadata_size(v)
 
     @field_validator("protocol")
     @classmethod
-    def _supported_protocol(cls, v: int) -> int:
-        if v != PROTOCOL:
-            raise UnsupportedProtocol(f"unsupported protocol {v}; this service speaks protocol {PROTOCOL}")
-        return v
+    def _validate_protocol(cls, v: int) -> int:
+        return _check_protocol(v)
 
     @field_validator("history")
     @classmethod
-    def _history_size(cls, v: list[Turn]) -> list[Turn]:
-        if len(v) > HISTORY_MAX_TURNS:
-            raise HistoryTooLarge(f"history exceeds {HISTORY_MAX_TURNS} turns")
-        size = sum(
-            len(turn.content.encode("utf-8", "surrogatepass"))
-            + len((turn.tool or "").encode("utf-8", "surrogatepass"))
-            + len((turn.call_id or "").encode("utf-8", "surrogatepass"))
-            for turn in v
-        )
-        if size > HISTORY_MAX_BYTES:
-            raise HistoryTooLarge(f"history exceeds {HISTORY_MAX_BYTES} bytes")
-        return v
+    def _validate_history(cls, v: list[Turn]) -> list[Turn]:
+        return _check_history_size(v)
 
     @model_validator(mode="after")
     def _shell_requires_raw(self) -> "DecideRequest":
@@ -511,20 +522,32 @@ class InspectRequest(BaseModel):
     provenance: Provenance
     args: ActionArgs
     user_request: str = Field(
-        description=(
-            f"The user's last message; truncated to {USER_REQUEST_MAX_CHARS} characters "
-            f"keeping the tail. Empty falls back to the last human-authored turn of `history`."
-        )
+        description=USER_REQUEST_DESCRIPTION + " Empty falls back to the last human-authored turn of `history`."
     )
     profile_id: str | None = Field(default=None, max_length=64)
-    metadata: dict[str, Any] = Field(default_factory=dict)
-    protocol: int = Field(default=PROTOCOL)
-    history: list[Turn] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict, description=METADATA_DESCRIPTION)
+    protocol: int = Field(default=PROTOCOL, description=PROTOCOL_DESCRIPTION)
+    history: list[Turn] = Field(default_factory=list, description=HISTORY_DESCRIPTION)
 
-    _truncate_user_request = field_validator("user_request")(DecideRequest._truncate_user_request.__func__)
-    _metadata_size = field_validator("metadata")(DecideRequest._metadata_size.__func__)
-    _supported_protocol = field_validator("protocol")(DecideRequest._supported_protocol.__func__)
-    _history_size = field_validator("history")(DecideRequest._history_size.__func__)
+    @field_validator("user_request")
+    @classmethod
+    def _validate_user_request(cls, v: str) -> str:
+        return _truncate_user_request(v)
+
+    @field_validator("metadata")
+    @classmethod
+    def _validate_metadata(cls, v: dict[str, Any]) -> dict[str, Any]:
+        return _check_metadata_size(v)
+
+    @field_validator("protocol")
+    @classmethod
+    def _validate_protocol(cls, v: int) -> int:
+        return _check_protocol(v)
+
+    @field_validator("history")
+    @classmethod
+    def _validate_history(cls, v: list[Turn]) -> list[Turn]:
+        return _check_history_size(v)
 
     @field_validator("output")
     @classmethod
@@ -548,7 +571,10 @@ class InspectResponse(BaseModel):
     reason: str = Field(
         default="", description="Shown to the model on `drop`, recorded on `mask`, empty for `pass`."
     )
-    suggest: str = ""
+    suggest: str = Field(
+        default="",
+        description="A safe alternative to show the user. Empty string when there is nothing to suggest.",
+    )
     stage: int
     rule_id: str | None = None
     model: str | None = None

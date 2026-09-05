@@ -99,3 +99,13 @@ def redirect_targets(command: SimpleCommand) -> tuple[str, ...]:
     return tuple(
         r.target for r in command.redirects if r.op.endswith((">", ">>")) and not r.target.startswith("/dev/")
     )
+
+
+def writes_a_file(command: SimpleCommand) -> bool:
+    """True if this command has any `>`/`>>` redirect, `/dev/null` included.
+
+    Unlike `redirect_targets`, this counts a redirect to `/dev/null` as a
+    write: it is used to decide whether a command is safe to auto-allow,
+    where writing to `/dev/null` still makes the command not read-only.
+    """
+    return any(r.op.endswith((">", ">>")) for r in command.redirects)

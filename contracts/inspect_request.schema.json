@@ -371,7 +371,7 @@
       "$ref": "#/$defs/ActionArgs"
     },
     "user_request": {
-      "description": "The user's last message; truncated to 2048 characters keeping the tail. Empty falls back to the last human-authored turn of `history`.",
+      "description": "The user's last message, used as intent for the classifier. Not rejected when long: the server truncates it to 2048 characters **keeping the tail**. Empty falls back to the last human-authored turn of `history`.",
       "title": "User Request",
       "type": "string"
     },
@@ -390,15 +390,18 @@
     },
     "metadata": {
       "additionalProperties": true,
+      "description": "Arbitrary JSON, stored with the decision and echoed back by the decision feed. It never reaches the decision logic or the stage-2 prompt. At most 16384 bytes when serialized as UTF-8 JSON.",
       "title": "Metadata",
       "type": "object"
     },
     "protocol": {
       "default": 1,
+      "description": "Protocol version the client speaks. This service speaks `1`; any other value is refused fail-closed as `ask` with HTTP 200.",
       "title": "Protocol",
       "type": "integer"
     },
     "history": {
+      "description": "The dialogue that preceded this action, oldest turn first; the last turn is the one immediately before the proposed action. At most 200 turns and 131072 bytes of UTF-8 text summed over `content`, `tool` and `call_id`, over which the request is refused fail-closed as `ask` with HTTP 200. Rendered into the stage-2 prompt after per-role truncation; never seen by stage 1. Empty for a v1 client, which changes nothing.",
       "items": {
         "$ref": "#/$defs/Turn"
       },

@@ -21,7 +21,7 @@ def upgrade() -> None:
     op.add_column('decisions', sa.Column('rules_digest', sa.String(length=64), nullable=True))
     op.add_column('decisions', sa.Column('provenance', postgresql.JSONB(astext_type=sa.Text()), nullable=True))
     op.add_column('decisions', sa.Column('replacement', sa.Text(), nullable=True))
-    op.create_index('ix_decisions_kind_ts', 'decisions', ['kind', 'ts'])
+    op.create_index('ix_decisions_kind_id', 'decisions', ['kind', 'id'])
     op.create_index('ix_decisions_call_id', 'decisions', ['call_id'])
     # The server default above exists only to backfill this migration's own
     # ALTER TABLE against a populated table; a schema `create_all` produces
@@ -33,7 +33,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_index('ix_decisions_call_id', table_name='decisions')
-    op.drop_index('ix_decisions_kind_ts', table_name='decisions')
+    op.drop_index('ix_decisions_kind_id', table_name='decisions')
     op.drop_column('decisions', 'replacement')
     op.drop_column('decisions', 'provenance')
     op.drop_column('decisions', 'rules_digest')

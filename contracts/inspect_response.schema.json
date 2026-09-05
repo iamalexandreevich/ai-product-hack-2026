@@ -78,6 +78,7 @@
     },
     "suggest": {
       "default": "",
+      "description": "A safe alternative to show the user. Empty string when there is nothing to suggest.",
       "title": "Suggest",
       "type": "string"
     },

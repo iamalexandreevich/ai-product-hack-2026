@@ -80,7 +80,7 @@ class DecisionRow(Base):
             "ux_decisions_idempotency_key", "idempotency_key", unique=True,
             postgresql_where=text("idempotency_key IS NOT NULL"),
         ),
-        Index("ix_decisions_kind_ts", "kind", "ts"),
+        Index("ix_decisions_kind_id", "kind", "id"),
         Index("ix_decisions_call_id", "call_id"),
     )
 
