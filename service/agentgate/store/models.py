@@ -63,6 +63,12 @@ class DecisionRow(Base):
     history_omitted: Mapped[int] = mapped_column(Integer, default=0)
     history_digest: Mapped[str] = mapped_column(String(64), default="")
     request_digest: Mapped[str] = mapped_column(String(64), default="")
+    kind: Mapped[str] = mapped_column(String(8), default="decide")
+    call_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    rules_level: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    rules_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    provenance: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    replacement: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
         Index("ix_decisions_session_ts", "session_id", "ts"),
@@ -74,6 +80,8 @@ class DecisionRow(Base):
             "ux_decisions_idempotency_key", "idempotency_key", unique=True,
             postgresql_where=text("idempotency_key IS NOT NULL"),
         ),
+        Index("ix_decisions_kind_ts", "kind", "ts"),
+        Index("ix_decisions_call_id", "call_id"),
     )
 
 

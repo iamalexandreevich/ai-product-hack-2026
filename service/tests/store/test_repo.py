@@ -14,7 +14,7 @@ from agentgate.engine.timings import Latency
 from agentgate.store.models import SessionRow
 from agentgate.store.repo import DecisionRepo, SessionRepo
 from tests.conftest import requires_db
-from tests.factories import WORKSPACE, decide_request, decision, session_state, shell_action, turn
+from tests.factories import WORKSPACE, decide_request, decision, rule_set, session_state, shell_action, turn
 
 pytestmark = requires_db
 
@@ -403,3 +403,20 @@ async def test_load_replayable_limit_keeps_the_newest_keyed_rows(session_factory
         ))
     loaded = await repo.load_replayable(now - timedelta(days=1), limit=2)
     assert [r.idempotency_key for r in loaded] == ["newest", "middle"]
+
+
+async def test_v3_columns_round_trip(session_factory):
+    await _seed_session(session_factory)
+    repo = DecisionRepo(session_factory)
+    d = decision(id=str(ULID()), request=decide_request("ls", call_id="c1", rules=rule_set().model_dump()), action=shell_action("ls"))
+    await repo.insert(d)
+    row = (await repo.list(session_id=None, model=None, limit=1, before=None))[0]
+    assert row.kind == "decide" and row.call_id == "c1" and row.rules_level == "medium" and len(row.rules_digest) == 64
+
+
+async def test_list_filters_by_kind(session_factory):
+    await _seed_session(session_factory)
+    repo = DecisionRepo(session_factory)
+    await repo.insert(rec())
+    assert len(await repo.list(session_id=None, model=None, limit=10, before=None, kind="decide")) == 1
+    assert await repo.list(session_id=None, model=None, limit=10, before=None, kind="inspect") == []

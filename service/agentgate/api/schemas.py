@@ -11,7 +11,7 @@ one place and cannot drift apart.
 import hashlib
 import json
 from enum import Enum
-from typing import Any
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -29,6 +29,7 @@ RULES_MAX_PATTERNS = 500
 RULES_MAX_BYTES = 16384
 RULE_PATTERN_MAX_CHARS = 200
 CALL_ID_MAX_CHARS = 128
+OUTPUT_MAX_BYTES = 262144
 
 
 class HistoryTooLarge(ValueError):
@@ -45,6 +46,10 @@ class UnsupportedRules(ValueError):
 
 class RulesTooLarge(ValueError):
     """The wire limit on `rules` was exceeded; refused as `api.rules-too-large`."""
+
+
+class OutputTooLarge(ValueError):
+    """The wire limit on `output` was exceeded; the inspect call is refused as `drop`."""
 
 
 class Tool(str, Enum):
@@ -429,3 +434,131 @@ class DecideResponse(BaseModel):
         default=PROTOCOL,
         description=f"Protocol version of this response. Always `{PROTOCOL}` in this release.",
     )
+
+
+class FileProvenance(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    kind: Literal["file"]
+    path: str
+
+
+class ShellProvenance(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    kind: Literal["shell"]
+    command: str
+
+
+class WebProvenance(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    kind: Literal["web"]
+    url: str
+
+
+class McpProvenance(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    kind: Literal["mcp"]
+    server: str
+    tool: str
+
+
+class SubagentProvenance(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    kind: Literal["subagent"]
+    session_id: str
+
+
+class UnknownProvenance(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    kind: Literal["unknown"]
+
+
+Provenance = Annotated[
+    FileProvenance | ShellProvenance | WebProvenance | McpProvenance | SubagentProvenance | UnknownProvenance,
+    Field(
+        discriminator="kind",
+        description=(
+            "Where the text came from. An injection in a workspace file and one "
+            "in a fetched page are different risks."
+        ),
+    ),
+]
+
+
+class InspectStatus(str, Enum):
+    completed = "completed"
+    error = "error"
+
+
+class InspectRequest(BaseModel):
+    """One tool result, held back from the model, plus where it came from."""
+
+    session_id: str | None = Field(
+        default=None, max_length=128, description="Same session as the `/v1/decide` call this result answers."
+    )
+    harness: str = Field(min_length=1, max_length=64)
+    call_id: str = Field(
+        min_length=1, max_length=CALL_ID_MAX_CHARS, description="Ties this result to the `/v1/decide` of the same invocation."
+    )
+    tool: Tool
+    tool_name: str = Field(min_length=1, max_length=64, description="The harness's own name for the tool.")
+    status: InspectStatus = Field(description="Error text is untrusted content too.")
+    output: str = Field(
+        description=(
+            f"The result text as the model would see it. At most {OUTPUT_MAX_BYTES} bytes "
+            f"of UTF-8; over the limit the result is refused as `drop`."
+        )
+    )
+    provenance: Provenance
+    args: ActionArgs
+    user_request: str = Field(
+        description=(
+            f"The user's last message; truncated to {USER_REQUEST_MAX_CHARS} characters "
+            f"keeping the tail. Empty falls back to the last human-authored turn of `history`."
+        )
+    )
+    profile_id: str | None = Field(default=None, max_length=64)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    protocol: int = Field(default=PROTOCOL)
+    history: list[Turn] = Field(default_factory=list)
+
+    _truncate_user_request = field_validator("user_request")(DecideRequest._truncate_user_request.__func__)
+    _metadata_size = field_validator("metadata")(DecideRequest._metadata_size.__func__)
+    _supported_protocol = field_validator("protocol")(DecideRequest._supported_protocol.__func__)
+    _history_size = field_validator("history")(DecideRequest._history_size.__func__)
+
+    @field_validator("output")
+    @classmethod
+    def _output_size(cls, v: str) -> str:
+        if len(v.encode("utf-8", "surrogatepass")) > OUTPUT_MAX_BYTES:
+            raise OutputTooLarge(f"output exceeds {OUTPUT_MAX_BYTES} bytes")
+        return v
+
+    def identity_digest(self) -> str:
+        payload = self.model_dump_json(exclude={"metadata"})
+        return hashlib.sha256(payload.encode("utf-8", "surrogatepass")).hexdigest()
+
+
+class InspectResponse(BaseModel):
+    """The verdict on one tool result. Always HTTP 200."""
+
+    verdict: InspectVerdict
+    output: str | None = Field(
+        default=None, description="Replacement text. Required and authoritative for `mask`; absent otherwise."
+    )
+    reason: str = Field(
+        default="", description="Shown to the model on `drop`, recorded on `mask`, empty for `pass`."
+    )
+    suggest: str = ""
+    stage: int
+    rule_id: str | None = None
+    model: str | None = None
+    latency_ms: LatencyMs
+    cached: bool = False
+    decision_id: str
+    protocol: int = Field(default=PROTOCOL)
+
+    @model_validator(mode="after")
+    def _mask_has_output(self) -> "InspectResponse":
+        if self.verdict is InspectVerdict.mask and self.output is None:
+            raise ValueError("mask requires output")
+        return self

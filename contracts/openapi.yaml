@@ -834,7 +834,10 @@ components:
           description: sha256 of the normalized profile, so the benchmark can tell policies
             apart.
         decision:
-          $ref: '#/components/schemas/DecisionKind'
+          anyOf:
+          - $ref: '#/components/schemas/DecisionKind'
+          - $ref: '#/components/schemas/InspectVerdict'
+          title: Decision
         reason:
           type: string
           title: Reason
@@ -924,6 +927,47 @@ components:
           description: sha256 of the request minus `metadata`; a repeat under an `Idempotency-Key`
             is honoured only when it matches.
           default: ''
+        kind:
+          type: string
+          enum:
+          - decide
+          - inspect
+          title: Kind
+          description: '`decide` for a pre-tool-use decision, `inspect` for a post-tool-use
+            verdict on a result.'
+          default: decide
+        call_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Call Id
+          description: Harness identifier pairing the decide and inspect records of one invocation.
+        rules_level:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Rules Level
+          description: '`level` of the user''s rules the request carried, if any.'
+        rules_digest:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Rules Digest
+          description: sha256 of the user's rule patterns, order-independent; the patterns
+            themselves are not stored.
+        provenance:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Provenance
+          description: Where an inspected result came from; `null` for decide records.
+        replacement:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Replacement
+          description: The `output` a `mask` verdict returned; `null` otherwise.
         decision_id:
           type: string
           title: Decision Id
@@ -1065,6 +1109,15 @@ components:
         is already budgeted in characters. `budget_chars` is measured on the
         JSON-escaped content the prompt emits, so control-heavy tool output
         counts at its rendered size; `per_turn_chars` caps raw characters.
+    InspectVerdict:
+      type: string
+      enum:
+      - pass
+      - mask
+      - drop
+      title: InspectVerdict
+      description: '`pass` reaches the model untouched; `mask` — the caller substitutes `output`;
+        `drop` — the result is withheld and `reason` shown instead.'
     LatencyMs:
       properties:
         stage1:

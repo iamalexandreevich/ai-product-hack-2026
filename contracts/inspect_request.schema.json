@@ -1,0 +1,422 @@
+{
+  "$defs": {
+    "ActionArgs": {
+      "properties": {
+        "cwd": {
+          "description": "Absolute path of the agent's working directory. Must be non-empty.",
+          "minLength": 1,
+          "title": "Cwd",
+          "type": "string"
+        },
+        "paths": {
+          "description": "Paths the action touches, for `file_read` and `file_write`. **Ignored for `shell`** — the service extracts paths itself from the command's syntax tree. Sending them for `shell` is harmless.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Paths",
+          "type": "array"
+        },
+        "domains": {
+          "description": "Domains the action contacts, for `network`. **Ignored for `shell`** — the service extracts domains itself from the command.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Domains",
+          "type": "array"
+        },
+        "mcp": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/McpArgs"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Server, tool and arguments of an MCP call. Used for `tool: mcp_call`."
+        }
+      },
+      "required": [
+        "cwd"
+      ],
+      "title": "ActionArgs",
+      "type": "object"
+    },
+    "Author": {
+      "description": "Who produced a turn. A `human`-role turn authored by an `agent` is a\nparent model's message to a subagent, not the user's intent.",
+      "enum": [
+        "human",
+        "agent",
+        "system"
+      ],
+      "title": "Author",
+      "type": "string"
+    },
+    "FileProvenance": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "file",
+          "title": "Kind",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "path"
+      ],
+      "title": "FileProvenance",
+      "type": "object"
+    },
+    "InspectStatus": {
+      "enum": [
+        "completed",
+        "error"
+      ],
+      "title": "InspectStatus",
+      "type": "string"
+    },
+    "McpArgs": {
+      "properties": {
+        "server": {
+          "description": "Name of the MCP server.",
+          "title": "Server",
+          "type": "string"
+        },
+        "tool": {
+          "description": "Name of the tool being called on that server.",
+          "title": "Tool",
+          "type": "string"
+        },
+        "arguments": {
+          "additionalProperties": true,
+          "description": "Arguments passed to the MCP tool.",
+          "title": "Arguments",
+          "type": "object"
+        }
+      },
+      "required": [
+        "server",
+        "tool"
+      ],
+      "title": "McpArgs",
+      "type": "object"
+    },
+    "McpProvenance": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "mcp",
+          "title": "Kind",
+          "type": "string"
+        },
+        "server": {
+          "title": "Server",
+          "type": "string"
+        },
+        "tool": {
+          "title": "Tool",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "server",
+        "tool"
+      ],
+      "title": "McpProvenance",
+      "type": "object"
+    },
+    "ShellProvenance": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "shell",
+          "title": "Kind",
+          "type": "string"
+        },
+        "command": {
+          "title": "Command",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "command"
+      ],
+      "title": "ShellProvenance",
+      "type": "object"
+    },
+    "SubagentProvenance": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "subagent",
+          "title": "Kind",
+          "type": "string"
+        },
+        "session_id": {
+          "title": "Session Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "session_id"
+      ],
+      "title": "SubagentProvenance",
+      "type": "object"
+    },
+    "Tool": {
+      "description": "Kind of action a harness can ask the gate about.",
+      "enum": [
+        "shell",
+        "file_write",
+        "file_read",
+        "network",
+        "mcp_call"
+      ],
+      "title": "Tool",
+      "type": "string"
+    },
+    "Turn": {
+      "description": "One turn of the dialogue that preceded the proposed action.",
+      "properties": {
+        "role": {
+          "$ref": "#/$defs/TurnRole",
+          "description": "Kind of turn: `human`, `assistant`, `toolcall` or `toolresult`."
+        },
+        "author": {
+          "$ref": "#/$defs/Author",
+          "description": "Who produced the turn. Only `human` marks the user's own words; a `human`-role turn with `author: agent` is text a parent model wrote for a subagent and is not treated as the user's intent."
+        },
+        "content": {
+          "description": "The message text, the tool call as text, or the tool output. Visible turn text only: the agent's hidden reasoning (thinking blocks, scratchpads) must not be sent — the classifier is told it never sees it.",
+          "title": "Content",
+          "type": "string"
+        },
+        "tool": {
+          "anyOf": [
+            {
+              "maxLength": 64,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Harness-native tool name for `toolcall` / `toolresult` turns.",
+          "title": "Tool"
+        },
+        "call_id": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Ties a `toolcall` to its `toolresult`. The same identifier the harness puts into its `Idempotency-Key`.",
+          "title": "Call Id"
+        }
+      },
+      "required": [
+        "role",
+        "author",
+        "content"
+      ],
+      "title": "Turn",
+      "type": "object"
+    },
+    "TurnRole": {
+      "description": "What kind of dialogue turn this is.",
+      "enum": [
+        "human",
+        "assistant",
+        "toolcall",
+        "toolresult"
+      ],
+      "title": "TurnRole",
+      "type": "string"
+    },
+    "UnknownProvenance": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "unknown",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "UnknownProvenance",
+      "type": "object"
+    },
+    "WebProvenance": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "web",
+          "title": "Kind",
+          "type": "string"
+        },
+        "url": {
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "url"
+      ],
+      "title": "WebProvenance",
+      "type": "object"
+    }
+  },
+  "description": "One tool result, held back from the model, plus where it came from.",
+  "properties": {
+    "session_id": {
+      "anyOf": [
+        {
+          "maxLength": 128,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Same session as the `/v1/decide` call this result answers.",
+      "title": "Session Id"
+    },
+    "harness": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Harness",
+      "type": "string"
+    },
+    "call_id": {
+      "description": "Ties this result to the `/v1/decide` of the same invocation.",
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Call Id",
+      "type": "string"
+    },
+    "tool": {
+      "$ref": "#/$defs/Tool"
+    },
+    "tool_name": {
+      "description": "The harness's own name for the tool.",
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Tool Name",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/InspectStatus",
+      "description": "Error text is untrusted content too."
+    },
+    "output": {
+      "description": "The result text as the model would see it. At most 262144 bytes of UTF-8; over the limit the result is refused as `drop`.",
+      "title": "Output",
+      "type": "string"
+    },
+    "provenance": {
+      "description": "Where the text came from. An injection in a workspace file and one in a fetched page are different risks.",
+      "discriminator": {
+        "mapping": {
+          "file": "#/$defs/FileProvenance",
+          "mcp": "#/$defs/McpProvenance",
+          "shell": "#/$defs/ShellProvenance",
+          "subagent": "#/$defs/SubagentProvenance",
+          "unknown": "#/$defs/UnknownProvenance",
+          "web": "#/$defs/WebProvenance"
+        },
+        "propertyName": "kind"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/FileProvenance"
+        },
+        {
+          "$ref": "#/$defs/ShellProvenance"
+        },
+        {
+          "$ref": "#/$defs/WebProvenance"
+        },
+        {
+          "$ref": "#/$defs/McpProvenance"
+        },
+        {
+          "$ref": "#/$defs/SubagentProvenance"
+        },
+        {
+          "$ref": "#/$defs/UnknownProvenance"
+        }
+      ],
+      "title": "Provenance"
+    },
+    "args": {
+      "$ref": "#/$defs/ActionArgs"
+    },
+    "user_request": {
+      "description": "The user's last message; truncated to 2048 characters keeping the tail. Empty falls back to the last human-authored turn of `history`.",
+      "title": "User Request",
+      "type": "string"
+    },
+    "profile_id": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Profile Id"
+    },
+    "metadata": {
+      "additionalProperties": true,
+      "title": "Metadata",
+      "type": "object"
+    },
+    "protocol": {
+      "default": 1,
+      "title": "Protocol",
+      "type": "integer"
+    },
+    "history": {
+      "items": {
+        "$ref": "#/$defs/Turn"
+      },
+      "title": "History",
+      "type": "array"
+    }
+  },
+  "required": [
+    "harness",
+    "call_id",
+    "tool",
+    "tool_name",
+    "status",
+    "output",
+    "provenance",
+    "args",
+    "user_request"
+  ],
+  "title": "InspectRequest",
+  "type": "object"
+}

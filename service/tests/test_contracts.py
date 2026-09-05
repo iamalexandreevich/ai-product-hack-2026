@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from agentgate.api.schemas import DecideRequest, DecideResponse
+from agentgate.api.schemas import DecideRequest, DecideResponse, InspectRequest, InspectResponse
 
 CONTRACTS = Path(__file__).resolve().parents[2] / "contracts"
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
@@ -44,6 +44,16 @@ def test_request_schema_matches_contract():
 def test_response_schema_matches_contract():
     committed = json.loads((CONTRACTS / "decide_response.schema.json").read_text())
     assert committed == DecideResponse.model_json_schema()
+
+
+def test_inspect_request_schema_matches_contract():
+    committed = json.loads((CONTRACTS / "inspect_request.schema.json").read_text())
+    assert committed == InspectRequest.model_json_schema()
+
+
+def test_inspect_response_schema_matches_contract():
+    committed = json.loads((CONTRACTS / "inspect_response.schema.json").read_text())
+    assert committed == InspectResponse.model_json_schema()
 
 
 def test_openapi_yaml_matches_what_the_app_generates(committed_openapi, generated_openapi):

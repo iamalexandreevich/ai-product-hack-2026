@@ -5,7 +5,7 @@ from agentgate.domain.dialogue import Dialogue
 from agentgate.domain.verdict import Verdict
 from agentgate.engine.decision import Decision
 from agentgate.engine.timings import Latency
-from tests.factories import decide_request, dialogue, turn
+from tests.factories import decide_request, dialogue, rule_set, turn
 
 
 def decision(**overrides) -> Decision:
@@ -91,3 +91,11 @@ def test_response_is_built_from_the_verdict_and_the_latency():
 
 def test_response_carries_the_protocol():
     assert decision().to_response().protocol == PROTOCOL
+
+
+def test_record_kind_defaults_to_decide_and_carries_call_id_and_rules():
+    record = decision(request=decide_request("ls -la", call_id="c9", rules=rule_set().model_dump())).to_record()
+    assert record.kind == "decide" and record.call_id == "c9"
+    assert record.rules_level == "medium" and len(record.rules_digest) == 64
+    plain = decision().to_record()
+    assert plain.rules_level is None and plain.rules_digest is None and plain.provenance is None and plain.replacement is None

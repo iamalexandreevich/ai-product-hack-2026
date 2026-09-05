@@ -1,0 +1,138 @@
+{
+  "$defs": {
+    "InspectVerdict": {
+      "description": "`pass` reaches the model untouched; `mask` — the caller substitutes `output`; `drop` — the result is withheld and `reason` shown instead.",
+      "enum": [
+        "pass",
+        "mask",
+        "drop"
+      ],
+      "title": "InspectVerdict",
+      "type": "string"
+    },
+    "LatencyMs": {
+      "description": "Per-stage timing of one decision. A stage that did not run is `null`.",
+      "properties": {
+        "stage1": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Milliseconds spent in stage 1, or `null` if it did not run.",
+          "title": "Stage1"
+        },
+        "stage2": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Milliseconds spent in stage 2, or `null` if it did not run.",
+          "title": "Stage2"
+        },
+        "total": {
+          "description": "Total milliseconds the service spent on this decision.",
+          "title": "Total",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "total"
+      ],
+      "title": "LatencyMs",
+      "type": "object"
+    }
+  },
+  "description": "The verdict on one tool result. Always HTTP 200.",
+  "properties": {
+    "verdict": {
+      "$ref": "#/$defs/InspectVerdict"
+    },
+    "output": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Replacement text. Required and authoritative for `mask`; absent otherwise.",
+      "title": "Output"
+    },
+    "reason": {
+      "default": "",
+      "description": "Shown to the model on `drop`, recorded on `mask`, empty for `pass`.",
+      "title": "Reason",
+      "type": "string"
+    },
+    "suggest": {
+      "default": "",
+      "title": "Suggest",
+      "type": "string"
+    },
+    "stage": {
+      "title": "Stage",
+      "type": "integer"
+    },
+    "rule_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Rule Id"
+    },
+    "model": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Model"
+    },
+    "latency_ms": {
+      "$ref": "#/$defs/LatencyMs"
+    },
+    "cached": {
+      "default": false,
+      "title": "Cached",
+      "type": "boolean"
+    },
+    "decision_id": {
+      "title": "Decision Id",
+      "type": "string"
+    },
+    "protocol": {
+      "default": 1,
+      "title": "Protocol",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "verdict",
+    "stage",
+    "latency_ms",
+    "decision_id"
+  ],
+  "title": "InspectResponse",
+  "type": "object"
+}

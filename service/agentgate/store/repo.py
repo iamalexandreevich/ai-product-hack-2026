@@ -81,7 +81,7 @@ class DecisionRepo:
         return [record_from_row(r) for r in rows]
 
     async def list(
-        self, session_id: str | None, model: str | None, limit: int, before: str | None
+        self, session_id: str | None, model: str | None, limit: int, before: str | None, kind: str | None = None
     ) -> list[DecisionRecord]:
         """List decisions ordered by ``id`` descending (newest first).
 
@@ -89,7 +89,8 @@ class DecisionRepo:
         returned. ``limit`` is clamped to ``[1, 1000]`` regardless of the
         input value, so a caller does not need to validate it and a
         pathological value (zero, negative, or unbounded) cannot turn this
-        into a database error or an unbounded read.
+        into a database error or an unbounded read. ``kind`` filters to
+        ``"decide"`` or ``"inspect"`` rows; omitted, both kinds are returned.
         """
         limit = max(1, min(limit, 1000))
         stmt = select(DecisionRow).order_by(DecisionRow.id.desc()).limit(limit)
@@ -99,6 +100,8 @@ class DecisionRepo:
             stmt = stmt.where(DecisionRow.model == model)
         if before is not None:
             stmt = stmt.where(DecisionRow.id < before)
+        if kind is not None:
+            stmt = stmt.where(DecisionRow.kind == kind)
         async with self._sf() as s:
             rows = (await s.execute(stmt)).scalars().all()
         return [record_from_row(r) for r in rows]

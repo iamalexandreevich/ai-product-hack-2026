@@ -7,6 +7,7 @@ from agentgate.api.schemas import (
     HISTORY_MAX_BYTES,
     HISTORY_MAX_TURNS,
     METADATA_MAX_BYTES,
+    OUTPUT_MAX_BYTES,
     PROTOCOL,
     RAW_MAX_BYTES,
     RULE_PATTERN_MAX_CHARS,
@@ -17,6 +18,9 @@ from agentgate.api.schemas import (
     DecideRequest,
     DecideResponse,
     DecisionKind,
+    InspectRequest,
+    InspectResponse,
+    InspectVerdict,
     LatencyMs,
     Tool,
     Turn,
@@ -321,3 +325,44 @@ def test_call_id_is_capped():
     assert _req(call_id="c" * 128).call_id == "c" * 128
     with pytest.raises(ValidationError):
         _req(call_id="c" * 129)
+
+
+def _inspect(**over) -> InspectRequest:
+    base = dict(
+        session_id="s1", harness="kilo", call_id="c1", tool="file_read", tool_name="read", status="completed",
+        output="Setup guide.\n", provenance={"kind": "file", "path": "/repo/README.md"},
+        args={"cwd": "/repo", "paths": ["/repo/README.md"]}, user_request="read the readme",
+    )
+    base.update(over)
+    return InspectRequest.model_validate(base)
+
+
+def test_inspect_request_parses_provenance_by_kind():
+    assert _inspect().provenance.kind == "file" and _inspect().provenance.path == "/repo/README.md"
+    web = _inspect(provenance={"kind": "web", "url": "https://x"})
+    assert web.provenance.kind == "web" and web.provenance.url == "https://x"
+    with pytest.raises(ValidationError):
+        _inspect(provenance={"kind": "file", "url": "https://x"})
+
+
+def test_inspect_request_requires_call_id_and_caps_output():
+    with pytest.raises(ValidationError):
+        _inspect(call_id=None)
+    with pytest.raises(ValidationError, match=f"exceeds {OUTPUT_MAX_BYTES} bytes"):
+        _inspect(output="ж" * (OUTPUT_MAX_BYTES // 2 + 1))
+    assert len(_inspect(output="ж" * (OUTPUT_MAX_BYTES // 2)).output) == OUTPUT_MAX_BYTES // 2
+
+
+def test_inspect_request_carries_history_and_protocol_like_decide():
+    r = _inspect(history=[dict(role="human", author="human", content="x")], protocol=1)
+    assert len(r.history) == 1 and r.protocol == 1
+    with pytest.raises(ValidationError, match="unsupported protocol 2"):
+        _inspect(protocol=2)
+
+
+def test_inspect_response_output_only_makes_sense_for_mask():
+    r = InspectResponse(verdict="mask", output="x", reason="r", stage=1, rule_id="inspect.injection",
+                        latency_ms=LatencyMs(total=1), decision_id="01J")
+    assert r.verdict is InspectVerdict.mask and r.protocol == PROTOCOL
+    with pytest.raises(ValidationError, match="mask requires output"):
+        InspectResponse(verdict="mask", reason="r", stage=1, latency_ms=LatencyMs(total=1), decision_id="01J")

@@ -21,7 +21,7 @@ just stores itself and delegates.
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, computed_field
 
@@ -30,10 +30,12 @@ from agentgate.api.schemas import (
     DecideRequest,
     DecideResponse,
     DecisionKind,
+    InspectVerdict,
     LatencyMs,
     Tool,
     Turn,
 )
+from agentgate.domain.client_rules import ClientRules
 from agentgate.domain.dialogue import Dialogue
 from agentgate.domain.session import SessionState
 from agentgate.domain.verdict import Verdict
@@ -60,7 +62,7 @@ class DecisionRecord(BaseModel):
     profile_hash: str = Field(
         description="sha256 of the normalized profile, so the benchmark can tell policies apart."
     )
-    decision: DecisionKind
+    decision: DecisionKind | InspectVerdict
     reason: str
     suggest: str
     stage: int
@@ -106,6 +108,25 @@ class DecisionRecord(BaseModel):
             "sha256 of the request minus `metadata`; a repeat under an "
             "`Idempotency-Key` is honoured only when it matches."
         ),
+    )
+    kind: Literal["decide", "inspect"] = Field(
+        default="decide", description="`decide` for a pre-tool-use decision, `inspect` for a post-tool-use verdict on a result."
+    )
+    call_id: str | None = Field(
+        default=None, description="Harness identifier pairing the decide and inspect records of one invocation."
+    )
+    rules_level: str | None = Field(
+        default=None, description="`level` of the user's rules the request carried, if any."
+    )
+    rules_digest: str | None = Field(
+        default=None,
+        description="sha256 of the user's rule patterns, order-independent; the patterns themselves are not stored.",
+    )
+    provenance: dict[str, Any] | None = Field(
+        default=None, description="Where an inspected result came from; `null` for decide records."
+    )
+    replacement: str | None = Field(
+        default=None, description="The `output` a `mask` verdict returned; `null` otherwise."
     )
 
     @computed_field(description="Same ULID as `id`; mirrors the field name /v1/decide returns.")
@@ -177,4 +198,7 @@ class Decision:
             history_digest=self.history_digest,
             idempotency_key=self.idempotency_key,
             request_digest=self.request.identity_digest(),
+            call_id=self.request.call_id,
+            rules_level=self.request.rules.level if self.request.rules else None,
+            rules_digest=ClientRules.of(self.request.rules).digest() if self.request.rules else None,
         )
