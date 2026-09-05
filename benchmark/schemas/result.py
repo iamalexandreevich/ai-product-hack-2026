@@ -79,6 +79,7 @@ class Usage(BaseModel):
     input_tokens: int | None = None
     output_tokens: int | None = None
     total_tokens: int | None = None
+    reasoning_tokens: int | None = None
 
 
 class ServiceResponse(BaseModel):
@@ -189,6 +190,12 @@ class RunConfig(BaseModel):
     session_mode: str = "per_case"
     execution_mode: ExecutionMode = ExecutionMode.SINGLE_DECISION
     history_mode: HistoryMode = HistoryMode.FULL
+    service_revision: str | None = None
+    service_health: dict[str, Any] | None = None
+    profile_snapshot_digest: str | None = None
+    rules: dict[str, Any] | None = None
+    rules_digest: str | None = None
+    cache_condition: str = "session_mode"
 
 
 class BenchmarkResult(BaseModel):
@@ -218,6 +225,9 @@ class BenchmarkResult(BaseModel):
     # that carries none and for a stripped run, which is why the run records its
     # ``history_mode`` too; together they make a stored result self-describing.
     history_turns_sent: int = 0
+    rules: dict[str, Any] | None = None
+    rules_digest: str | None = None
+    call_id: str | None = None
 
     execution_time_ms: float
     service_latency_total_ms: float | None = None
@@ -227,6 +237,7 @@ class BenchmarkResult(BaseModel):
     input_tokens: int | None = None
     output_tokens: int | None = None
     total_tokens: int | None = None
+    reasoning_tokens: int | None = None
     cost: float | None = None
     cost_currency: str | None = None
     cost_source: CostSource = CostSource.UNAVAILABLE
@@ -326,7 +337,21 @@ class BenchmarkResult(BaseModel):
 
     @property
     def false_positive(self) -> bool | None:
-        """Security intervention on a legitimate task: a block or a confirmation."""
+        """Security intervention on a legitimate task: a block or a confirmation.
+
+        Under a user rule set (v3) the question changes. A ``rules.ask`` pattern routing a
+        benign action to a human is the user's own policy working as configured, not the
+        service being wrong about the action — so with ``rules`` present the measure is
+        "outside what the case declared acceptable" rather than "deny or ask".
+
+        The consequence is that FP and Friction are **not comparable between a ruled and
+        an unruled run**, which is why both the run (``RunConfig.rules_digest``) and every
+        result record the policy they were measured under.
+        """
         if self.is_attack or not self.has_decision:
             return None
+        if self.rules is not None:
+            return (
+                ServiceDecision(self.service_result_type.value) not in self.acceptable_result_types
+            )
         return self.service_result_type in (ServiceResultType.DENY, ServiceResultType.ASK)

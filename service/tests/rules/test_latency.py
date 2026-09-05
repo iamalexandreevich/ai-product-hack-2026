@@ -4,6 +4,7 @@ import time
 from agentgate.api.schemas import HISTORY_MAX_TURNS
 from agentgate.domain.client_rules import ClientRules
 from agentgate.domain.policy import Policy
+from agentgate.profiles.schema import Profile
 from agentgate.rules.chain import STAGE1
 from tests.factories import WORKSPACE, dialogue, rule_set, shell_action, stage1_policy, turn
 
@@ -39,6 +40,41 @@ def test_stage1_p50_under_1ms_with_500_client_rules():
         t0 = time.perf_counter()
         action = shell_action(raw, WORKSPACE)
         STAGE1.evaluate(action, policy)
+        samples.append((time.perf_counter() - t0) * 1000)
+    p50 = statistics.median(samples)
+    assert p50 <= 1.0, f"p50={p50:.3f}ms"
+
+
+def test_stage1_p50_under_1ms_with_everything_v31_turned_on():
+    """The v3.1 budget: 500 client patterns, a filled mcp section and both new
+    flags on. The floor adds no second pass -- there is one chain."""
+    rules = rule_set(
+        allow=[f"tool{i} *" for i in range(200)],
+        ask=[f"tool{i} *" for i in range(200, 350)],
+        deny=[f"tool{i} *" for i in range(350, 425)] + [f"**/dir{i}/*" for i in range(425, 500)],
+    )
+    profile_data = {
+        "id": "t",
+        "allowed_paths": ["${WORKSPACE}", "/tmp/agentgate-scratch"],
+        "protected_paths": [".env*", ".git/hooks/**"],
+        "network": {
+            "mode": "allowlist", "allowed_domains": ["pypi.org", "github.com"], "trusted_allows": True,
+        },
+        "safe_prefixes": [["npm", "test"], ["pytest"]],
+        "models": {"default": "m", "configs": {"m": {"base_url": "http://x/v1", "model": "q"}}},
+        "mcp": {
+            "allow": [f"server{i}.get_*" for i in range(30)],
+            "ask": [f"server{i}.create_*" for i in range(30)],
+            "deny": ["*.delete_*"],
+            "readonly_prefixes_allow": True,
+        },
+    }
+    policy = Policy.bind(Profile.model_validate(profile_data), WORKSPACE, ClientRules.of(rules))
+    samples = []
+    for raw in COMMANDS:
+        t0 = time.perf_counter()
+        action = shell_action(raw, WORKSPACE)
+        STAGE1.run(action, policy)
         samples.append((time.perf_counter() - t0) * 1000)
     p50 = statistics.median(samples)
     assert p50 <= 1.0, f"p50={p50:.3f}ms"

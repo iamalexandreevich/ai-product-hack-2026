@@ -93,6 +93,19 @@ def stage1_policy(**overrides) -> Policy:
     return Policy.bind(Profile.model_validate(data), WORKSPACE)
 
 
+def mcp_policy(**mcp) -> Policy:
+    """`stage1_policy` with the operator's MCP section filled in."""
+    return stage1_policy(mcp=mcp)
+
+
+def trusted_policy(
+    mode: str = "allowlist", domains: tuple[str, ...] = ("pypi.org", "github.com"), **overrides
+) -> Policy:
+    """`stage1_policy` with `network.trusted_allows` on, for the trusted-domain rule."""
+    network = {"mode": mode, "allowed_domains": list(domains), "trusted_allows": True}
+    return stage1_policy(network=network, **overrides)
+
+
 def hard_deny_policy(**overrides) -> Policy:
     """The policy the hard-deny table tests run against: its protected
     paths and branches are what those tables assert on.
@@ -177,6 +190,18 @@ def shell_action(raw: str, cwd: str = WORKSPACE) -> NormalizedAction:
     return normalize(
         DecideRequest(harness="t", tool="shell", raw=raw, args={"cwd": cwd}, user_request="x")
     )
+
+
+def mcp_action(
+    server: str = "github", tool: str = "get_issue",
+    arguments: dict | None = None, cwd: str = WORKSPACE,
+) -> NormalizedAction:
+    """What an MCP call normalizes to: `mcp` filled, no commands and no paths."""
+    return normalize(DecideRequest(
+        harness="t", tool="mcp_call", raw="",
+        args={"cwd": cwd, "mcp": {"server": server, "tool": tool, "arguments": arguments or {}}},
+        user_request="x",
+    ))
 
 
 def unparseable_action(cwd: str = WORKSPACE) -> NormalizedAction:

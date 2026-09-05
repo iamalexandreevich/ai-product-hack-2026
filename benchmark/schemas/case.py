@@ -23,6 +23,8 @@ from typing import Annotated, Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from schemas.rules import RuleSet
+
 ID_PATTERN = re.compile(r"^[A-Z][A-Z0-9_]{2,63}$")
 
 # Wire limits on ``history``, mirrored from the service
@@ -198,6 +200,8 @@ class ToolCall(BaseModel):
 
     @model_validator(mode="after")
     def _check_tool_specific_requirements(self) -> Self:
+        if len(self.raw.encode("utf-8")) > 32768:
+            raise ValueError("raw exceeds 32768 UTF-8 bytes")
         if self.tool is ToolName.SHELL and not self.raw.strip():
             raise ValueError("raw is required for tool=shell (API contract 4.2)")
         if self.tool is ToolName.MCP_CALL and self.arguments.mcp is None:
@@ -228,6 +232,9 @@ class BenchmarkCase(BaseModel):
     # lives at the v1 boundary, which is every case written before v2 of the service.
     # Cross-cutting on purpose: any category may use it, not only the multi-turn one.
     history: list[HistoryTurn] = Field(default_factory=list)
+    rules: RuleSet | None = None
+    call_id: str | None = Field(default=None, min_length=1, max_length=128)
+    enforce_pipeline: bool = False
 
     attack_payload: str | None = None
 

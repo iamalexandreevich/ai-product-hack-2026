@@ -48,7 +48,7 @@ All commands run from `benchmark/`.
 ```bash
 uv sync                                                    # deps (pydantic, pyyaml, httpx; dev: pytest, ruff)
 
-uv run pytest                                              # 238 unit tests, no network
+uv run pytest                                              # 267 unit tests, no network
 uv run pytest tests/test_scorer.py::test_error_always_scores_zero   # one test
 uv run pytest -m live                                      # 2 more, needs a live service at SECURITY_SERVICE_URL
 
@@ -59,6 +59,7 @@ uv run python cli.py benchmark --path attacks/cases --dry-run       # show what 
 uv run python cli.py benchmark --path attacks/cases        # full run
 uv run python cli.py benchmark --path attacks/cases --category data_exfiltration --difficulty hard
 uv run python cli.py run --case attacks/cases/data_exfiltration/EXFIL_003.yaml
+uv run python cli.py benchmark --path attacks/cases --rules rules.example.yaml  # v3 user policy
 uv run python cli.py runs                                  # stored runs
 uv run python cli.py report --run-id <uuid> --failures     # rebuild a report from SQLite
 ```
@@ -83,6 +84,18 @@ is passed — the dataset includes live attack payloads.
 service nor a baseline: **never quote its numbers as results.**
 
 ## Architecture
+
+The separate v3 tool-result suite is composed by `runner/inspect_cli.py` (`cli.py inspect` and
+`inspect-report`). `dataset/inspect_loader.py` and `inspect_validator.py` load recorded output;
+`client/inspect.py` sends it through the authenticated `SecurityServiceClient`;
+`runner/inspection.py` sequences optional decide, cache warmup, and measured inspect calls;
+`evaluator/inspection.py` owns delivered-text scoring and aggregates; `storage/inspection.py`
+uses separate SQLite tables. No recorded tool is executed. The 43 cases and their tier semantics
+are documented in `attacks/inspect/taxonomy.md`; usage and cache caveats are in the README.
+Use `uv run pytest tests/test_inspect.py` for the inspect boundary tests and
+`uv run python tools/calibrate_inspect.py` to check detector expectations against the sibling
+service checkout without network or model calls. Completed measurements stream to JSONL; SQLite
+and the summary are finalized at the end. Never combine these scores with pre-action metrics.
 
 Top-level packages are flat and imported by bare name (`pythonpath = ["."]` in `pyproject.toml`), so
 imports read `from schemas.case import BenchmarkCase`, never `from benchmark.schemas…`.
@@ -135,11 +148,16 @@ The v1 contract exposes `decision`, `reason`, `suggest`, `stage`, `rule_id`, `mo
 directly available, and each is handled the same way: **produce a value plus a provenance marker, or
 `None` plus a stated reason.**
 
-- **Cost** — no token usage in the contract. `client.extract_usage_and_cost` probes configurable
-  JSON paths (`config.DEFAULT_*_TOKEN_PATHS`) so a future contract extension is picked up for free;
-  when nothing resolves, `cost` is `None`, `cost_source = unavailable`, and
-  `cost_unavailable_reason` explains why. Cost is only ever computed from an explicit pricing table
-  (`pricing.example.yaml`), never estimated.
+- **Cost** — since v3 the contract *does* carry token usage: `cost.input_tokens`,
+  `cost.output_tokens`, `cost.reasoning_tokens`, and `cost.amount`/`cost.currency` when the operator
+  priced the model. The whole field is absent — not null — when stage 2 never ran. The probing
+  design predates that and is what made the extension free: `client.extract_usage_and_cost` reads
+  configurable JSON paths (`config.DEFAULT_*_TOKEN_PATHS`, `reasoning_token_paths`), so nothing had
+  to change to pick it up. Keep the probe rather than hard-coding `cost.*`; when nothing resolves,
+  `cost` is `None`, `cost_source = unavailable`, and `cost_unavailable_reason` explains why. A price
+  the service reports wins; otherwise cost is only ever computed from an explicit pricing table
+  (`pricing.example.yaml`), never estimated. `reasoning_tokens` stays `None` when the provider does
+  not report them — that is not the same fact as a reported zero.
 - **Components activated** — derived in `client.derive_components` from the documented pipeline
   (`stage`, `rule_id` prefix, `cached`) and tagged `components_source: derived`. If the service ever
   returns `components_activated`, that wins and is tagged `service_reported`.
@@ -201,6 +219,17 @@ recorded separately in `contract_violation` rather than silently passing.
   to every latency figure. Latency claims need `--concurrency 1`.
 - A single failing case never aborts a run — failures become `ServiceResultType.ERROR` results.
   Results stream to SQLite and JSONL as they complete, so an interrupted run keeps what it measured.
+- **A run under `--rules` measures a different thing, and says so.** The v3 `rules` field carries
+  the user's own deterministic policy, which stage 1 applies at three points around the profile
+  (`client.deny`, `client.ask`, `client.allow`). A case may declare its own `rules`, and a case's
+  set always wins over the run-level one — a case that names a policy is testing that policy.
+  Both the run (`RunConfig.rules`, `rules_digest`) and every result record what they ran under,
+  because one consequence is not otherwise visible: with rules in play, `false_positive` means
+  "outside what the case declared acceptable" rather than "deny or ask", since friction the
+  user's own rules asked for is not the service intervening. **FP and Friction are therefore not
+  comparable between a ruled and an unruled run** — compare digests before quoting either.
+  `--rules` is server-adapter only; the Claude Code adapter has no equivalent field and the CLI
+  refuses the combination rather than silently dropping the policy.
 
 ## Dataset rules
 
@@ -233,9 +262,13 @@ Other conventions:
 - `dataset_source` marks where a case came from: omit it for cases written here (`team`), set
   `baseline` only for cases imported from an external corpus. Never relabel existing cases to make a
   comparison look better.
-- `expected_stage` and `expected_rule_id_prefix` are informational and never scored. Only use rule
-  ids the spec actually documents (`hard-deny.*`, `profile.*`, `allowlist.*`, `packages.*`,
-  `escalation`) — inventing one contradicts the "never invent" invariant above.
+- `expected_stage` and `expected_rule_id_prefix` are informational and not scored, unless the case
+  opts in with `enforce_pipeline: true` — which turns them into part of the pass condition, so the
+  case fails when the right verdict arrives by the wrong route (stage 2 guessing what stage 1 must
+  settle deterministically). Use it sparingly and only where the route is the thing under test;
+  a wrong verdict still fails regardless. Only use rule ids the spec actually documents
+  (`hard-deny.*`, `profile.*`, `client.*`, `allowlist.*`, `packages.*`, `escalation`) — inventing
+  one contradicts the "never invent" invariant above.
 - Tag a case `v1_limitation` when catching it requires functionality the service has not built yet
   (provenance, the package module). The report breaks failures down by tag so those are separable
   from genuine misses.

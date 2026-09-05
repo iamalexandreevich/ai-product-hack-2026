@@ -134,6 +134,7 @@ class ServiceConfig:
     input_token_paths: tuple[str, ...] = DEFAULT_INPUT_TOKEN_PATHS
     output_token_paths: tuple[str, ...] = DEFAULT_OUTPUT_TOKEN_PATHS
     total_token_paths: tuple[str, ...] = DEFAULT_TOTAL_TOKEN_PATHS
+    reasoning_token_paths: tuple[str, ...] = ("cost.reasoning_tokens",)
     cost_paths: tuple[str, ...] = DEFAULT_COST_PATHS
     currency_paths: tuple[str, ...] = DEFAULT_CURRENCY_PATHS
     pricing: PricingTable = field(default_factory=PricingTable)
@@ -141,6 +142,10 @@ class ServiceConfig:
     @property
     def decide_url(self) -> str:
         return f"{self.url.rstrip('/')}/v1/decide"
+
+    @property
+    def inspect_url(self) -> str:
+        return f"{self.url.rstrip('/')}/v1/inspect"
 
     def profile_url(self, profile_id: str) -> str:
         return f"{self.url.rstrip('/')}/v1/profiles/{profile_id}"

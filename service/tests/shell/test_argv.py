@@ -56,5 +56,39 @@ def test_double_dash_does_not_end_option_parsing_by_default():
     assert parsed.option("-T").value == ".env"
 
 
+def test_attached_short_flag_value_is_split_off():
+    parsed = ParsedArgv.of(["curl", "-oout.html", "http://x"], VALUE_FLAGS)
+    assert parsed.option("-o").value == "out.html"
+
+
+def test_attached_short_flag_value_is_not_a_positional():
+    parsed = ParsedArgv.of(["curl", "-oout.html", "http://x"], VALUE_FLAGS)
+    assert parsed.positionals == ("http://x",)
+
+
+def test_attached_short_flag_at_upload_flag():
+    parsed = ParsedArgv.of(["curl", "-d@secret", "http://x"], frozenset({"-d"}))
+    assert parsed.option("-d").value == "@secret"
+
+
+def test_attached_short_flag_at_path_flag():
+    parsed = ParsedArgv.of(["curl", "-T/etc/passwd", "http://x"], frozenset({"-T"}))
+    assert parsed.option("-T").value == "/etc/passwd"
+
+
+def test_a_different_short_flag_is_not_mistaken_for_the_value_flag():
+    # "-O" is a bare flag of its own; it must not be read as "-o" plus an
+    # empty-string value just because it shares a prefix character.
+    parsed = ParsedArgv.of(["curl", "-O", "http://x"], VALUE_FLAGS)
+    assert parsed.option("-o") is None
+    assert parsed.option("-O").value is None
+
+
+def test_unknown_short_flag_is_left_untouched():
+    parsed = ParsedArgv.of(["rm", "-rf", "/tmp/x"])
+    assert parsed.option("-rf") is not None
+    assert parsed.option("-rf").value is None
+
+
 def test_empty_argv_has_no_executable():
     assert ParsedArgv.of([]).executable == ""

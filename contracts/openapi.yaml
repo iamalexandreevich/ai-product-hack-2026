@@ -1674,6 +1674,30 @@ components:
       - tool
       title: McpArgs
       type: object
+    McpPolicy:
+      properties:
+        allow:
+          items:
+            type: string
+          type: array
+          title: Allow
+        ask:
+          items:
+            type: string
+          type: array
+          title: Ask
+        deny:
+          items:
+            type: string
+          type: array
+          title: Deny
+        readonly_prefixes_allow:
+          type: boolean
+          title: Readonly Prefixes Allow
+          default: false
+      type: object
+      title: McpPolicy
+      description: The operator's rules for MCP calls, matched on `server.tool`.
     McpProvenance:
       additionalProperties: false
       properties:
@@ -1781,6 +1805,12 @@ components:
             type: string
           type: array
           title: Allowed Domains
+        trusted_allows:
+          type: boolean
+          title: Trusted Allows
+          description: When true, a read from a domain on allowed_domains may pass stage 1
+            without a stage-2 call, under profile.domain-trusted.
+          default: false
       type: object
       title: Network
     NetworkMode:
@@ -1861,6 +1891,8 @@ components:
           title: Rules
         inspect:
           $ref: '#/components/schemas/InspectSettings'
+        mcp:
+          $ref: '#/components/schemas/McpPolicy'
       type: object
       required:
       - id

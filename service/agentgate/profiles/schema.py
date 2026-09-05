@@ -16,6 +16,13 @@ class NetworkMode(str, Enum):
 class Network(BaseModel):
     mode: NetworkMode = NetworkMode.allowlist
     allowed_domains: list[str] = Field(default_factory=list)
+    trusted_allows: bool = Field(
+        default=False,
+        description=(
+            "When true, a read from a domain on allowed_domains may pass "
+            "stage 1 without a stage-2 call, under profile.domain-trusted."
+        ),
+    )
 
 
 class ModelConfig(BaseModel):
@@ -131,6 +138,15 @@ class InspectSettings(BaseModel):
     model_budget: ModelBudget = Field(default_factory=ModelBudget)
 
 
+class McpPolicy(BaseModel):
+    """The operator's rules for MCP calls, matched on `server.tool`."""
+
+    allow: list[str] = Field(default_factory=list)
+    ask: list[str] = Field(default_factory=list)
+    deny: list[str] = Field(default_factory=list)
+    readonly_prefixes_allow: bool = False
+
+
 class Profile(BaseModel):
     """A policy profile as the service loaded it. Server-side configuration; a
     harness never receives this in normal operation. Contains no secret values
@@ -148,6 +164,7 @@ class Profile(BaseModel):
     history: History = Field(default_factory=History)
     rules: list[dict[str, Any]] = Field(default_factory=list)
     inspect: InspectSettings = Field(default_factory=InspectSettings)
+    mcp: McpPolicy = Field(default_factory=McpPolicy)
 
     @cached_property
     def _hash(self) -> str:

@@ -12,6 +12,14 @@ on an error path.
 
 Neither persistence nor how a classifier talks to a model is this module's
 concern -- see agentgate.store.writer and agentgate.classify.llm.
+
+A floor is the one thing between stage 1 and stage 2 that is not a
+decision: the user asked to confirm a class of actions, so the outcome may
+not end up softer than `ask`. It never buys a call to the model. Where
+stage 1 already answered `allow`, the deterministic layer has proved the
+action safe and a floor simply settles it as `ask` at stage 1; where stage
+1 said nothing, stage 2 runs exactly as it would have, and the floor is
+applied to its verdict afterwards.
 """
 
 import logging
@@ -144,15 +152,17 @@ class Gate:
     ) -> tuple[Verdict, Dialogue | None]:
         """The verdict, and the dialogue the classifier saw -- None when stage 1 settled it."""
         with timings.stage(1):
-            verdict = self._rules.evaluate(action, context.policy)
-        if verdict is not None:
-            return verdict, None
+            outcome = self._rules.run(action, context.policy)
+        settled = outcome.settled()
+        if settled is not None:
+            return settled, None
         with timings.stage(2):
             case = ReviewCase.build(action, request.user_request, dialogue, context.policy, STAGE1_PASSED)
-            return await context.classifier.classify(case), case.dialogue
+            verdict = await context.classifier.classify(case)
+        return verdict.raised_to(outcome.floor), case.dialogue
 
     def _escalate(self, state: SessionState | None, policy: Policy, verdict: Verdict) -> Verdict:
-        if state is None or verdict.hard or verdict.decision is DecisionKind.ask:
+        if state is None or not verdict.escalatable or verdict.decision is DecisionKind.ask:
             return verdict
         if not should_escalate(state, policy.escalation):
             return verdict

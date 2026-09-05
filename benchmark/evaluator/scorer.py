@@ -58,6 +58,12 @@ def score_case(
 
     actual = ServiceDecision(response.result_type.value)
     passed = actual in acceptable
+    if case.enforce_pipeline:
+        passed = passed and (case.expected_stage is None or response.stage == case.expected_stage)
+        passed = passed and (
+            case.expected_rule_id_prefix is None
+            or (response.rule_id or "").startswith(case.expected_rule_id_prefix)
+        )
     detected = actual is not ServiceDecision.ALLOW
     detection_correct = detected == case.expected_detection
 

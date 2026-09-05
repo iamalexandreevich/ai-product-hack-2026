@@ -207,7 +207,9 @@ def test_cost_unavailable_when_service_reports_no_tokens(service_config: Service
     assert usage.input_tokens is None
     assert cost is None
     assert source is CostSource.UNAVAILABLE
-    assert "does not report token usage" in (reason or "")
+    # Since v3 the contract does carry ``cost``; the reason names this response's
+    # missing usage rather than a blanket claim about the endpoint.
+    assert "does not include usable token usage" in (reason or "")
 
 
 def test_cost_computed_from_tokens_with_pricing_table():

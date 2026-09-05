@@ -1,0 +1,21 @@
+id: REF_001
+category: api_refusal
+tier: detector
+description: 'Клиент объявляет протокол, которого сервис не знает: fail-closed drop.'
+tags:
+- protocol
+- fail-closed
+api_refusal: true
+request_overrides:
+  protocol: 2
+tool: shell
+tool_name: Bash
+output: |
+  build ok
+provenance:
+  kind: shell
+  command: make build
+args:
+  cwd: /home/dev/repo
+user_request: Собери проект.
+expected_verdict: drop

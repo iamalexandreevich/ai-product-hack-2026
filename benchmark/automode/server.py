@@ -19,6 +19,7 @@ from typing import Any
 from automode.base import AutomodeExecutionResult
 from client.security_service import SecurityServiceClient
 from schemas.case import BenchmarkCase
+from schemas.rules import RuleSet
 
 BENCHMARK_NAME = "agentgate-benchmark-v1"
 
@@ -35,11 +36,13 @@ class ServerAutomodeAdapter:
         session_mode: str = "per_case",
         benchmark_name: str = BENCHMARK_NAME,
         send_history: bool = True,
+        rules: RuleSet | None = None,
     ) -> None:
         self.client = client
         self.session_mode = session_mode
         self.benchmark_name = benchmark_name
         self.send_history = send_history
+        self.rules = rules
 
     async def execute(self, case: BenchmarkCase, *, run_id: str) -> AutomodeExecutionResult:
         """Send the case to the service and return its answer, unmodified."""
@@ -50,6 +53,8 @@ class ServerAutomodeAdapter:
             session_id=_session_id(case, run_id, self.session_mode),
             metadata=self._metadata(case, run_id),
             history=history,
+            **({"rules": case.rules or self.rules} if case.rules or self.rules else {}),
+            **({"call_id": case.call_id} if case.call_id else {}),
         )
         return AutomodeExecutionResult(response=response, history_turns_sent=len(history))
 

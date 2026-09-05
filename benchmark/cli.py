@@ -38,9 +38,12 @@ from reporting.report import (
     write_reports,
 )
 from runner.executor import BenchmarkRunner
+from runner.inspect_cli import add_inspect_commands
+from runner.inspect_cli import command as inspect_command
 from runner.recorder import Recorder
 from schemas.case import DatasetSource
 from schemas.result import ExecutionMode, HistoryMode, RunConfig
+from schemas.rules import load_rules
 from storage.sqlite import BenchmarkStore
 
 DEFAULT_DATASET = "attacks/cases"
@@ -65,6 +68,8 @@ def main(argv: list[str] | None = None) -> int:
         logging.getLogger("httpcore").setLevel(logging.WARNING)
 
     match args.command:
+        case "inspect" | "inspect-report":
+            return inspect_command(args, _endpoint_allowed)
         case "validate":
             return _cmd_validate(args)
         case "run" | "benchmark":
@@ -136,6 +141,18 @@ def _cmd_benchmark(args: argparse.Namespace) -> int:
         print("no cases selected by the given filters", file=sys.stderr)
         return 1
 
+    if args.rules:
+        try:
+            selected_rules = load_rules(args.rules)
+        except (ValueError, OSError) as exc:
+            print(f"invalid rules: {exc}", file=sys.stderr)
+            return 2
+        cases = [case.model_copy(update={"rules": case.rules or selected_rules}) for case in cases]
+
+    if args.adapter == "claude-code" and any(case.rules for case in cases):
+        print("client rules require --adapter server", file=sys.stderr)
+        return 2
+
     if args.adapter == "claude-code":
         return _run_claude_code(args, cases, dataset_path)
 
@@ -176,7 +193,12 @@ def _cmd_benchmark(args: argparse.Namespace) -> int:
         session_mode=args.session_mode,
         execution_mode=ExecutionMode(args.execution_mode),
         history_mode=_history_mode(args),
+        service_revision=args.service_revision,
     )
+
+    if args.rules:
+        run_config.rules = selected_rules.model_dump(mode="json")
+        run_config.rules_digest = selected_rules.digest()
 
     if args.dry_run:
         print(f"{len(cases)} case(s) selected; dry run, no requests sent:")
@@ -242,6 +264,7 @@ def _run_claude_code(args: argparse.Namespace, cases: list, dataset_path: Path) 
         session_mode="per_case",
         execution_mode=ExecutionMode(args.execution_mode),
         history_mode=_history_mode(args),
+        service_revision=args.service_revision,
     )
 
     if args.dry_run:
@@ -354,10 +377,12 @@ async def _execute(
                     "as an error if the service is down)",
                     service_config.health_url,
                 )
+            run_config.service_health = payload
             if payload:
                 version = payload.get("version") or payload.get("service_version")
                 service_version = str(version) if version else None
 
+        run_config.profile_snapshot_digest = await client.profile_digest()
         adapter = ServerAutomodeAdapter(
             client,
             session_mode=run_config.session_mode,
@@ -447,6 +472,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("-v", "--verbose", action="store_true")
     sub = parser.add_subparsers(dest="command", required=True)
+    add_inspect_commands(sub)
 
     validate = sub.add_parser("validate", help="validate the benchmark dataset")
     validate.add_argument("--path", default=DEFAULT_DATASET)
@@ -533,6 +559,8 @@ def _add_execution_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--token", help="bearer token (env SECURITY_SERVICE_TOKEN)")
     parser.add_argument("--profile-id", help="AgentGate profile_id to evaluate against")
     parser.add_argument("--model", help="stage-2 model configuration name")
+    parser.add_argument("--rules", help="JSON/YAML client rules; case rules take precedence")
+    parser.add_argument("--service-revision", help="deployed service commit or image digest")
     parser.add_argument("--harness", default="bench", help="value of the 'harness' request field")
     parser.add_argument("--timeout", type=float, default=30.0, help="per-request timeout, seconds")
     parser.add_argument("--concurrency", type=int, default=1)

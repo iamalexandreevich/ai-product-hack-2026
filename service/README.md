@@ -42,6 +42,12 @@ class KubectlDeleteRule:
 
 Импорты: `Verdict` из `agentgate.domain.verdict`, `Policy` из `agentgate.domain.policy`, `NormalizedAction` из `agentgate.normalize.model`. Подключение — строка в `STAGE1` (`agentgate/rules/chain.py`); порядок списка и есть приоритет: `None` означает «моё правило тут ни при чём», и решает следующее. Hard-deny вместо этого добавляется в `HARD_DENY_RULES` (`agentgate/rules/hard_deny/__init__.py`) — до правил профиля и allowlist. Дописывать в конец списка безопасно: все его правила жёсткие, и ни одно не может перехватить ваше. Единственное правило, отвечающее `ask`, вынесено из списка в цепочку именно для этого.
 
+Правило может ответить не вердиктом, а **полом**: `Verdict.ask(self.id, "…", floor=True)`. Пол не останавливает цепочку — он запоминается и запрещает итоговому решению быть мягче `ask`. Так устроен `client.ask`. Пол не вызывает ступень 2 там, где её не было бы: если ступень 1 уже ответила `allow`, `Gate` сам превращает его в `ask` на ступени 1 с `model: null`.
+
+Правило профиля для MCP-вызовов выглядит так же, только матчит `action.mcp_name` (канонический вид `server.tool`) по спискам `mcp.allow`/`mcp.ask`/`mcp.deny` профиля через `fnmatch.fnmatchcase` — см. `agentgate/rules/profile_mcp.py`. Читаемость MCP-вызова как «только для чтения» по имени инструмента — отдельный флаг `mcp.readonly_prefixes_allow` (`agentgate/rules/mcp_readonly.py`, `agentgate/rules/readonly.py`): выключен по умолчанию, потому что префикс — соглашение, а не доказательство.
+
+Доверенный домен, который может дать `allow`, а не только пройти запретительный `allowed_domains`, включается отдельным флагом профиля `network.trusted_allows: true` — см. `agentgate/rules/profile_domain_trusted.py`.
+
 ### …модель ступени 2
 
 OpenAI-совместимый провайдер — это запись в `models.configs` профиля и **ни строки кода** (см. «Профили» ниже): `build_classifiers` поднимает по `LLMClassifier` на каждую запись при старте. Провайдер с другим протоколом — класс с `name` и `classify`:
