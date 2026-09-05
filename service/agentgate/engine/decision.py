@@ -188,6 +188,13 @@ class Decision:
     def to_response(self) -> DecideResponse:
         return self.to_record().to_response()
 
+    def session_state(self) -> SessionState | None:
+        return self.state
+
+    def session_ref(self) -> tuple[str, str] | None:
+        """None: the state above already guarantees the session row."""
+        return None
+
     def allow_cache_entry(self) -> tuple[str, str] | None:
         """Session and key to cache this decision under, or None: only a
         fresh `allow` with a session is cached."""

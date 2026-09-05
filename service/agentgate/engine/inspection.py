@@ -40,6 +40,10 @@ class Inspection:
     # a second time or importing the profile loader into `store`.
     workspace: str = ""
 
+    def session_state(self) -> None:
+        """Inspect never owns a session's counters."""
+        return None
+
     def session_ref(self) -> tuple[str, str] | None:
         """`(session_id, workspace)` the writer must make sure has a session
         row, without inventing counters for it -- inspect never touches

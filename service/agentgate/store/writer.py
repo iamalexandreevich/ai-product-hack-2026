@@ -46,18 +46,12 @@ class PostgresDecisionWriter:
         self._cache_ttl_seconds = cache_ttl_seconds
 
     async def write(self, stored: Stored) -> None:
-        state = getattr(stored, "state", None)
+        state = stored.session_state()
         if state is not None:
             await self._sessions.upsert(state)
-        else:
-            session_ref = getattr(stored, "session_ref", None)
-            # `Decision.state`, above, already guarantees its session row
-            # exists; `session_ref` is the other half of `Stored` -- an
-            # `Inspection` tied to a session but owning no counters -- and
-            # only ensures the bare row the decision row's FK requires.
-            ref = session_ref() if session_ref is not None else None
-            if ref is not None:
-                await self._sessions.ensure(*ref)
+        ref = stored.session_ref()
+        if ref is not None:
+            await self._sessions.ensure(*ref)
         inserted = await self._decisions.insert(stored)
         if inserted is False:
             # Only an explicit False means "skipped" -- a fake repo whose
