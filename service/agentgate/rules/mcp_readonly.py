@@ -17,7 +17,6 @@ because it is a server convenience, not anyone's policy.
 from agentgate.domain.policy import Policy
 from agentgate.domain.verdict import Verdict
 from agentgate.normalize.model import NormalizedAction
-from agentgate.rules.profile_mcp import mcp_name
 
 READONLY_PREFIXES: tuple[str, ...] = ("get_", "list_", "search_", "read_", "describe_")
 
@@ -29,8 +28,7 @@ class McpReadonlyRule:
     def evaluate(self, action: NormalizedAction, policy: Policy) -> Verdict | None:
         if not policy.mcp.readonly_prefixes_allow:
             return None
-        name = mcp_name(action)
-        if name is None or action.mcp is None:
+        if action.mcp is None:
             return None
         if action.mcp.tool.startswith(READONLY_PREFIXES):
             return Verdict.allow(self.id)

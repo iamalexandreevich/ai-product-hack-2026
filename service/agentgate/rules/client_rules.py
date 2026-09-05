@@ -46,19 +46,14 @@ def canonical_units(action: NormalizedAction) -> tuple[list[str], list[str]]:
     both, because there is nothing compound to take apart.
     """
     if action.tool is Tool.mcp_call:
-        return (_mcp_units(action), _mcp_units(action))
+        units = [action.mcp_name] if action.mcp_name is not None else []
+        return (units, units)
     by_pipeline: dict[int, list[str]] = {}
     for command in action.commands:
         by_pipeline.setdefault(command.pipeline_id, []).append(" ".join(command.argv))
     units = [" | ".join(parts) for parts in by_pipeline.values()]
     singles = [" ".join(command.argv) for command in action.commands]
     return units, singles
-
-
-def _mcp_units(action: NormalizedAction) -> list[str]:
-    if action.mcp is None:
-        return []
-    return [f"{action.mcp.server}.{action.mcp.tool}"]
 
 
 class ClientRulesRule:
@@ -89,17 +84,26 @@ class ClientRulesRule:
 
     def _allow(self, action: NormalizedAction, rules: ClientRules) -> Verdict | None:
         if action.tool is Tool.mcp_call:
-            # No eval, no substitution, no redirect to refuse: an MCP call
-            # is a name and a JSON body, and only the name is matched.
-            units, _ = canonical_units(action)
-            if units and all(rules.matches_command("allow", u) for u in units):
-                return Verdict.allow(self.id)
-            return None
+            return self._allow_mcp(action, rules)
         if action.tool is not Tool.shell:
-            paths = _paths(action)
-            if paths and all(rules.matches_path("allow", p) for p in paths):
-                return Verdict.allow(self.id)
-            return None
+            return self._allow_paths(action, rules)
+        return self._allow_shell(action, rules)
+
+    def _allow_mcp(self, action: NormalizedAction, rules: ClientRules) -> Verdict | None:
+        # No eval, no substitution, no redirect to refuse: an MCP call
+        # is a name and a JSON body, and only the name is matched.
+        units, _ = canonical_units(action)
+        if units and all(rules.matches_command("allow", u) for u in units):
+            return Verdict.allow(self.id)
+        return None
+
+    def _allow_paths(self, action: NormalizedAction, rules: ClientRules) -> Verdict | None:
+        paths = _paths(action)
+        if paths and all(rules.matches_path("allow", p) for p in paths):
+            return Verdict.allow(self.id)
+        return None
+
+    def _allow_shell(self, action: NormalizedAction, rules: ClientRules) -> Verdict | None:
         if not action.commands or action.flags.unparseable or action.flags.has_eval or action.flags.has_subst:
             return None
         if any(writes_a_file(c) for c in action.commands):
