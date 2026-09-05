@@ -128,6 +128,33 @@ def test_openapi_decide_examples_validate_against_the_models(committed_openapi):
             assert example["value"]["suggest"], name
 
 
+def test_openapi_inspect_examples_validate_against_the_models(committed_openapi):
+    """Same guarantee as `test_openapi_decide_examples_validate_against_the_models`,
+    for `/v1/inspect`: documented examples must parse against the real models."""
+    inspect = committed_openapi["paths"]["/v1/inspect"]["post"]
+    requests = inspect["requestBody"]["content"]["application/json"]["examples"]
+    responses = inspect["responses"]["200"]["content"]["application/json"]["examples"]
+
+    assert len(requests) >= 2
+    assert len(responses) >= 2
+
+    for name, example in requests.items():
+        assert InspectRequest.model_validate(example["value"]) is not None, name
+    for name, example in responses.items():
+        assert InspectResponse.model_validate(example["value"]) is not None, name
+
+    # Every request example has a response example of the same name.
+    assert set(requests) <= set(responses)
+
+    verdicts = {name: e["value"]["verdict"] for name, e in responses.items()}
+    assert {"mask", "pass"} <= set(verdicts.values())
+
+    # mask always carries an authoritative output.
+    for name, example in responses.items():
+        if example["value"]["verdict"] == "mask":
+            assert example["value"]["output"], name
+
+
 def test_response_examples_show_every_response_field():
     """A response field missing from an example teaches an integrator that
     the field does not exist. Stricter than model_validate: pydantic accepts
@@ -137,6 +164,16 @@ def test_response_examples_show_every_response_field():
 
     for name, example in RESPONSE_EXAMPLES.items():
         assert set(example["value"]) == set(DecideResponse.model_fields), name
+
+
+def test_inspect_response_examples_show_every_response_field():
+    """Same guarantee as `test_response_examples_show_every_response_field`, for
+    `INSPECT_RESPONSE_EXAMPLES`."""
+    from agentgate.api.examples import INSPECT_RESPONSE_EXAMPLES
+    from agentgate.api.schemas import InspectResponse
+
+    for name, example in INSPECT_RESPONSE_EXAMPLES.items():
+        assert set(example["value"]) == set(InspectResponse.model_fields), name
 
 
 def test_openapi_documents_every_v1_endpoint(committed_openapi):
@@ -150,7 +187,7 @@ def test_openapi_documents_every_v1_endpoint(committed_openapi):
 
 
 def test_no_endpoint_is_marked_provisional(committed_openapi):
-    """All four routes are implemented — nothing in the document may still
+    """All five routes are implemented — nothing in the document may still
     describe one as unbuilt."""
     document = yaml.safe_dump(committed_openapi).lower()
     assert "provisional" not in document

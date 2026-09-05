@@ -75,8 +75,11 @@ info:
     ## User rules (v3)
 
     A request may carry `rules` — one client-declared `allow`/`ask`/`deny` list.
-    Priority for one match, highest first: hard-deny, then the server profile's
-    own denials, then the client's `rules`, then the rest of stage 1.
+    Priority for one match, highest first: hard-deny, then the client's own
+    `deny` rules, then the server profile's own path/domain denials, then the
+    client's `ask` and `allow` rules, then the rest of stage 1 (the server
+    allowlist and the packages rule). A client can forbid more than the profile
+    does but cannot permit what hard-deny or the profile forbids.
 
     ## Sessions
 
@@ -98,10 +101,11 @@ info:
 
     ## Implementation status
 
-    All four routes are implemented, tested and running in v1. `POST /v1/decide`,
-    `GET /v1/decisions`, `GET /v1/profiles/{id}` and `GET /healthz` are the settled
-    contract; the request/response schemas below are generated from the running
-    pydantic models. Integrate against these shapes.
+    All five routes are implemented, tested and running. `POST /v1/decide`,
+    `POST /v1/inspect`, `GET /v1/decisions`, `GET /v1/profiles/{id}` and
+    `GET /healthz` are the settled contract; the request/response schemas below
+    are generated from the running pydantic models. Integrate against these
+    shapes.
   version: 0.1.0
 servers:
 - url: http://127.0.0.1:8400

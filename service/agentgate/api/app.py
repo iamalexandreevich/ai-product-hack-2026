@@ -36,8 +36,8 @@ describe an endpoint the service does not serve.
 import importlib.metadata
 import logging
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import replace
-from typing import Annotated, Any, Literal
+from dataclasses import dataclass, replace
+from typing import Annotated, Any, Literal, Protocol
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Path, Query, Request
 from pydantic import ValidationError
@@ -76,10 +76,7 @@ from agentgate.domain.replay import Replay, ReplayStore
 from agentgate.domain.verdict import Verdict
 from agentgate.engine.gate import Gate
 from agentgate.engine.inspector import Inspector
-from agentgate.inspect.chain import INSPECT_STAGE1
 from agentgate.profiles.schema import Profile
-from agentgate.session.inspect_cache import InMemoryInspectCache
-from agentgate.session.replay import InMemoryReplayStore
 from agentgate.store.keys import ApiKeyRepo
 from agentgate.store.repo import DecisionRepo
 from agentgate.store.writer import DecisionWriter
@@ -154,8 +151,11 @@ re-scanned.
 ## User rules (v3)
 
 A request may carry `rules` — one client-declared `allow`/`ask`/`deny` list.
-Priority for one match, highest first: hard-deny, then the server profile's
-own denials, then the client's `rules`, then the rest of stage 1.
+Priority for one match, highest first: hard-deny, then the client's own
+`deny` rules, then the server profile's own path/domain denials, then the
+client's `ask` and `allow` rules, then the rest of stage 1 (the server
+allowlist and the packages rule). A client can forbid more than the profile
+does but cannot permit what hard-deny or the profile forbids.
 
 ## Sessions
 
@@ -177,10 +177,11 @@ stage-2 model and never shows it to stage 1. A repeat of a call with the same
 
 ## Implementation status
 
-All four routes are implemented, tested and running in v1. `POST /v1/decide`,
-`GET /v1/decisions`, `GET /v1/profiles/{{id}}` and `GET /healthz` are the settled
-contract; the request/response schemas below are generated from the running
-pydantic models. Integrate against these shapes.
+All five routes are implemented, tested and running. `POST /v1/decide`,
+`POST /v1/inspect`, `GET /v1/decisions`, `GET /v1/profiles/{{id}}` and
+`GET /healthz` are the settled contract; the request/response schemas below
+are generated from the running pydantic models. Integrate against these
+shapes.
 """
 
 SERVERS = [
@@ -205,64 +206,81 @@ on purpose instead of a decision — every other failure is a `200` with
 """,
 }
 
-DECIDE_OPENAPI: dict[str, Any] = {
-    # The route parses its own body, so FastAPI sees no body model to document
-    # and adds a 422 for the header the auth dependency reads. Both are stated
-    # here: the request shape the route really validates, and the fact that a
-    # validation error is never what a caller gets back -- it is a 200 `ask`.
-    "requestBody": {
-        "required": True,
-        "content": {
-            "application/json": {
-                "schema": {"$ref": "#/components/schemas/DecideRequest"},
-                "examples": REQUEST_EXAMPLES,
-            }
-        },
-    },
-    "parameters": [
-        {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "required": False,
-            "schema": {"type": "string"},
-            "description": (
-                "Opaque key a harness attaches to one tool call and repeats on a retry. A "
-                "repeat with the same key and the same request — a sha256 over everything but "
-                "`metadata` — returns the stored decision unchanged, without touching session "
-                "counters or storing a second row. A key longer than 128 characters is ignored. "
-                "A repeat under the same key with a different request is decided afresh."
-            ),
-        }
-    ],
-    "responses": {"422": None},
-}
 
-INSPECT_OPENAPI: dict[str, Any] = {
-    # Same rationale as DECIDE_OPENAPI: the route parses its own body so a
-    # validation failure is a 200 `drop`, never a 422.
-    "requestBody": {
-        "required": True,
-        "content": {
-            "application/json": {
-                "schema": {"$ref": "#/components/schemas/InspectRequest"},
-                "examples": INSPECT_REQUEST_EXAMPLES,
-            }
+def _self_parsed_route(ref: str, examples: Mapping[str, Any], key_description: str) -> dict[str, Any]:
+    """`openapi_extra` for a route that parses its own body.
+
+    Both `/v1/decide` and `/v1/inspect` take a raw `Request` and validate the
+    body by hand (see their docstrings), so FastAPI collects no body schema
+    for either and would otherwise document a 422 for the header the auth
+    dependency reads. This restores the request shape each route really
+    validates and states that a validation failure is never what a caller
+    gets back -- it is always a 200 fail-closed answer.
+    """
+    return {
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {"schema": {"$ref": f"#/components/schemas/{ref}"}, "examples": examples}
+            },
         },
-    },
-    "parameters": [
-        {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "required": False,
-            "schema": {"type": "string"},
-            "description": (
-                "Same semantics as on `POST /v1/decide`: a repeat under the same key and "
-                "the same request replays the stored verdict unchanged."
-            ),
-        }
-    ],
-    "responses": {"422": None},
-}
+        "parameters": [
+            {
+                "name": "Idempotency-Key",
+                "in": "header",
+                "required": False,
+                "schema": {"type": "string"},
+                "description": key_description,
+            }
+        ],
+        "responses": {"422": None},
+    }
+
+
+DECIDE_OPENAPI: dict[str, Any] = _self_parsed_route(
+    "DecideRequest",
+    REQUEST_EXAMPLES,
+    "Opaque key a harness attaches to one tool call and repeats on a retry. A "
+    "repeat with the same key and the same request — a sha256 over everything but "
+    "`metadata` — returns the stored decision unchanged, without touching session "
+    "counters or storing a second row. A key longer than 128 characters is ignored. "
+    "A repeat under the same key with a different request is decided afresh.",
+)
+
+INSPECT_OPENAPI: dict[str, Any] = _self_parsed_route(
+    "InspectRequest",
+    INSPECT_REQUEST_EXAMPLES,
+    "Same semantics as on `POST /v1/decide`: a repeat under the same key and "
+    "the same request replays the stored verdict unchanged.",
+)
+
+
+class Outcome(Protocol):
+    """What `/v1/decide` and `/v1/inspect` both produce: `Decision` and
+    `Inspection` share this shape without a common base class."""
+
+    idempotency_key: str | None
+
+    def to_record(self) -> Any: ...
+    def to_response(self) -> Any: ...
+
+
+@dataclass(frozen=True)
+class RouteSpec:
+    """Everything that differs between `/v1/decide` and `/v1/inspect` once
+    the parse -> replay -> run -> remember -> write -> respond shape is
+    shared. `refuse` builds this route's fail-closed answer (`ask` or
+    `drop`) for a rule id and a reason; `refusal_rules` maps a validation
+    exception type to the rule id it earns, scanned in `_refusal_for`;
+    `run` is the engine call (`Gate.decide` or `Inspector.inspect`);
+    `log_label` names the failing call in the internal-error log line.
+    """
+
+    model: type[Any]
+    refuse: Callable[[str, str], Any]
+    refusal_rules: Mapping[type[Exception], str]
+    run: Callable[[Any], Awaitable[Outcome]]
+    log_label: str
 
 
 def _refuse(rule_id: str, reason: str) -> DecideResponse:
@@ -274,53 +292,46 @@ def _refuse(rule_id: str, reason: str) -> DecideResponse:
     )
 
 
+def _refuse_inspect(rule_id: str, reason: str) -> InspectResponse:
+    return InspectResponse(
+        verdict=InspectVerdict.drop, reason=reason, stage=0, rule_id=rule_id, model=None,
+        latency_ms=LatencyMs(total=0), decision_id=str(ULID()),
+    )
+
+
 def _reason_for(error: Mapping[str, Any]) -> str:
     location = ".".join(str(part) for part in error.get("loc", ()))
     return f"invalid request: {location}: {error.get('msg')}"
 
 
-def _refusal_for(errors: list[Any]) -> DecideResponse:
+def _refusal_for(errors: list[Any], refuse: Callable[[str, str], Any], rules: Mapping[type[Exception], str]) -> Any:
     """The fail-closed answer to a failed body validation.
 
-    Several limits get their own rule ids so an integrator can tell them from a
-    malformed body. They are recognised by the exception type the validator
-    raised -- pydantic hands it back under ``ctx.error`` -- rather than by the
-    wording of a message, which is free to change. A body can fail several
-    fields at once, so every error is scanned, not just the first.
+    Several limits get their own rule ids so an integrator can tell them from
+    a malformed body. They are recognised by the exception type the
+    validator raised -- pydantic hands it back under ``ctx.error`` -- rather
+    than by the wording of a message, which is free to change. A body can
+    fail several fields at once, so every error is scanned, not just the
+    first; `rules` maps each recognised exception type to its rule id.
     """
     for error in errors:
         raised = error.get("ctx", {}).get("error")
-        if isinstance(raised, UnsupportedProtocol):
-            return _refuse("api.unsupported-protocol", _reason_for(error))
-        if isinstance(raised, HistoryTooLarge):
-            return _refuse("api.history-too-large", _reason_for(error))
-        if isinstance(raised, UnsupportedRules):
-            return _refuse("api.unsupported-rules", _reason_for(error))
-        if isinstance(raised, RulesTooLarge):
-            return _refuse("api.rules-too-large", _reason_for(error))
-    return _refuse("api.invalid-request", _reason_for(errors[0]))
+        rule_id = next((rule_id for exc_type, rule_id in rules.items() if isinstance(raised, exc_type)), None)
+        if rule_id is not None:
+            return refuse(rule_id, _reason_for(error))
+    return refuse("api.invalid-request", _reason_for(errors[0]))
 
 
-def _refuse_inspect(rule_id: str, reason: str) -> InspectResponse:
-    verdict = InspectVerdict.drop
-    return InspectResponse(
-        verdict=verdict, reason=reason, stage=0, rule_id=rule_id, model=None,
-        latency_ms=LatencyMs(total=0), decision_id=str(ULID()),
-    )
+DECIDE_REFUSAL_RULES: Mapping[type[Exception], str] = {
+    UnsupportedProtocol: "api.unsupported-protocol",
+    HistoryTooLarge: "api.history-too-large",
+    UnsupportedRules: "api.unsupported-rules",
+    RulesTooLarge: "api.rules-too-large",
+}
 
-
-def _inspect_refusal_for(errors: list[Any]) -> InspectResponse:
-    """The fail-closed answer to a failed `/v1/inspect` body validation.
-
-    `OutputTooLarge` gets its own rule id, recognised the same way
-    `_refusal_for` recognises `UnsupportedProtocol` and `HistoryTooLarge`
-    -- by the raised exception type, not by message wording.
-    """
-    for error in errors:
-        raised = error.get("ctx", {}).get("error")
-        if isinstance(raised, OutputTooLarge):
-            return _refuse_inspect("api.output-too-large", _reason_for(error))
-    return _refuse_inspect("api.invalid-request", _reason_for(errors[0]))
+INSPECT_REFUSAL_RULES: Mapping[type[Exception], str] = {
+    OutputTooLarge: "api.output-too-large",
+}
 
 
 async def _replayed(replay: ReplayStore, key: str) -> Replay | None:
@@ -349,6 +360,44 @@ def _replay_key(request: Request) -> str | None:
     return key
 
 
+async def _answer(
+    request: Request,
+    background: BackgroundTasks,
+    spec: RouteSpec,
+    replay: ReplayStore,
+    settings: Settings,
+    writer: DecisionWriter,
+) -> Any:
+    """The shape shared by `/v1/decide` and `/v1/inspect`: parse the body,
+    refuse a bad one, replay an identical retry, run the engine fail-closed,
+    remember the answer under an idempotency key, write it in the
+    background, and respond. `spec` supplies everything that differs.
+    """
+    try:
+        payload = await request.json()
+    except ValueError:
+        return spec.refuse("api.invalid-request", "request body is not valid JSON")
+    try:
+        parsed = spec.model.model_validate(payload)
+    except ValidationError as exc:
+        return _refusal_for(exc.errors(), spec.refuse, spec.refusal_rules)
+    key = _replay_key(request)
+    if key is not None:
+        replayed = await _replayed(replay, key)
+        if replayed is not None and replayed.answers(parsed):
+            return replayed.response
+    try:
+        outcome = await spec.run(parsed)
+    except Exception as exc:  # noqa: BLE001 - fail-closed: no exception may escape as a 500
+        log.exception("%s failed", spec.log_label)
+        return spec.refuse("api.internal-error", f"internal error: {type(exc).__name__}")
+    if key is not None:
+        outcome = replace(outcome, idempotency_key=key)
+        await _remember(replay, key, Replay.of(outcome.to_record()), settings.allow_cache_ttl_seconds)
+    background.add_task(writer.write, outcome)
+    return outcome.to_response()
+
+
 def create_app(
     settings: Settings,
     gate: Gate,
@@ -357,9 +406,18 @@ def create_app(
     profiles: Mapping[str, Profile],
     db_probe: Callable[[], Awaitable[bool]] | None = None,
     key_repo: ApiKeyRepo | None = None,
-    replay: ReplayStore | None = None,
-    inspector: Inspector | None = None,
+    *,
+    replay: ReplayStore,
+    inspector: Inspector,
 ) -> FastAPI:
+    """Assemble the ASGI app around already-built collaborators.
+
+    `replay` and `inspector` are required and keyword-only on purpose: this
+    module has no opinion on which implementation of either goes into a
+    running service -- that recipe belongs to the composition root
+    (`agentgate.bootstrap.build_service`) alone, and a caller assembling its
+    own app (a test) must say so explicitly too.
+    """
     app = FastAPI(
         title="AgentGate",
         version=importlib.metadata.version("agentgate"),
@@ -368,12 +426,15 @@ def create_app(
         servers=SERVERS,
         openapi_tags=TAGS,
     )
-    replay = replay if replay is not None else InMemoryReplayStore()
-    inspector = inspector if inspector is not None else Inspector(
-        profiles, settings.default_profile, INSPECT_STAGE1, InMemoryInspectCache(),
-        settings.allow_cache_ttl_seconds,
-    )
     auth = Depends(make_require_token(settings, key_repo=key_repo, cache_ttl_seconds=settings.api_key_cache_ttl_seconds))
+    decide_spec = RouteSpec(
+        model=DecideRequest, refuse=_refuse, refusal_rules=DECIDE_REFUSAL_RULES,
+        run=gate.decide, log_label="Gate.decide",
+    )
+    inspect_spec = RouteSpec(
+        model=InspectRequest, refuse=_refuse_inspect, refusal_rules=INSPECT_REFUSAL_RULES,
+        run=inspector.inspect, log_label="Inspector.inspect",
+    )
 
     @app.post(
         "/v1/decide",
@@ -444,29 +505,7 @@ def create_app(
         `deny_unknown_package`, `ask_uncertain_db_cleanup`. The fourth response example
         has no request counterpart because it shows what an invalid request produces.
         """
-        try:
-            payload = await request.json()
-        except ValueError:
-            return _refuse("api.invalid-request", "request body is not valid JSON")
-        try:
-            parsed = DecideRequest.model_validate(payload)
-        except ValidationError as exc:
-            return _refusal_for(exc.errors())
-        key = _replay_key(request)
-        if key is not None:
-            replayed = await _replayed(replay, key)
-            if replayed is not None and replayed.answers(parsed):
-                return replayed.response
-        try:
-            decision = await gate.decide(parsed)
-        except Exception as exc:  # noqa: BLE001 - fail-closed: no exception may escape as a 500
-            log.exception("Gate.decide failed")
-            return _refuse("api.internal-error", f"internal error: {type(exc).__name__}")
-        if key is not None:
-            decision = replace(decision, idempotency_key=key)
-            await _remember(replay, key, Replay.of(decision.to_record()), settings.allow_cache_ttl_seconds)
-        background.add_task(writer.write, decision)
-        return decision.to_response()
+        return await _answer(request, background, decide_spec, replay, settings, writer)
 
     @app.post(
         "/v1/inspect",
@@ -502,29 +541,7 @@ def create_app(
         for a `mask`. An `Idempotency-Key` request header replays the stored verdict
         for a repeat of the same request, the same way it does on `/v1/decide`.
         """
-        try:
-            payload = await request.json()
-        except ValueError:
-            return _refuse_inspect("api.invalid-request", "request body is not valid JSON")
-        try:
-            parsed = InspectRequest.model_validate(payload)
-        except ValidationError as exc:
-            return _inspect_refusal_for(exc.errors())
-        key = _replay_key(request)
-        if key is not None:
-            replayed = await _replayed(replay, key)
-            if replayed is not None and replayed.answers(parsed):
-                return replayed.response
-        try:
-            inspection = await inspector.inspect(parsed)
-        except Exception as exc:  # noqa: BLE001 - fail-closed: no exception may escape as a 500
-            log.exception("Inspector.inspect failed")
-            return _refuse_inspect("api.internal-error", f"internal error: {type(exc).__name__}")
-        if key is not None:
-            inspection = replace(inspection, idempotency_key=key)
-            await _remember(replay, key, Replay.of(inspection.to_record()), settings.allow_cache_ttl_seconds)
-        background.add_task(writer.write, inspection)
-        return inspection.to_response()
+        return await _answer(request, background, inspect_spec, replay, settings, writer)
 
     @app.get(
         "/v1/decisions",
