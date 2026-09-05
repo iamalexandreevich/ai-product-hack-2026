@@ -23,7 +23,7 @@ from agentgate.domain.policy import Policy
 from agentgate.engine.inspection import Inspection
 from agentgate.engine.timings import Timings
 from agentgate.inspect.classify import InspectCase, InspectClassifier, InspectVerdictOutcome
-from agentgate.inspect.detectors import Detector, Finding, scan
+from agentgate.inspect.detectors import Action, Detector, Finding, scan
 from agentgate.inspect.mask import Stage1Outcome, apply
 from agentgate.profiles.loader import detect_workspace
 from agentgate.profiles.schema import Profile
@@ -86,7 +86,9 @@ class Inspector:
                 "api.internal-error", "internal error", error="unexpected",
             )
 
-        verdict, replacement, reason, stage, model, cls_error = outcome.verdict, outcome.replacement, outcome.reason, 1, None, None
+        verdict, replacement, reason, stage, model, rule_id, cls_error = (
+            outcome.verdict, outcome.replacement, outcome.reason, 1, None, outcome.rule_id, None,
+        )
         if self._should_classify(policy, outcome, findings):
             with timings.stage(2):
                 result = await self._classify(request, profile_id, policy, findings, outcome)
@@ -94,14 +96,13 @@ class Inspector:
                 cls_error = result.error
                 model = result.model
             else:
-                verdict, replacement, reason, stage, model = (
-                    result.verdict, result.replacement, result.reason, 2, result.model,
-                )
+                verdict, replacement, reason, rule_id = self._cap_stage2(request, findings, outcome, result)
+                stage, model = 2, result.model
 
         inspection = Inspection(
             id=inspection_id, ts=datetime.now(timezone.utc), request=request, verdict=verdict,
             latency=timings.finish(), profile_id=profile_id, profile_hash=policy.profile_hash,
-            replacement=replacement, reason=reason, stage=stage, rule_id=outcome.rule_id, model=model,
+            replacement=replacement, reason=reason, stage=stage, rule_id=rule_id, model=model,
             error=cls_error, findings=tuple(f.rule_id for f in findings),
         )
         await self._remember(key, inspection)
@@ -136,6 +137,34 @@ class Inspector:
         # A finding this route never lets the classifier soften: if every
         # flagged line is `inspect.invisible`, stage 2 is not even asked.
         return any(f.rule_id != _INVISIBLE_RULE for f in findings)
+
+    def _cap_stage2(
+        self, request: InspectRequest, findings: list[Finding], outcome: Stage1Outcome, result: InspectVerdictOutcome,
+    ) -> tuple[InspectVerdict, str | None, str, str | None]:
+        """Apply the two caps spec 5.3 puts on a classifier answer, then derive `rule_id`.
+
+        The drop threshold is a module constant, not model-negotiable: a
+        `pass` cannot lift a stage-1 `drop`. Separately, `inspect.invisible`
+        cleaning can never be undone: if the output carries a `clean`
+        finding and the classifier says `pass`, the cleaned lines still
+        reach the model while the rest of the output is restored -- reusing
+        `mask.apply` on just the `clean` findings, since that is exactly
+        the rewrite this route already trusts for that job. A verdict that
+        stays `pass` after both caps carries no `rule_id`: stage 1's rule
+        did not actually hold.
+        """
+        verdict, replacement, reason = result.verdict, result.replacement, result.reason
+        rule_id = outcome.rule_id
+        clean_findings = [f for f in findings if f.action is Action.clean]
+        if outcome.verdict is InspectVerdict.drop and verdict is InspectVerdict.pass_:
+            verdict, replacement = InspectVerdict.drop, None
+            reason = f"stage 1 drop threshold stands despite model disagreement ({reason}): {outcome.reason}"
+        elif clean_findings and verdict is InspectVerdict.pass_:
+            cleaned = apply(request.output, clean_findings)
+            verdict, replacement, reason, rule_id = InspectVerdict.mask, cleaned.replacement, cleaned.reason, _INVISIBLE_RULE
+        if verdict is InspectVerdict.pass_:
+            rule_id = None
+        return verdict, replacement, reason, rule_id
 
     async def _classify(
         self, request: InspectRequest, profile_id: str, policy: Policy,
