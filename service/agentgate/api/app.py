@@ -72,7 +72,7 @@ from agentgate.api.schemas import (
     UnsupportedRules,
 )
 from agentgate.config import Settings
-from agentgate.domain.replay import Replay, ReplayStore
+from agentgate.domain.replay import Replay, ReplayKey, ReplayStore, principal_of
 from agentgate.domain.verdict import Verdict
 from agentgate.engine.gate import Gate
 from agentgate.engine.inspector import Inspector
@@ -384,9 +384,10 @@ async def _answer(
     except ValidationError as exc:
         return _refusal_for(exc.errors(), spec.refuse, spec.refusal_rules)
     key = _replay_key(request)
-    if key is not None:
-        replayed = await _replayed(replay, key)
-        if replayed is not None and replayed.answers(parsed):
+    storage_key = ReplayKey.of(key_id, key).storage_key() if key is not None else None
+    if storage_key is not None:
+        replayed = await _replayed(replay, storage_key)
+        if replayed is not None and replayed.answers(parsed, principal_of(key_id)):
             return replayed.response
     try:
         outcome = await spec.run(parsed)
@@ -396,9 +397,11 @@ async def _answer(
     # Attribution is attached before the replay entry is built: a restored
     # replay must carry the same key_id the live decision did.
     outcome = replace(outcome, key_id=key_id)
-    if key is not None:
+    if storage_key is not None:
         outcome = replace(outcome, idempotency_key=key)
-        await _remember(replay, key, Replay.of(outcome.to_record()), settings.allow_cache_ttl_seconds)
+        await _remember(
+            replay, storage_key, Replay.of(outcome.to_record()), settings.allow_cache_ttl_seconds
+        )
     background.add_task(writer.write, outcome)
     return outcome.to_response()
 

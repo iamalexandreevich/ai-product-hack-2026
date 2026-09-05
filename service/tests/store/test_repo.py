@@ -508,6 +508,16 @@ async def test_load_replayable_limit_keeps_the_newest_keyed_rows(session_factory
     assert [r.idempotency_key for r in loaded] == ["newest", "middle"]
 
 
+async def test_load_replayable_carries_the_key_id_back(session_factory):
+    await _seed_session(session_factory)
+    repo = DecisionRepo(session_factory)
+    await repo.insert(replace(rec(), idempotency_key="k", key_id="01HZKEYA"))
+
+    records = await repo.load_replayable(datetime.now(timezone.utc) - timedelta(hours=1))
+
+    assert [r.key_id for r in records] == ["01HZKEYA"]
+
+
 async def test_v3_columns_round_trip(session_factory):
     await _seed_session(session_factory)
     repo = DecisionRepo(session_factory)

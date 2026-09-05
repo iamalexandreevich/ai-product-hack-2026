@@ -17,7 +17,7 @@ from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import Protocol
 
-from agentgate.domain.replay import Replay, ReplayStore
+from agentgate.domain.replay import Replay, ReplayKey, ReplayStore
 from agentgate.engine.decision import DecisionRecord
 from agentgate.session.ttl_store import SWEEP_EVERY, TtlStore
 
@@ -65,7 +65,9 @@ class PersistentReplayStore:
             except Exception:  # noqa: BLE001 - one unprojectable row must not fail the whole restore
                 log.warning("replay store restore skipped unprojectable record id=%s", record.id, exc_info=True)
                 continue
-            await self._inner.put(record.idempotency_key, replay, remaining)
+            await self._inner.put(
+                ReplayKey.of(record.key_id, record.idempotency_key).storage_key(), replay, remaining
+            )
 
     async def get(self, key: str) -> Replay | None:
         return await self._inner.get(key)

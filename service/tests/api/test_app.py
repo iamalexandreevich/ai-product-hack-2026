@@ -532,7 +532,7 @@ async def test_a_replay_store_given_to_the_app_is_the_one_used(tmp_path):
     replay = InMemoryReplayStore()
     app, _, _, _ = build(tmp_path, replay=replay)
     await call(app, "POST", "/v1/decide", json=body(), headers={"idempotency-key": "seen"})
-    assert (await replay.get("seen")) is not None
+    assert (await replay.get("token:seen")) is not None
 
 
 async def test_a_colliding_key_from_another_session_never_replays_and_hard_deny_still_wins(tmp_path):
@@ -738,3 +738,34 @@ async def test_an_inspect_verdict_records_the_key_id_too(tmp_path):
                headers={"authorization": f"Bearer {plaintext}"})
 
     assert drepo.rows[-1].to_record().key_id == "key-9"
+
+
+# --- replay namespaced by principal ------------------------------------------
+
+
+async def test_a_repeat_under_another_key_is_decided_afresh(tmp_path):
+    from agentgate.store.keys import hash_key
+
+    first_plain, second_plain = "agk_" + "e" * 43, "agk_" + "f" * 43
+    keys = FakeKeyRepo({hash_key(first_plain): "key-A", hash_key(second_plain): "key-B"})
+    app, _, _, _ = build(tmp_path, token="secret", key_repo=keys)
+    headers_a = {"authorization": f"Bearer {first_plain}", "idempotency-key": "shared"}
+    headers_b = {"authorization": f"Bearer {second_plain}", "idempotency-key": "shared"}
+
+    first = await call(app, "POST", "/v1/decide", json=body(), headers=headers_a)
+    second = await call(app, "POST", "/v1/decide", json=body(), headers=headers_b)
+
+    assert first.json()["decision_id"] != second.json()["decision_id"]
+
+
+async def test_a_repeat_under_the_same_key_is_still_replayed(tmp_path):
+    from agentgate.store.keys import hash_key
+
+    plaintext = "agk_" + "g" * 43
+    app, _, _, _ = build(tmp_path, token="secret", key_repo=FakeKeyRepo({hash_key(plaintext): "key-A"}))
+    headers = {"authorization": f"Bearer {plaintext}", "idempotency-key": "shared"}
+
+    first = await call(app, "POST", "/v1/decide", json=body(), headers=headers)
+    second = await call(app, "POST", "/v1/decide", json=body(), headers=headers)
+
+    assert first.json()["decision_id"] == second.json()["decision_id"]
