@@ -11,7 +11,7 @@
 | **v1** | последний tool-call + последнее сообщение пользователя | `2026-09-03-agentgate-v1-design.md` | реализовано |
 | **v2** | v1 + предшествующий диалог: `assistant` + `toolcall` + `toolresult` + `human` | `2026-09-04-agentgate-v2-design.md` (постановка — `v2-dialogue-context.md`) | **реализовано** |
 | **v3** | v2 + оценка самих `tool-result` | `2026-09-04-agentgate-v3-rules-and-inspect-design.md` (постановка — `v3-tool-result-evaluation.md`) | **реализовано** |
-| **v4** | v3 + семантический Context Guard: модель возвращает спаны, сервер маскирует; плюс маскирование секретов шире `.env` | `v4-context-guard.md` | спроектировать |
+| **v4** | v3 + семантический Context Guard: модель возвращает спаны, сервер маскирует; плюс маскирование секретов шире `.env` | `2026-09-05-agentgate-v4-context-guard-design.md` (различение с экранированием — `v4-context-guard.md`) | **спроектировано** |
 | **v5** | *(другая ось)* модель как тройка `base_url` / `api_key` / `model_name`; ризонинг выключен, SO включён | `v5-model-binding.md` | спроектировать |
 
 ## Где мы сейчас: v2 реализован
