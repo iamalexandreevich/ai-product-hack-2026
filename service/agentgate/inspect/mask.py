@@ -16,6 +16,7 @@ from agentgate.inspect.detectors import INVISIBLE_CHARS, Action, Finding
 
 REPLACEMENT_LINE = "[gate: instruction-like text removed]"
 DROP_SHARE = 0.5
+SEMANTIC_RULE = "inspect.semantic"
 
 
 @dataclass(frozen=True)
