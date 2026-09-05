@@ -642,6 +642,16 @@ async def test_one_key_twice_in_one_session_still_writes_one_row(session_factory
     assert await repo.insert(replace(rec(session_id="s1"), idempotency_key="dup3", key_id=KEY_A)) is False
 
 
+async def test_a_sessionless_row_and_a_session_row_do_not_collide(session_factory):
+    # NULL and a named session are different slots: a coalesce-style fallback
+    # that mapped NULL onto a sentinel string could silently merge them.
+    await _seed_session(session_factory)
+    repo = DecisionRepo(session_factory)
+
+    assert await repo.insert(replace(rec(session_id=None), idempotency_key="dup5", key_id=KEY_A)) is True
+    assert await repo.insert(replace(rec(session_id="s1"), idempotency_key="dup5", key_id=KEY_A)) is True
+
+
 async def test_two_sessionless_calls_still_compete_for_the_key(session_factory):
     # NULL <> NULL in Postgres, so without NULLS NOT DISTINCT this pair would
     # both land and the uniqueness we are here to keep would be gone.
