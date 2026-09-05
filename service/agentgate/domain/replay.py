@@ -14,7 +14,7 @@ the answer, and the API honours an entry only when the identity matches.
 from dataclasses import dataclass
 from typing import Protocol
 
-from agentgate.api.schemas import DecideRequest, DecideResponse
+from agentgate.api.schemas import DecideRequest, DecideResponse, InspectRequest, InspectResponse
 from agentgate.engine.decision import DecisionRecord
 
 
@@ -22,10 +22,11 @@ from agentgate.engine.decision import DecisionRecord
 class Replay:
     """What a repeated call gets back, and who it was decided for.
 
-    The answer is the wire response, built once by DecisionRecord.to_response;
-    the identity is what a retry must match before it is trusted with it. A key
-    is caller-supplied and shared across sessions, so the key alone is not
-    proof that two calls are the same call.
+    The answer is the wire response, built once by DecisionRecord.to_response
+    or to_inspect_response depending on the record's `kind`; the identity is
+    what a retry must match before it is trusted with it. A key is
+    caller-supplied and shared across sessions, so the key alone is not proof
+    that two calls are the same call.
 
     The identity is the whole request minus `metadata`, as one sha256. Listing
     the fields that make a decision differ proved incomplete twice -- once for
@@ -37,13 +38,14 @@ class Replay:
     """
 
     request_digest: str
-    response: DecideResponse
+    response: DecideResponse | InspectResponse
 
     @classmethod
     def of(cls, record: DecisionRecord) -> "Replay":
-        return cls(request_digest=record.request_digest, response=record.to_response())
+        response = record.to_inspect_response() if record.kind == "inspect" else record.to_response()
+        return cls(request_digest=record.request_digest, response=response)
 
-    def answers(self, request: DecideRequest) -> bool:
+    def answers(self, request: DecideRequest | InspectRequest) -> bool:
         return self.request_digest == request.identity_digest()
 
 

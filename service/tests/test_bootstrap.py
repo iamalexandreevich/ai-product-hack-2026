@@ -187,3 +187,20 @@ async def test_build_service_uses_the_replay_store_it_was_given(session_factory,
     replay = _NoRestore()
     service = await build_service(settings_for(tmp_path), replay_store=replay)
     assert service.replay_store is replay
+
+
+async def test_built_service_wires_an_inspector(session_factory, tmp_path):
+    service = await build_service(settings_for(tmp_path))
+    assert service.inspector is not None
+
+
+async def test_built_app_answers_inspect(session_factory, tmp_path):
+    service = await build_service(settings_for(tmp_path))
+    async with httpx.AsyncClient(transport=ASGITransport(app=service.app), base_url="http://test") as c:
+        r = await c.post("/v1/inspect", json={
+            "session_id": "s1", "harness": "t", "call_id": "c1", "tool": "shell", "tool_name": "bash",
+            "status": "completed", "output": "On branch main\n",
+            "provenance": {"kind": "shell", "command": "git status"},
+            "args": {"cwd": WORKSPACE}, "user_request": "status",
+        })
+    assert r.status_code == 200 and r.json()["verdict"] == "pass"

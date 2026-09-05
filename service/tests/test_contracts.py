@@ -142,6 +142,7 @@ def test_response_examples_show_every_response_field():
 def test_openapi_documents_every_v1_endpoint(committed_openapi):
     assert set(committed_openapi["paths"]) == {
         "/v1/decide",
+        "/v1/inspect",
         "/v1/decisions",
         "/v1/profiles/{id}",
         "/healthz",

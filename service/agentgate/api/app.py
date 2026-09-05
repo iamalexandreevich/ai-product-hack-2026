@@ -37,33 +37,48 @@ import importlib.metadata
 import logging
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import replace
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Path, Query, Request
 from pydantic import ValidationError
 from ulid import ULID
 
 from agentgate.api.deps import make_require_token
-from agentgate.api.examples import REQUEST_EXAMPLES, RESPONSE_EXAMPLES
+from agentgate.api.examples import (
+    INSPECT_REQUEST_EXAMPLES,
+    INSPECT_RESPONSE_EXAMPLES,
+    REQUEST_EXAMPLES,
+    RESPONSE_EXAMPLES,
+)
 from agentgate.api.openapi import install_openapi
 from agentgate.api.responses import DecisionListResponse, Error, Health
 from agentgate.api.schemas import (
     IDEMPOTENCY_KEY_MAX_CHARS,
     METADATA_MAX_BYTES,
+    OUTPUT_MAX_BYTES,
     PROTOCOL,
     RAW_MAX_BYTES,
     USER_REQUEST_MAX_CHARS,
     DecideRequest,
     DecideResponse,
     HistoryTooLarge,
+    InspectRequest,
+    InspectResponse,
+    InspectVerdict,
     LatencyMs,
+    OutputTooLarge,
+    RulesTooLarge,
     UnsupportedProtocol,
+    UnsupportedRules,
 )
 from agentgate.config import Settings
 from agentgate.domain.replay import Replay, ReplayStore
 from agentgate.domain.verdict import Verdict
 from agentgate.engine.gate import Gate
+from agentgate.engine.inspector import Inspector
+from agentgate.inspect.chain import INSPECT_STAGE1
 from agentgate.profiles.schema import Profile
+from agentgate.session.inspect_cache import InMemoryInspectCache
 from agentgate.session.replay import InMemoryReplayStore
 from agentgate.store.keys import ApiKeyRepo
 from agentgate.store.repo import DecisionRepo
@@ -119,6 +134,29 @@ command's AST, so a client that sends them is not wrong, just ignored), and
 `raw` is **required and non-blank for `tool: shell`** because the raw command
 line is what stage 1 parses.
 
+## Inspect (v3)
+
+`POST /v1/inspect` judges one tool result, held back from the model until the
+service answers. There are three verdicts: `pass` (the result reaches the
+model unchanged), `mask` (the authoritative rewrite in `output` replaces it),
+and `drop` (the result is withheld entirely). Unlike `/v1/decide`, the
+fail-closed answer here is `drop`, not `ask` — there is no human to ask about
+a result that already happened, and passing it through unjudged is the one
+outcome this route must never produce. This is also why an adapter that
+cannot reach the service should treat that as fail-open on purpose: showing
+the model an unreviewed result beats never showing it one at all, and that
+tradeoff is the adapter's to make, not this service's. `output` is capped at
+{OUTPUT_MAX_BYTES} bytes of UTF-8; over the limit the call is refused as
+`drop` with `rule_id: api.output-too-large`. Judged content is cached by a
+digest of its bytes plus the profile, so identical output seen twice is not
+re-scanned.
+
+## User rules (v3)
+
+A request may carry `rules` — one client-declared `allow`/`ask`/`deny` list.
+Priority for one match, highest first: hard-deny, then the server profile's
+own denials, then the client's `rules`, then the rest of stage 1.
+
 ## Sessions
 
 `session_id` is optional but load-bearing. With it, the service keeps
@@ -154,6 +192,7 @@ SERVERS = [
 
 TAGS = [
     {"name": "decide", "description": "The gate itself. Implemented and contract-stable."},
+    {"name": "inspect", "description": "Verdicts on tool results, held back from the model until judged."},
     {"name": "read", "description": "Read/ops endpoints: decision feed, profile read, liveness."},
 ]
 
@@ -198,6 +237,33 @@ DECIDE_OPENAPI: dict[str, Any] = {
     "responses": {"422": None},
 }
 
+INSPECT_OPENAPI: dict[str, Any] = {
+    # Same rationale as DECIDE_OPENAPI: the route parses its own body so a
+    # validation failure is a 200 `drop`, never a 422.
+    "requestBody": {
+        "required": True,
+        "content": {
+            "application/json": {
+                "schema": {"$ref": "#/components/schemas/InspectRequest"},
+                "examples": INSPECT_REQUEST_EXAMPLES,
+            }
+        },
+    },
+    "parameters": [
+        {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": False,
+            "schema": {"type": "string"},
+            "description": (
+                "Same semantics as on `POST /v1/decide`: a repeat under the same key and "
+                "the same request replays the stored verdict unchanged."
+            ),
+        }
+    ],
+    "responses": {"422": None},
+}
+
 
 def _refuse(rule_id: str, reason: str) -> DecideResponse:
     verdict = Verdict.ask(rule_id, reason, stage=0)
@@ -216,7 +282,7 @@ def _reason_for(error: Mapping[str, Any]) -> str:
 def _refusal_for(errors: list[Any]) -> DecideResponse:
     """The fail-closed answer to a failed body validation.
 
-    Two limits get their own rule ids so an integrator can tell them from a
+    Several limits get their own rule ids so an integrator can tell them from a
     malformed body. They are recognised by the exception type the validator
     raised -- pydantic hands it back under ``ctx.error`` -- rather than by the
     wording of a message, which is free to change. A body can fail several
@@ -228,7 +294,33 @@ def _refusal_for(errors: list[Any]) -> DecideResponse:
             return _refuse("api.unsupported-protocol", _reason_for(error))
         if isinstance(raised, HistoryTooLarge):
             return _refuse("api.history-too-large", _reason_for(error))
+        if isinstance(raised, UnsupportedRules):
+            return _refuse("api.unsupported-rules", _reason_for(error))
+        if isinstance(raised, RulesTooLarge):
+            return _refuse("api.rules-too-large", _reason_for(error))
     return _refuse("api.invalid-request", _reason_for(errors[0]))
+
+
+def _refuse_inspect(rule_id: str, reason: str) -> InspectResponse:
+    verdict = InspectVerdict.drop
+    return InspectResponse(
+        verdict=verdict, reason=reason, stage=0, rule_id=rule_id, model=None,
+        latency_ms=LatencyMs(total=0), decision_id=str(ULID()),
+    )
+
+
+def _inspect_refusal_for(errors: list[Any]) -> InspectResponse:
+    """The fail-closed answer to a failed `/v1/inspect` body validation.
+
+    `OutputTooLarge` gets its own rule id, recognised the same way
+    `_refusal_for` recognises `UnsupportedProtocol` and `HistoryTooLarge`
+    -- by the raised exception type, not by message wording.
+    """
+    for error in errors:
+        raised = error.get("ctx", {}).get("error")
+        if isinstance(raised, OutputTooLarge):
+            return _refuse_inspect("api.output-too-large", _reason_for(error))
+    return _refuse_inspect("api.invalid-request", _reason_for(errors[0]))
 
 
 async def _replayed(replay: ReplayStore, key: str) -> Replay | None:
@@ -266,6 +358,7 @@ def create_app(
     db_probe: Callable[[], Awaitable[bool]] | None = None,
     key_repo: ApiKeyRepo | None = None,
     replay: ReplayStore | None = None,
+    inspector: Inspector | None = None,
 ) -> FastAPI:
     app = FastAPI(
         title="AgentGate",
@@ -276,6 +369,10 @@ def create_app(
         openapi_tags=TAGS,
     )
     replay = replay if replay is not None else InMemoryReplayStore()
+    inspector = inspector if inspector is not None else Inspector(
+        profiles, settings.default_profile, INSPECT_STAGE1, InMemoryInspectCache(),
+        settings.allow_cache_ttl_seconds,
+    )
     auth = Depends(make_require_token(settings, key_repo=key_repo, cache_ttl_seconds=settings.api_key_cache_ttl_seconds))
 
     @app.post(
@@ -371,6 +468,64 @@ def create_app(
         background.add_task(writer.write, decision)
         return decision.to_response()
 
+    @app.post(
+        "/v1/inspect",
+        response_model=InspectResponse,
+        dependencies=[auth],
+        operation_id="inspect",
+        summary="Judge one tool result",
+        tags=["inspect"],
+        responses={
+            200: {
+                "description": (
+                    "The verdict. Returned for `pass`, `mask` and `drop` alike, "
+                    "including when the request was invalid or an internal "
+                    "failure forced a fail-closed `drop`."
+                ),
+                "content": {"application/json": {"examples": INSPECT_RESPONSE_EXAMPLES}},
+            },
+            401: UNAUTHORIZED,
+        },
+        openapi_extra=INSPECT_OPENAPI,
+    )
+    async def inspect(request: Request, background: BackgroundTasks) -> InspectResponse:
+        """Judge one tool result, held back from the model until this call answers.
+
+        **Always HTTP 200.** `pass`, `mask` and `drop` come back as `verdict` values
+        with a 200 status. Invalid bodies, oversized output and internal errors all
+        come back as HTTP 200 with `verdict: "drop"` -- the fail-closed answer here,
+        since there is no human to ask about a result that already happened. The
+        single non-200 the service returns on purpose is 401 for a bad bearer token.
+
+        **Reading the answer.** `output` is set and authoritative for `mask`; the
+        adapter substitutes it verbatim. `reason` explains a `drop` and is recorded
+        for a `mask`. An `Idempotency-Key` request header replays the stored verdict
+        for a repeat of the same request, the same way it does on `/v1/decide`.
+        """
+        try:
+            payload = await request.json()
+        except ValueError:
+            return _refuse_inspect("api.invalid-request", "request body is not valid JSON")
+        try:
+            parsed = InspectRequest.model_validate(payload)
+        except ValidationError as exc:
+            return _inspect_refusal_for(exc.errors())
+        key = _replay_key(request)
+        if key is not None:
+            replayed = await _replayed(replay, key)
+            if replayed is not None and replayed.answers(parsed):
+                return replayed.response
+        try:
+            inspection = await inspector.inspect(parsed)
+        except Exception as exc:  # noqa: BLE001 - fail-closed: no exception may escape as a 500
+            log.exception("Inspector.inspect failed")
+            return _refuse_inspect("api.internal-error", f"internal error: {type(exc).__name__}")
+        if key is not None:
+            inspection = replace(inspection, idempotency_key=key)
+            await _remember(replay, key, Replay.of(inspection.to_record()), settings.allow_cache_ttl_seconds)
+        background.add_task(writer.write, inspection)
+        return inspection.to_response()
+
     @app.get(
         "/v1/decisions",
         response_model=DecisionListResponse,
@@ -409,6 +564,10 @@ def create_app(
                 )
             ),
         ] = None,
+        kind: Annotated[
+            Literal["decide", "inspect"] | None,
+            Query(description="Return only rows of this kind. Omitted, both kinds are returned."),
+        ] = None,
     ) -> DecisionListResponse:
         """Decision feed for the dashboard and the benchmark. Returns stored decisions
         newest first as `{items, next_before}`, with cursor pagination by `decision_id`:
@@ -420,7 +579,7 @@ def create_app(
         (this is a read endpoint, not the always-200 decide path). Requires the bearer
         credential when the service is configured with one.
         """
-        rows = await decision_repo.list(session_id=session_id, model=model, limit=limit, before=before)
+        rows = await decision_repo.list(session_id=session_id, model=model, limit=limit, before=before, kind=kind)
         next_before = rows[-1].id if len(rows) == limit else None
         return DecisionListResponse(items=rows, next_before=next_before)
 
