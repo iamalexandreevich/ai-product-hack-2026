@@ -30,6 +30,7 @@ from agentgate.api.schemas import (
     DecideRequest,
     DecideResponse,
     DecisionKind,
+    InspectResponse,
     InspectVerdict,
     LatencyMs,
     Tool,
@@ -140,6 +141,16 @@ class DecisionRecord(BaseModel):
         return DecideResponse(
             decision=self.decision, reason=self.reason, suggest=self.suggest, stage=self.stage,
             rule_id=self.rule_id, model=self.model,
+            latency_ms=LatencyMs(
+                stage1=self.latency_stage1_ms, stage2=self.latency_stage2_ms, total=self.latency_total_ms
+            ),
+            cached=self.cached, decision_id=self.id, protocol=self.protocol,
+        )
+
+    def to_inspect_response(self) -> InspectResponse:
+        return InspectResponse(
+            verdict=InspectVerdict(self.decision), output=self.replacement, reason=self.reason, suggest=self.suggest,
+            stage=self.stage, rule_id=self.rule_id, model=self.model,
             latency_ms=LatencyMs(
                 stage1=self.latency_stage1_ms, stage2=self.latency_stage2_ms, total=self.latency_total_ms
             ),

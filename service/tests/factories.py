@@ -5,7 +5,7 @@ each other -- renaming a test module must not break three others.
 from collections.abc import Callable
 from datetime import datetime, timezone
 
-from agentgate.api.schemas import DecideRequest, DecisionKind, RuleSet, Turn
+from agentgate.api.schemas import DecideRequest, DecisionKind, InspectRequest, InspectVerdict, RuleSet, Turn
 from agentgate.classify.base import Classifier, ReviewCase
 from agentgate.domain.dialogue import Dialogue
 from agentgate.domain.policy import Policy
@@ -13,7 +13,10 @@ from agentgate.domain.session import SessionState, SessionStateStore
 from agentgate.domain.verdict import Verdict
 from agentgate.engine.decision import Decision, DecisionRecord
 from agentgate.engine.gate import Gate
+from agentgate.engine.inspection import Inspection
+from agentgate.engine.inspector import Inspector
 from agentgate.engine.timings import Latency
+from agentgate.inspect.chain import INSPECT_STAGE1
 from agentgate.normalize import normalize
 from agentgate.normalize.model import NormalizedAction
 from agentgate.profiles.schema import Profile
@@ -328,3 +331,48 @@ class FailingDecisionWriter:
     async def write(self, decision: Decision) -> None:
         self.calls += 1
         raise self.error
+
+
+def inspect_request(output: str = "On branch main\n", **overrides) -> InspectRequest:
+    data = dict(
+        session_id="s1", harness="t", call_id="c1", tool="shell", tool_name="bash", status="completed",
+        output=output, provenance={"kind": "shell", "command": "git status"},
+        args={"cwd": WORKSPACE}, user_request="status",
+    )
+    data.update(overrides)
+    return InspectRequest.model_validate(data)
+
+
+def inspection(**overrides) -> Inspection:
+    data = dict(
+        id="01J0", ts=datetime.now(timezone.utc), request=inspect_request(),
+        verdict=InspectVerdict.pass_, latency=Latency(total_ms=1, stage1_ms=1),
+        profile_id="default", profile_hash="h" * 64,
+    )
+    data.update(overrides)
+    return Inspection(**data)
+
+
+class FakeInspectCache:
+    def __init__(self) -> None:
+        self.items: dict[str, Inspection] = {}
+        self.puts = 0
+
+    async def get(self, key: str) -> Inspection | None:
+        return self.items.get(key)
+
+    async def put(self, key: str, inspection: Inspection, ttl_seconds: int) -> None:
+        self.puts += 1
+        self.items[key] = inspection
+
+
+def inspector(cache=None, detectors=INSPECT_STAGE1, classifier=None, **profile_overrides) -> Inspector:
+    """An Inspector over "default" and "other" profiles."""
+    return Inspector(
+        profiles={"default": profile(**profile_overrides), "other": profile(id="other")},
+        default_profile="default",
+        detectors=detectors,
+        cache=cache if cache is not None else FakeInspectCache(),
+        ttl_seconds=86400,
+        classifiers=classifier,
+    )

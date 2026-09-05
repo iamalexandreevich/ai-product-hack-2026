@@ -1109,6 +1109,18 @@ components:
         is already budgeted in characters. `budget_chars` is measured on the
         JSON-escaped content the prompt emits, so control-heavy tool output
         counts at its rendered size; `per_turn_chars` caps raw characters.
+    Inspect:
+      properties:
+        classifier:
+          type: string
+          enum:
+          - 'off'
+          - on-flag
+          title: Classifier
+          default: 'off'
+      type: object
+      title: Inspect
+      description: How the inspect route judges a tool result beyond stage 1.
     InspectVerdict:
       type: string
       enum:
@@ -1290,6 +1302,8 @@ components:
             type: object
           type: array
           title: Rules
+        inspect:
+          $ref: '#/components/schemas/Inspect'
       type: object
       required:
       - id

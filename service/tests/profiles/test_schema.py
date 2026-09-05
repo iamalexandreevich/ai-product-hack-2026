@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from agentgate.profiles.schema import DenyWindow, History, NetworkMode, PerTurnChars, Profile
+from agentgate.profiles.schema import DenyWindow, History, Inspect, NetworkMode, PerTurnChars, Profile
 from tests.factories import minimal_profile_data, profile
 
 
@@ -87,3 +87,12 @@ def test_cap_for_answers_for_every_turn_role():
     from agentgate.api.schemas import TurnRole
 
     assert all(isinstance(History().cap_for(role.value), int) for role in TurnRole)
+
+
+def test_inspect_classifier_defaults_to_off():
+    p = Profile.model_validate(minimal_profile_data())
+    assert p.inspect.classifier == "off"
+
+
+def test_inspect_classifier_accepts_on_flag():
+    assert Inspect(classifier="on-flag").classifier == "on-flag"

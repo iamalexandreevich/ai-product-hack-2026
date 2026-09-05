@@ -1,7 +1,7 @@
 import hashlib
 from enum import Enum
 from functools import cached_property
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -97,6 +97,12 @@ class History(BaseModel):
         }[role]
 
 
+class Inspect(BaseModel):
+    """How the inspect route judges a tool result beyond stage 1."""
+
+    classifier: Literal["off", "on-flag"] = "off"
+
+
 class Profile(BaseModel):
     """A policy profile as the service loaded it. Server-side configuration; a
     harness never receives this in normal operation. Contains no secret values
@@ -113,6 +119,7 @@ class Profile(BaseModel):
     prose: Prose = Field(default_factory=Prose)
     history: History = Field(default_factory=History)
     rules: list[dict[str, Any]] = Field(default_factory=list)
+    inspect: Inspect = Field(default_factory=Inspect)
 
     @cached_property
     def _hash(self) -> str:
