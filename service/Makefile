@@ -102,8 +102,10 @@ deploy: check-clean
 	ssh $(DEPLOY_HOST) 'set -e; cd $(DEPLOY_DIR) && \
 		PREV_IMAGE=$$($(COMPOSE) images -q gate 2>/dev/null || true); \
 		if [ -n "$$PREV_IMAGE" ]; then echo "$$PREV_IMAGE" > .previous_gate_image; fi; \
-		GIT_SHA=$(shell git rev-parse HEAD) $(COMPOSE) up -d --build && \
-		$(COMPOSE) exec -T gate uv run alembic upgrade head'
+		GIT_SHA=$(shell git rev-parse HEAD) $(COMPOSE) up -d --build'
+	@# Migrations run inside the gate container on start (see Dockerfile CMD);
+	@# a second `alembic upgrade head` here raced it and lost on 0008/0009
+	@# (DuplicateObjectError), so the health check below is the migration gate.
 	@echo "==> health check (polling /healthz up to 30s)"
 	@if ssh $(DEPLOY_HOST) 'for i in $$(seq 1 30); do curl -fsS http://localhost:$(HEALTHZ_PORT)/healthz >/dev/null 2>&1 && exit 0; sleep 1; done; exit 1'; then \
 		echo "==> deploy OK on the server; checking from here over HTTPS"; \
