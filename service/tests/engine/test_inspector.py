@@ -415,3 +415,28 @@ async def test_stage_one_p50_under_25ms_for_256kb():
         result = await ins.inspect(inspect_request(text, provenance={"kind": "shell", "command": "printenv"}))
         samples.append(result.latency.stage1_ms)
     assert statistics.median(samples) <= 25.0, f"p50={statistics.median(samples)}ms"
+
+
+_SECRET_LINE = "DATABASE_URL=postgres://app:s3cr3tP4ssw0rd@db.internal:5432/app\n"
+
+
+async def test_cache_key_distinguishes_two_shell_commands_with_one_output():
+    # Both are `kind: "shell"`, but only one reads a secret file, and that
+    # is what decides whether the value is redacted.
+    cache = FakeInspectCache()
+    ins = inspector(cache=cache)
+    await ins.inspect(inspect_request(_SECRET_LINE, provenance={"kind": "shell", "command": "cat .env"}))
+    second = await ins.inspect(inspect_request(_SECRET_LINE, provenance={"kind": "shell", "command": "cat config.sample"}))
+    assert cache.puts == 2
+    assert second.cached is False
+    assert second.verdict is InspectVerdict.pass_
+
+
+async def test_a_secret_reading_command_still_redacts_when_a_harmless_one_came_first():
+    cache = FakeInspectCache()
+    ins = inspector(cache=cache)
+    await ins.inspect(inspect_request(_SECRET_LINE, provenance={"kind": "shell", "command": "cat config.sample"}))
+    second = await ins.inspect(inspect_request(_SECRET_LINE, provenance={"kind": "shell", "command": "cat .env"}))
+    assert second.cached is False
+    assert second.verdict is InspectVerdict.mask
+    assert SECRET_REPLACEMENT in second.replacement

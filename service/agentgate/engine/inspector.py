@@ -55,6 +55,7 @@ class _Context:
     policy: Policy
     cache_key: str
     dialogue: Dialogue
+    entropy_candidates: bool
 
 
 @dataclass(frozen=True)
@@ -122,7 +123,7 @@ class Inspector:
         try:
             with timings.stage(1):
                 lines = request.output.split("\n")
-                findings = self._scan(request, policy, workspace)
+                findings = self._scan(request, policy, resolved.entropy_candidates)
                 outcome = apply(request.output, findings)
                 redacted = redacted_lines(lines, findings)
         except Exception:  # noqa: BLE001 - a detector bug must read as drop, never as pass
@@ -170,10 +171,12 @@ class Inspector:
             policy = Policy.bind(profile, workspace)
             dialogue = Dialogue.of(request.history)
             intent = request.user_request or dialogue.last_human_request() or ""
+            candidates = entropy_candidates_allowed(request.provenance, workspace)
             cache_key = inspect_cache_key(
-                policy.profile_hash, request.provenance.kind, _digest(request.output), _digest(intent), dialogue.digest(),
+                policy.profile_hash, request.provenance.kind, _digest(request.output), _digest(intent),
+                dialogue.digest(), candidates,
             )
-            return _Context(policy=policy, cache_key=cache_key, dialogue=dialogue)
+            return _Context(policy=policy, cache_key=cache_key, dialogue=dialogue, entropy_candidates=candidates)
         except Exception:  # noqa: BLE001 - a bug resolving the policy must read as drop, never as pass
             log.exception("inspect prelude raised")
             return self._refuse(
@@ -181,14 +184,13 @@ class Inspector:
                 error="unexpected",
             )
 
-    def _scan(self, request: InspectRequest, policy: Policy, workspace: str) -> list[Finding]:
+    def _scan(self, request: InspectRequest, policy: Policy, entropy_candidates: bool) -> list[Finding]:
         """Stage 1's findings, secrets first: a value hidden here is hidden
         everywhere downstream, whatever a detector or the model says about
         the same line (`mask.resolve` ranks `redact` above the rest)."""
         findings: list[Finding] = []
         if policy.inspect.secrets == "on":
-            candidates = entropy_candidates_allowed(request.provenance, workspace)
-            findings.extend(scan_secrets(request.output, entropy_candidates=candidates))
+            findings.extend(scan_secrets(request.output, entropy_candidates=entropy_candidates))
         findings.extend(scan(request.output, self._detectors))
         return findings
 
