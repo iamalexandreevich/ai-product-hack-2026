@@ -23,6 +23,7 @@ from ulid import ULID
 
 from agentgate.api.schemas import DecideRequest, DecisionKind
 from agentgate.classify.base import Classifier, ReviewCase
+from agentgate.domain.client_rules import ClientRules
 from agentgate.domain.dialogue import Dialogue
 from agentgate.domain.policy import Policy
 from agentgate.domain.session import SessionState, SessionStateStore
@@ -127,8 +128,8 @@ class Gate:
         # filesystem, and past a session's first request the walk is waste.
         workspace = state.workspace if state is not None else detect_workspace(request.args.cwd)
         return _Context(
-            policy=Policy.bind(profile, workspace), profile_id=profile_id,
-            classifier=classifier, state=state,
+            policy=Policy.bind(profile, workspace, ClientRules.of(request.rules)),
+            profile_id=profile_id, classifier=classifier, state=state,
         )
 
     async def _cache_hit(self, context: _Context, cache_key: str) -> bool:

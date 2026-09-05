@@ -10,6 +10,7 @@ from tests.factories import (
     decide_request,
     gate,
     profile,
+    rule_set,
     stage2_verdict,
     turn,
     unavailable_verdict,
@@ -229,3 +230,15 @@ async def test_stage_one_verdict_is_identical_with_and_without_history():
         plain = await gate().decide(decide_request(raw))
         with_history = await gate().decide(decide_request(raw, history=HOSTILE_HISTORY))
         assert (plain.verdict.decision, plain.verdict.rule_id) == (with_history.verdict.decision, with_history.verdict.rule_id), raw
+
+
+async def test_the_policy_the_classifier_sees_carries_the_request_rules():
+    classifier = FakeClassifier(stage2_verdict("A"))
+    await gate(classifier).decide(decide_request("npm install lodash", rules=rule_set().model_dump()))
+    assert classifier.cases[0].policy.client_rules.level == "medium"
+
+
+async def test_no_rules_means_no_client_rules_on_the_policy():
+    classifier = FakeClassifier(stage2_verdict("A"))
+    await gate(classifier).decide(decide_request("npm install lodash"))
+    assert classifier.cases[0].policy.client_rules is None

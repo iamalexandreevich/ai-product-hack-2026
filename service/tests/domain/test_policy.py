@@ -2,8 +2,16 @@ import dataclasses
 
 import pytest
 
+from agentgate.domain.client_rules import ClientRules
 from agentgate.domain.policy import Policy
-from tests.factories import policy, profile
+from tests.factories import WORKSPACE, policy, profile, rule_set
+
+
+def test_policy_binds_client_rules_and_defaults_to_none():
+    assert Policy.bind(profile(), WORKSPACE).client_rules is None
+    bound = Policy.bind(profile(), WORKSPACE, ClientRules.of(rule_set()))
+    assert bound.client_rules is not None
+    assert bound.client_rules.level == "medium"
 
 
 def test_bind_expands_the_workspace_placeholder():
