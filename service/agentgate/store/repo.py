@@ -13,9 +13,10 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from agentgate.domain.session import RECENT_MAXLEN, SessionState
-from agentgate.engine.decision import Decision, DecisionRecord
+from agentgate.engine.decision import DecisionRecord
 from agentgate.store.mapper import record_from_row
 from agentgate.store.models import AllowCacheRow, DecisionRow, SessionRow
+from agentgate.store.writer import Stored
 
 
 class DecisionRepo:
@@ -33,16 +34,17 @@ class DecisionRepo:
     def __init__(self, session_factory: async_sessionmaker) -> None:
         self._sf = session_factory
 
-    async def insert(self, decision: Decision) -> bool:
-        """Insert one decision; ``False`` when a row with this idempotency
-        key already existed and nothing was inserted.
+    async def insert(self, stored: Stored) -> bool:
+        """Insert one row (a decide or an inspect outcome); ``False`` when a
+        row with this idempotency key already existed and nothing was
+        inserted.
 
         A row whose ``idempotency_key`` is already present is silently not
         inserted: two concurrent repeats of one call must leave one row --
         the caller (``PostgresDecisionWriter``) uses the return value to
         skip the allow-cache row it would otherwise write next, since that
         row's foreign key requires this insert to have actually landed.
-        Raises ``sqlalchemy.exc.IntegrityError`` if the decision's session id
+        Raises ``sqlalchemy.exc.IntegrityError`` if the row's session id
         is not ``None`` and does not reference an existing session (see class
         docstring for the required call ordering), or if its id collides
         with an existing decision.
@@ -50,7 +52,7 @@ class DecisionRepo:
         # Core insert against the Table, keyed by column *names* (so `metadata`
         # is just `metadata`), not the ORM entity with its `metadata_` attribute.
         table = DecisionRow.__table__
-        values = decision.to_record().model_dump(exclude={"decision_id"})
+        values = stored.to_record().model_dump(exclude={"decision_id"})
         stmt = pg_insert(table).values(**values).on_conflict_do_nothing(
             index_elements=[table.c.idempotency_key],
             index_where=table.c.idempotency_key.isnot(None),

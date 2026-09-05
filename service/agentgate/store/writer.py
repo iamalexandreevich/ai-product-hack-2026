@@ -22,22 +22,35 @@ from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 from typing import Protocol
 
-from agentgate.api.schemas import DecisionKind
-from agentgate.engine.decision import Decision
+from agentgate.domain.session import SessionState
+from agentgate.engine.decision import DecisionRecord
 
 log = logging.getLogger(__name__)
 
 
+class Stored(Protocol):
+    """What the writer needs from an outcome, whether it is a `Decision` or
+    an `Inspection`: a row to store, and where -- if anywhere -- to cache it.
+    """
+
+    id: str
+    state: SessionState | None
+    idempotency_key: str | None
+
+    def to_record(self) -> DecisionRecord: ...
+    def allow_cache_entry(self) -> tuple[str, str] | None: ...
+
+
 class DecisionWriter(Protocol):
-    async def write(self, decision: Decision) -> None: ...
+    async def write(self, stored: Stored) -> None: ...
 
 
 class JsonlDecisionWriter:
     def __init__(self, logger) -> None:
         self._logger = logger
 
-    async def write(self, decision: Decision) -> None:
-        self._logger.write(decision.to_record().model_dump(mode="json"))
+    async def write(self, stored: Stored) -> None:
+        self._logger.write(stored.to_record().model_dump(mode="json"))
 
 
 class PostgresDecisionWriter:
@@ -46,42 +59,34 @@ class PostgresDecisionWriter:
         self._sessions = sessions
         self._cache_ttl_seconds = cache_ttl_seconds
 
-    async def write(self, decision: Decision) -> None:
-        if decision.state is not None:
-            await self._sessions.upsert(decision.state)
-        inserted = await self._decisions.insert(decision)
+    async def write(self, stored: Stored) -> None:
+        if stored.state is not None:
+            await self._sessions.upsert(stored.state)
+        inserted = await self._decisions.insert(stored)
         if inserted is False:
             # Only an explicit False means "skipped" -- a fake repo whose
             # insert has no return value is falsy (None) but did insert.
             log.warning(
                 "decision %s not stored: idempotency key %s already has a row",
-                decision.id, decision.idempotency_key,
+                stored.id, stored.idempotency_key,
             )
             return
-        if self._should_cache(decision):
+        entry = stored.allow_cache_entry()
+        if entry is not None:
+            session_id, cache_key = entry
             expires_at = datetime.now(timezone.utc) + timedelta(seconds=self._cache_ttl_seconds)
-            await self._sessions.cache_put(
-                decision.state.session_id, decision.cache_key, decision.id, expires_at
-            )
-
-    def _should_cache(self, decision: Decision) -> bool:
-        return (
-            decision.state is not None
-            and decision.cache_key is not None
-            and decision.verdict.decision is DecisionKind.allow
-            and not decision.cached
-        )
+            await self._sessions.cache_put(session_id, cache_key, stored.id, expires_at)
 
 
 class CompositeDecisionWriter:
     def __init__(self, writers: Sequence[DecisionWriter]) -> None:
         self._writers = tuple(writers)
 
-    async def write(self, decision: Decision) -> None:
+    async def write(self, stored: Stored) -> None:
         for writer in self._writers:
             try:
-                await writer.write(decision)
+                await writer.write(stored)
             except Exception:  # noqa: BLE001 - one sink's failure must not stop the others
                 log.exception(
-                    "%s failed to write decision %s", type(writer).__name__, decision.id
+                    "%s failed to write decision %s", type(writer).__name__, stored.id
                 )

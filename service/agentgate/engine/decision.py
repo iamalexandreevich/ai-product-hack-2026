@@ -178,6 +178,15 @@ class Decision:
     def to_response(self) -> DecideResponse:
         return self.to_record().to_response()
 
+    def allow_cache_entry(self) -> tuple[str, str] | None:
+        """Session and key to cache this decision under, or None: only a
+        fresh `allow` with a session is cached."""
+        if self.state is None or self.cache_key is None or self.cached:
+            return None
+        if self.verdict.decision is not DecisionKind.allow:
+            return None
+        return self.state.session_id, self.cache_key
+
     def to_record(self) -> DecisionRecord:
         return DecisionRecord(
             id=self.id,

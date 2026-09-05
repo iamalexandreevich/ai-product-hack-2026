@@ -5,7 +5,7 @@ from agentgate.domain.dialogue import Dialogue
 from agentgate.domain.verdict import Verdict
 from agentgate.engine.decision import Decision
 from agentgate.engine.timings import Latency
-from tests.factories import decide_request, dialogue, rule_set, turn
+from tests.factories import decide_request, dialogue, rule_set, session_state, turn
 
 
 def decision(**overrides) -> Decision:
@@ -99,3 +99,12 @@ def test_record_kind_defaults_to_decide_and_carries_call_id_and_rules():
     assert record.rules_level == "medium" and len(record.rules_digest) == 64
     plain = decision().to_record()
     assert plain.rules_level is None and plain.rules_digest is None and plain.provenance is None and plain.replacement is None
+
+
+def test_allow_cache_entry_is_the_session_and_key_of_a_fresh_allow_only():
+    assert decision(state=session_state(), cache_key="k" * 64).allow_cache_entry() == ("s1", "k" * 64)
+    assert decision(state=session_state(), cache_key="k" * 64, cached=True).allow_cache_entry() is None
+    assert decision(state=None, cache_key="k" * 64).allow_cache_entry() is None
+    assert decision(
+        state=session_state(), cache_key="k" * 64, verdict=Verdict.deny("x", "r")
+    ).allow_cache_entry() is None

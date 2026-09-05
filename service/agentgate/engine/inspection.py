@@ -11,6 +11,7 @@ from datetime import datetime
 
 from agentgate.api.schemas import InspectRequest, InspectResponse, InspectVerdict
 from agentgate.domain.dialogue import Dialogue
+from agentgate.domain.session import SessionState
 from agentgate.engine.decision import DecisionRecord
 from agentgate.engine.timings import Latency
 
@@ -35,6 +36,9 @@ class Inspection:
     cached: bool = False
     findings: tuple[str, ...] = ()
     idempotency_key: str | None = None
+    # Always None: inspect never touches session state or the allow cache,
+    # but the writer's `Stored` protocol reads this field on every outcome.
+    state: SessionState | None = None
 
     def to_response(self) -> InspectResponse:
         return self.to_record().to_inspect_response()
