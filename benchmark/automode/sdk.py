@@ -20,9 +20,33 @@ logger = logging.getLogger(__name__)
 
 
 def _command(tool_input: object) -> str | None:
+    """The shell command of a proposed call, for the record of what the agent wanted.
+    Only Bash sessions have one; it is reported, never used to attribute a verdict."""
     if isinstance(tool_input, dict):
         return tool_input.get("command")
     return None
+
+
+def _stub_server(spec):
+    """Register the MCP server a case names, with a handler that does nothing.
+
+    The classifier only rules on tools the session actually offers, and none of the
+    servers the dataset names (``notes-mcp``, ``github-mcp``, ``mailer-mcp``) exist here.
+    The stand-in advertises the case's own tool and argument names so the agent proposes
+    that exact shape, and returns a fixed string without touching a file, a mailbox or a
+    network -- the benchmark measures the ruling on the call, never its effect. An
+    allowed MCP call is therefore the one allow in this adapter that costs nothing.
+    """
+    from claude_agent_sdk import create_sdk_mcp_server, tool
+
+    schema = {name: str for name in spec.arg_names} or {"input": str}
+
+    @tool(spec.tool, f"{spec.tool} ({spec.server})", schema)
+    async def _noop(args):
+        # The stand-in ignores its arguments by design: the ruling is the measurement.
+        return {"content": [{"type": "text", "text": "ok"}]}
+
+    return create_sdk_mcp_server(name=spec.server, tools=[_noop])
 
 
 async def run_claude_session(
@@ -38,14 +62,15 @@ async def run_claude_session(
     from claude_agent_sdk import ClaudeAgentOptions, HookMatcher, query
     from claude_agent_sdk.types import PermissionResultDeny, ResultMessage
 
-    tool_call = case.assistant_tool_call
-    payload = plan.build_input(tool_call)
-    # The value we compare structured signals against, to tell our injected action apart
-    # from any exploration call the rails deny afterwards.
-    ours = payload.get("command") if plan.claude_tool == "Bash" else None
+    payload = plan.build_input()
+    # What we compare structured signals against, to tell our injected action apart from
+    # any exploration call the rails deny afterwards. The plan owns the comparison because
+    # each tool is identified by a different field (a command, a path, a URL, the whole
+    # argument object for an MCP stand-in).
+    ours = plan.identity(payload)
     human_req = case.human_req.strip()
 
-    obs = ClaudeRunObservation()
+    obs = ClaudeRunObservation(substituted_input=payload, claude_tool=plan.claude_tool)
 
     async def pre_tool_use(input_data, tool_use_id, context):
         if obs.substituted:
@@ -74,21 +99,31 @@ async def run_claude_session(
         # non-zero is the command's business, not the guardrail's -- and in a sandbox
         # (no project, no toolchain) most of the dataset exits non-zero, so reading only
         # PostToolUse would silently drop most allows into "no decision".
-        if _command(input_data.get("tool_input")) == ours:
+        if plan.identity(input_data.get("tool_input")) == ours:
             obs.ran_ours = True
         return {}
 
     async def can_use_tool(tool_name, input_data, context):
-        if _command(input_data) == ours:
+        if plan.identity(input_data) == ours:
             obs.asked_ours = True
         return PermissionResultDeny(message="benchmark: recording the prompt, not answering it")
 
     async def prompt_stream():
         yield {"type": "user", "message": {"role": "user", "content": human_req}}
 
+    # An MCP case offers no built-in tool at all, only the stand-in; every other case is
+    # restricted to the single built-in the plan names. Either way the agent has exactly
+    # one tool to propose, so its first proposal is the one we hijack.
+    mcp_servers = {}
+    tools: list[str] = [plan.claude_tool]
+    if plan.mcp is not None:
+        mcp_servers = {plan.mcp.server: _stub_server(plan.mcp)}
+        tools = []
+
     options = ClaudeAgentOptions(
         cwd=workspace,
-        tools=[plan.claude_tool],
+        tools=tools,
+        mcp_servers=mcp_servers,
         permission_mode="auto",
         setting_sources=[],
         max_turns=max_turns,
@@ -113,7 +148,7 @@ async def run_claude_session(
                     }
                 for denial in message.permission_denials or []:
                     di = denial.get("tool_input") if isinstance(denial, dict) else None
-                    if _command(di) == ours:
+                    if plan.identity(di) == ours:
                         obs.denied_ours = True
     except Exception as exc:  # a case must never abort a run
         logger.exception("claude code session for case %s raised", case.id)

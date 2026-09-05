@@ -42,14 +42,18 @@ Honest limits, stated so nobody plans against them
   from the agent's session spend, so cost is reported ``unavailable`` with a reason and
   the per-model breakdown is kept in ``raw_response`` for transparency, never quoted as a
   per-decision price beside the server's.
-* **Only ``shell`` is reproducible today.** 60 of 75 cases are ``shell``. ``file_read`` /
-  ``file_write`` / ``network`` / ``mcp_call`` have no validated injection path through
-  Claude Code's built-in tools (``mcp_call`` would need the MCP servers to exist), so
-  they return no decision with a stated reason. Adding a tool is one entry in ``_PLANS``.
+* **Every tool of the v1 contract is posed, but not identically.** ``shell`` becomes a
+  ``Bash`` call, ``file_read`` a ``Read``, ``file_write`` a ``Write``, ``network`` a
+  ``WebFetch``. ``mcp_call`` is posed through an in-process stand-in registered under the
+  server and tool name the case declares, whose handler does nothing -- the classifier
+  rules on the call, and no side effect can escape the process. A ``file_read`` case that
+  declares several paths is posed as its first path, and the narrowing is recorded on the
+  result rather than glossed over. Adding a tool is one branch in ``plan_for``.
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
@@ -59,26 +63,110 @@ from schemas.result import CostSource, ServiceResponse, ServiceResultType
 
 
 @dataclass(frozen=True)
+class McpToolSpec:
+    """The no-op stand-in for the MCP server a case names.
+
+    The cases call servers nobody has here (``notes-mcp``, ``github-mcp``), and the
+    classifier only ever judges a tool the session actually offers. So the session
+    registers an in-process server under the case's own name, exposing the case's own
+    tool with the case's own argument names, whose handler does nothing and returns a
+    fixed string. That is enough for the agent to propose the call and for the
+    classifier to rule on it, and it means no side effect can escape the process --
+    which is the point: the benchmark measures the ruling, never the effect.
+    """
+
+    server: str
+    tool: str
+    arg_names: tuple[str, ...]
+
+    @property
+    def claude_tool_name(self) -> str:
+        return f"mcp__{self.server}__{self.tool}"
+
+
+@dataclass(frozen=True)
 class ToolPlan:
-    """How to pose one case's action to Claude Code: which built-in tool to restrict the
-    session to, and how to write the case's declared action into that tool's input."""
+    """How to pose one case's action to Claude Code.
+
+    ``claude_tool`` is the single tool the session is restricted to, so the agent's first
+    proposal is a call to it; ``build_input`` is the case's declared action written into
+    that tool's input shape; ``identity`` extracts the value that tells our action apart
+    from any other call to the same tool, which is how a verdict is attributed. ``mcp``
+    is set only when the tool is a stand-in that has to be registered first, and
+    ``narrowing`` records any way the pose is narrower than the case (see ``plan_for``).
+    """
 
     claude_tool: str
-    build_input: Callable[[ToolCall], dict]
+    build_input: Callable[[], dict]
+    identity: Callable[[dict], object]
+    mcp: McpToolSpec | None = None
+    narrowing: str | None = None
 
 
-# Case tool -> Claude Code plan. Only shell is validated (spike, 2026-09-04); the rest
-# return no decision with a reason until an injection path is validated for them.
-_PLANS: dict[ToolName, ToolPlan] = {
-    ToolName.SHELL: ToolPlan("Bash", lambda tc: {"command": tc.raw}),
-}
+def _first_url(tool_call: ToolCall) -> str:
+    """The URL a network case fetches: from the payload if it names one, else built from
+    the domain the case declares. ``args.domains`` is required for tool=network, so the
+    fallback always has something to build from."""
+    match = re.search(r"https?://\S+", tool_call.raw or "")
+    if match:
+        return match.group(0)
+    return f"https://{tool_call.arguments.domains[0]}/"
 
-_UNSUPPORTED_REASON = {
-    ToolName.FILE_READ: "file_read has no validated Claude Code injection path yet",
-    ToolName.FILE_WRITE: "file_write has no validated Claude Code injection path yet",
-    ToolName.NETWORK: "network has no Claude Code built-in tool to hijack",
-    ToolName.MCP_CALL: "mcp_call needs the case's MCP servers, which Claude Code lacks here",
-}
+
+def _by(key: str) -> Callable[[dict], object]:
+    return lambda tool_input: tool_input.get(key) if isinstance(tool_input, dict) else None
+
+
+def plan_for(tool_call: ToolCall) -> ToolPlan | None:
+    """Pick how to pose one case's action, or ``None`` when there is no way to pose it.
+
+    Every tool the v1 contract defines has a plan today. The ``None`` branch stays because
+    the next tool added to the contract will not have one on day one, and a guess would be
+    worse than an honest "no decision".
+    """
+    tool = tool_call.tool
+    args = tool_call.arguments
+
+    if tool is ToolName.SHELL:
+        return ToolPlan("Bash", lambda: {"command": tool_call.raw}, _by("command"))
+
+    if tool is ToolName.FILE_READ:
+        # Read takes one file; a case may declare several. Posing the first is a real
+        # narrowing, recorded so a reader of the result is never misled about what the
+        # classifier actually ruled on.
+        narrowing = (
+            f"case declares {len(args.paths)} paths; posed 1 of {len(args.paths)}"
+            if len(args.paths) > 1
+            else None
+        )
+        return ToolPlan(
+            "Read", lambda: {"file_path": args.paths[0]}, _by("file_path"), narrowing=narrowing
+        )
+
+    if tool is ToolName.FILE_WRITE:
+        return ToolPlan(
+            "Write",
+            lambda: {"file_path": args.paths[0], "content": tool_call.raw},
+            _by("file_path"),
+        )
+
+    if tool is ToolName.NETWORK:
+        url = _first_url(tool_call)
+        return ToolPlan(
+            "WebFetch",
+            lambda: {"url": url, "prompt": "Summarise what this URL returns."},
+            _by("url"),
+        )
+
+    if tool is ToolName.MCP_CALL and args.mcp is not None:
+        mcp = args.mcp
+        declared = dict(mcp.arguments or {})
+        spec = McpToolSpec(mcp.server, mcp.tool, tuple(declared))
+        # The whole argument object is the identity: every call to this stand-in carries
+        # the same shape, so no single key distinguishes ours from the agent's own.
+        return ToolPlan(spec.claude_tool_name, lambda: dict(declared), lambda ti: ti, mcp=spec)
+
+    return None
 
 
 @dataclass
@@ -92,6 +180,8 @@ class ClaudeRunObservation:
 
     substituted: bool = False
     proposed_command: str | None = None
+    substituted_input: dict | None = None
+    claude_tool: str | None = None
     denied_ours: bool = False
     ran_ours: bool = False
     asked_ours: bool = False
@@ -127,6 +217,8 @@ def interpret(case: BenchmarkCase, obs: ClaudeRunObservation) -> ServiceResponse
         "adapter": "claude-code",
         "proposed_command": obs.proposed_command,
         "substituted_command": case.assistant_tool_call.raw or None,
+        "substituted_input": obs.substituted_input,
+        "claude_tool": obs.claude_tool,
         "cost_by_model": obs.cost_by_model,
         "total_cost_usd": obs.total_cost_usd,
         "session_id": obs.session_id,
@@ -219,12 +311,16 @@ class ClaudeCodeAutomodeAdapter:
         self._run_session = session_runner or self._default_session_runner
 
     async def execute(self, case: BenchmarkCase, *, run_id: str) -> AutomodeExecutionResult:
-        plan = _PLANS.get(case.assistant_tool_call.tool)
+        tool_call = case.assistant_tool_call
+        plan = plan_for(tool_call)
         if plan is None:
-            reason = _UNSUPPORTED_REASON[case.assistant_tool_call.tool]
-            obs = ClaudeRunObservation(unsupported_reason=reason)
+            obs = ClaudeRunObservation(
+                unsupported_reason=f"{tool_call.tool} has no way to be posed to Claude Code"
+            )
         else:
             obs = await self._run_session(case, run_id)
+            if plan.narrowing:
+                obs.extra["narrowing"] = plan.narrowing
         return AutomodeExecutionResult(response=interpret(case, obs))
 
     async def _default_session_runner(
@@ -233,7 +329,8 @@ class ClaudeCodeAutomodeAdapter:
         # Imported lazily so the module (and the whole test suite) loads without the SDK.
         from automode.sdk import run_claude_session
 
-        plan = _PLANS[case.assistant_tool_call.tool]
+        plan = plan_for(case.assistant_tool_call)
+        assert plan is not None  # execute() never reaches the runner without one
         return await run_claude_session(
             case, run_id, workspace=self.workspace, plan=plan, model=self.model
         )

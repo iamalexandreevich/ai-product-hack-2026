@@ -149,6 +149,9 @@ activemq-data/
 
 # Environments
 .env
+# ...but the template documenting what .env must contain is committed. The root
+# .gitignore excludes `.env.*`, and this negation is what puts the template back.
+!.env.example
 .envrc
 .venv
 env/
