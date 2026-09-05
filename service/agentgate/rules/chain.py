@@ -11,6 +11,13 @@ can forbid more but cannot permit what hard-deny or the profile forbids.
 allowlist extended to network reads, so everything the allowlist already
 permitted never reaches it, and everything stricter -- hard-deny, the
 user's denial, the profile's denials, the user's floor -- has already run.
+
+`ProfileMcpRule` stands with the profile's other denials, above the user's
+`ask` floor, so an operator's `deny` on an MCP tool cannot be softened by
+it -- and, by the same position, an operator's `allow` on one is settled as
+`ask` at stage 1 when the user asked to confirm. `McpReadonlyRule` sits
+just below the server allowlist: it is a naming convention, so it yields to
+everything the operator and the user wrote by hand.
 """
 
 from agentgate.rules.allowlist import AllowlistRule
@@ -18,9 +25,11 @@ from agentgate.rules.base import RuleChain
 from agentgate.rules.client_rules import ClientRulesRule
 from agentgate.rules.hard_deny import HARD_DENY_RULES
 from agentgate.rules.hard_deny.wrapper_unresolved import WrapperUnresolvedRule
+from agentgate.rules.mcp_readonly import McpReadonlyRule
 from agentgate.rules.packages import PackagesRule
 from agentgate.rules.profile_domain_trusted import ProfileDomainTrustedRule
 from agentgate.rules.profile_domains import ProfileDomainRule
+from agentgate.rules.profile_mcp import ProfileMcpRule
 from agentgate.rules.profile_paths import ProfilePathRule
 from agentgate.rules.unparseable import UnparseableRule
 
@@ -31,9 +40,11 @@ STAGE1 = RuleChain([
     ClientRulesRule("deny"),
     ProfilePathRule(),
     ProfileDomainRule(),
+    ProfileMcpRule(),
     ClientRulesRule("ask"),
     ClientRulesRule("allow"),
     AllowlistRule(),
+    McpReadonlyRule(),
     ProfileDomainTrustedRule(),
     PackagesRule(),
 ])

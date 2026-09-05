@@ -244,3 +244,25 @@ def test_rules_have_no_way_to_receive_a_dialogue():
     from agentgate.rules.base import Rule
 
     assert list(inspect.signature(Rule.evaluate).parameters) == ["self", "action", "policy"]
+
+
+def test_an_operator_denial_of_an_mcp_call_beats_a_users_ask():
+    from tests.factories import mcp_action, mcp_policy
+    from agentgate.domain.client_rules import ClientRules
+    from agentgate.domain.policy import Policy
+    from tests.factories import WORKSPACE, rule_set
+
+    base = mcp_policy(deny=["*.delete_*"])
+    policy = Policy.bind(
+        base.profile, WORKSPACE,
+        ClientRules.of(rule_set(version=1, level="custom", allow=[], ask=["*"], deny=[])),
+    )
+    outcome = STAGE1.run(mcp_action("github", "delete_repo"), policy)
+    assert outcome.verdict.rule_id == "profile.mcp-deny" and outcome.floor is None
+
+
+def test_an_operator_allow_of_an_mcp_call_sits_above_the_readonly_convention():
+    from tests.factories import mcp_action, mcp_policy
+
+    policy = mcp_policy(ask=["github.get_*"], readonly_prefixes_allow=True)
+    assert STAGE1.evaluate(mcp_action("github", "get_issue"), policy).rule_id == "profile.mcp-ask"
