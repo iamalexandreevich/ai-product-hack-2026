@@ -6,6 +6,7 @@ import pytest
 from agentgate.profiles.schema import ModelConfig
 from agentgate.classify.client import LLMClient, Stage2Error
 from agentgate.classify.schema import DECIDE_STRUCTURED_OUTPUT
+from agentgate.domain.usage import Usage
 
 
 def make_client(handler, structured=True, timeout_ms=1000):
@@ -14,8 +15,11 @@ def make_client(handler, structured=True, timeout_ms=1000):
     return LLMClient("q", cfg, http, DECIDE_STRUCTURED_OUTPUT)
 
 
-def ok_body(content: str) -> dict:
-    return {"id": "x", "choices": [{"message": {"role": "assistant", "content": content}}]}
+def ok_body(content: str, usage: dict | None = None) -> dict:
+    body = {"id": "x", "choices": [{"message": {"role": "assistant", "content": content}}]}
+    if usage is not None:
+        body["usage"] = usage
+    return body
 
 
 async def test_structured_request_and_parse(monkeypatch):
@@ -28,7 +32,7 @@ async def test_structured_request_and_parse(monkeypatch):
         seen["body"] = json.loads(request.content)
         return httpx.Response(200, json=ok_body(json.dumps({"decision": "D", "risk": "supply_chain", "reason": "r", "suggest": "s"})))
 
-    out, raw = await make_client(handler).classify("sys", "usr")
+    out, raw, usage = await make_client(handler).classify("sys", "usr")
     assert out.decision == "D" and out.risk == "supply_chain"
     assert seen["url"] == "http://llm/v1/chat/completions"
     assert seen["auth"] == "Bearer k"
@@ -38,6 +42,39 @@ async def test_structured_request_and_parse(monkeypatch):
     assert seen["body"]["messages"][0] == {"role": "system", "content": "sys"}
     assert seen["body"]["messages"][1] == {"role": "user", "content": "usr"}
     assert raw["id"] == "x"
+    assert usage is None
+
+
+async def test_usage_is_parsed_from_the_response():
+    def handler(request):
+        return httpx.Response(200, json=ok_body(
+            json.dumps({"decision": "A"}), usage={"prompt_tokens": 812, "completion_tokens": 41},
+        ))
+
+    _out, _raw, usage = await make_client(handler).classify("s", "u")
+    assert usage == Usage(input_tokens=812, output_tokens=41, reasoning_tokens=0)
+
+
+async def test_reasoning_tokens_are_parsed_when_present():
+    def handler(request):
+        return httpx.Response(200, json=ok_body(
+            json.dumps({"decision": "A"}),
+            usage={
+                "prompt_tokens": 10, "completion_tokens": 5,
+                "completion_tokens_details": {"reasoning_tokens": 3},
+            },
+        ))
+
+    _out, _raw, usage = await make_client(handler).classify("s", "u")
+    assert usage.reasoning_tokens == 3
+
+
+async def test_missing_usage_is_none_not_zeros():
+    def handler(request):
+        return httpx.Response(200, json=ok_body(json.dumps({"decision": "A"})))
+
+    _out, _raw, usage = await make_client(handler).classify("s", "u")
+    assert usage is None
 
 
 async def test_text_mode_has_no_response_format():
@@ -46,7 +83,7 @@ async def test_text_mode_has_no_response_format():
         assert "response_format" not in body
         return httpx.Response(200, json=ok_body('{"decision":"A"}'))
 
-    out, _ = await make_client(handler, structured=False).classify("s", "u")
+    out, _, _usage = await make_client(handler, structured=False).classify("s", "u")
     assert out.decision == "A" and out.risk == "none"
 
 

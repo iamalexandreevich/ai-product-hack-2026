@@ -83,6 +83,24 @@ Fail-closed здесь — `drop`, а не `ask`: спрашивать чело�
 
 Изменения здесь — только PR-ом с упоминанием направлений service, adapters и benchmark. Описание полей — в спеке `docs/superpowers/service/specs/2026-09-03-agentgate-v1-design.md`, раздел 4, а для полей v2 (`history`, `protocol`, `Idempotency-Key`) — в `docs/superpowers/service/specs/2026-09-04-agentgate-v2-design.md`.
 
+## Стоимость решения
+
+`POST /v1/decide` и `POST /v1/inspect` несут необязательное поле `cost` — токены и, если оператор задал цену модели, деньги стадии 2:
+
+```json
+"cost": {
+  "input_tokens": 812,
+  "output_tokens": 41,
+  "reasoning_tokens": 0,
+  "currency": "USD",
+  "amount": 0.000147
+}
+```
+
+`cost` отсутствует в ответе целиком (не `null`, а нет ключа), когда ступень 2 не вызывалась: `allow` ступени 1, попадание в allow-кэш или кэш inspect, отказ на уровне API, повтор ступени 1 по `Idempotency-Key`. `amount` и `currency` отсутствуют внутри `cost`, если у модели в `models.configs.<name>` не заданы `price_per_1m_input` и `price_per_1m_output` (задаются вместе или не задаются вовсе) — токены при этом есть. Валюта всегда `USD`. Повтор по `Idempotency-Key` возвращает `cost` вместе с остальным сохранённым ответом. Лента `GET /v1/decisions` несёт то же поле в каждой строке (decide и inspect).
+
+Описание поля и решение «токены или деньги» — `docs/superpowers/service/specs/response-cost-reporting.md` (реализовано в v3).
+
 ## hook_client.py — пример вызова
 
 Поддерживает hook-форматы Claude Code (`PreToolUse`, ключ `tool_name`) и OpenCode (`tool.execute.before`, ключ `sessionID`); формат выбирается автоматически по форме входного JSON.

@@ -2,8 +2,9 @@ from datetime import datetime, timezone
 
 import pytest
 
-from agentgate.api.schemas import PROTOCOL, DecisionKind
+from agentgate.api.schemas import PROTOCOL, Cost, DecisionKind
 from agentgate.domain.dialogue import Dialogue
+from agentgate.domain.usage import Usage
 from agentgate.domain.verdict import Verdict
 from agentgate.engine.decision import Decision, WrongRecordKind
 from agentgate.engine.timings import Latency
@@ -127,3 +128,29 @@ def test_allow_cache_entry_is_the_session_and_key_of_a_fresh_allow_only():
     assert decision(
         state=session_state(), cache_key="k" * 64, verdict=Verdict.deny("x", "r")
     ).allow_cache_entry() is None
+
+
+def test_record_cost_is_none_when_stage1_settled_it():
+    record = decision(verdict=Verdict.allow("allowlist.readonly")).to_record()
+    assert record.cost is None
+
+
+def test_record_carries_the_verdicts_cost_when_stage2_ran():
+    cost = Cost(input_tokens=812, output_tokens=41)
+    record = decision(verdict=Verdict(decision=DecisionKind.deny, stage=2, cost=cost)).to_record()
+    assert record.cost.input_tokens == 812
+    assert record.cost.output_tokens == 41
+    assert record.cost.amount is None
+
+
+def test_response_cost_is_absent_when_stage2_did_not_run():
+    response = decision(verdict=Verdict.allow("allowlist.readonly")).to_response()
+    assert "cost" not in response.model_dump()
+
+
+def test_response_cost_carries_amount_when_the_verdict_has_one():
+    cost = Cost.of(Usage(input_tokens=812, output_tokens=41), 0.15, 0.60)
+    response = decision(verdict=Verdict(decision=DecisionKind.deny, stage=2, cost=cost)).to_response()
+    dumped = response.model_dump()
+    assert dumped["cost"]["amount"] == cost.amount
+    assert dumped["cost"]["currency"] == "USD"

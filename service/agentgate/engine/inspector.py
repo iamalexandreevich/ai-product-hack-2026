@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 
 from ulid import ULID
 
-from agentgate.api.schemas import InspectRequest, InspectVerdict
+from agentgate.api.schemas import Cost, InspectRequest, InspectVerdict
 from agentgate.domain.dialogue import Dialogue
 from agentgate.domain.inspect_cache import InspectCache
 from agentgate.domain.policy import Policy
@@ -57,6 +57,7 @@ class _Stage2Result:
     rule_id: str | None
     model: str | None
     error: str | None
+    cost: Cost | None = None
 
     @classmethod
     def from_stage1(cls, outcome: Stage1Outcome) -> "_Stage2Result":
@@ -122,6 +123,7 @@ class Inspector:
             latency=timings.finish(), profile_id=profile_id, profile_hash=policy.profile_hash,
             replacement=result.replacement, reason=result.reason, stage=result.stage, rule_id=result.rule_id,
             model=result.model, error=result.error, findings=tuple(f.rule_id for f in findings), workspace=workspace,
+            cost=result.cost,
         )
         if inspection.error is None:
             # An inspection whose stage 2 failed carries stage 1's verdict
@@ -160,7 +162,7 @@ class Inspector:
             return replace(result, error=classified.error, model=classified.model)
         verdict, replacement, reason, rule_id = self._cap_stage2(request, findings, outcome, classified)
         return replace(result, verdict=verdict, replacement=replacement, reason=reason, rule_id=rule_id,
-                       stage=2, model=classified.model)
+                       stage=2, model=classified.model, cost=classified.cost)
 
     def _should_classify(self, policy: Policy, outcome: Stage1Outcome, findings: list[Finding]) -> bool:
         if policy.inspect.classifier != "on-flag":

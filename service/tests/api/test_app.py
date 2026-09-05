@@ -422,6 +422,61 @@ async def test_history_reaches_the_classifier_through_the_api(tmp_path):
     assert classifier.cases[0].dialogue.turns[0].content == "please"
 
 
+async def test_decide_cost_is_absent_when_stage1_settles_it(tmp_path):
+    app, _, _, _ = build(tmp_path)
+    r = await call(app, "POST", "/v1/decide", json=body())
+    assert r.json()["stage"] == 1
+    assert "cost" not in r.json()
+
+
+async def test_decide_shows_cost_when_stage2_ran(tmp_path):
+    from agentgate.api.schemas import Cost, DecisionKind
+    from agentgate.domain.verdict import Verdict
+
+    classifier = FakeClassifier(Verdict(
+        decision=DecisionKind.allow, stage=2, model="m",
+        raw_response={"choices": []}, cost=Cost(input_tokens=812, output_tokens=41),
+    ))
+    app, _, _, _ = build(tmp_path, classifier=classifier)
+    r = await call(app, "POST", "/v1/decide", json=body(raw="npm install lodash"))
+    assert r.json()["stage"] == 2
+    assert r.json()["cost"]["input_tokens"] == 812
+    assert r.json()["cost"]["output_tokens"] == 41
+    assert "amount" not in r.json()["cost"]
+
+
+async def test_decide_cache_hit_has_no_cost(tmp_path):
+    from agentgate.api.schemas import Cost, DecisionKind
+    from agentgate.domain.verdict import Verdict
+
+    classifier = FakeClassifier(Verdict(
+        decision=DecisionKind.allow, stage=2, model="m",
+        raw_response={"choices": []}, cost=Cost(input_tokens=812, output_tokens=41),
+    ))
+    app, _, _, _ = build(tmp_path, classifier=classifier)
+    first = await call(app, "POST", "/v1/decide", json=body(raw="npm install lodash"))
+    assert first.json()["cost"]["input_tokens"] == 812
+    second = await call(app, "POST", "/v1/decide", json=body(raw="npm install lodash"))
+    assert second.json()["cached"] is True
+    assert "cost" not in second.json()
+
+
+async def test_a_replayed_decision_carries_the_same_cost(tmp_path):
+    from agentgate.api.schemas import Cost, DecisionKind
+    from agentgate.domain.verdict import Verdict
+
+    classifier = FakeClassifier(Verdict(
+        decision=DecisionKind.allow, stage=2, model="m",
+        raw_response={"choices": []}, cost=Cost(input_tokens=812, output_tokens=41),
+    ))
+    app, _, _, _ = build(tmp_path, classifier=classifier)
+    headers = {"idempotency-key": "cost-replay"}
+    first = await call(app, "POST", "/v1/decide", json=body(raw="npm install lodash"), headers=headers)
+    second = await call(app, "POST", "/v1/decide", json=body(raw="npm install lodash"), headers=headers)
+    assert first.json() == second.json()
+    assert second.json()["cost"]["input_tokens"] == 812
+
+
 async def test_repeat_with_the_same_key_replays_the_same_decision(tmp_path):
     classifier = FakeClassifier(stage2_verdict("A"))
     app, drepo, _, _ = build(tmp_path, classifier=classifier)

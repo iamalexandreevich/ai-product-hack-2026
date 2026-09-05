@@ -27,11 +27,12 @@ from typing import Literal, Protocol
 import httpx
 from pydantic import BaseModel, ConfigDict
 
-from agentgate.api.schemas import InspectRequest, InspectVerdict, Provenance
+from agentgate.api.schemas import Cost, InspectRequest, InspectVerdict, Provenance
 from agentgate.classify.client import LLMClient, Stage2Error, StructuredOutput
 from agentgate.classify.render import history_lines, j, system_prompt
 from agentgate.domain.dialogue import Dialogue
 from agentgate.domain.policy import Policy
+from agentgate.domain.usage import Usage
 from agentgate.inspect.detectors import Finding
 from agentgate.inspect.mask import Stage1Outcome
 from agentgate.profiles.schema import ModelConfig, Profile
@@ -132,6 +133,7 @@ class InspectOutcome:
     reason: str
     model: str | None
     error: str | None = None
+    cost: Cost | None = None
 
 
 class InspectClassifier(Protocol):
@@ -152,28 +154,35 @@ class LLMInspectClassifier:
 
     def __init__(self, name: str, model_config: ModelConfig, http: httpx.AsyncClient) -> None:
         self.name = name
+        self._config = model_config
         self._client = LLMClient(name, model_config, http, INSPECT_STRUCTURED_OUTPUT)
 
     async def classify(self, case: InspectCase) -> InspectOutcome:
         system = build_inspect_system_prompt(case.policy)
         user = build_inspect_prompt(case)
         try:
-            output, _raw = await self._client.classify(system, user)
+            output, _raw, usage = await self._client.classify(system, user)
         except Stage2Error as exc:
             return self._unavailable(case.stage1, exc.kind)
         except Exception as exc:  # noqa: BLE001 - fail closed on anything, not just Stage2Error
             log.warning("inspect classifier raised an unexpected error", exc_info=True)
             return self._unavailable(case.stage1, f"unexpected ({type(exc).__name__})")
-        return self._outcome_from(output, case.stage1)
+        return self._outcome_from(output, case.stage1, usage)
 
-    def _outcome_from(self, output: InspectOutput, stage1: Stage1Outcome) -> InspectOutcome:
+    def _outcome_from(self, output: InspectOutput, stage1: Stage1Outcome, usage: Usage | None) -> InspectOutcome:
+        cost = self._cost_of(usage)
         if output.decision == "P":
-            return InspectOutcome(verdict=InspectVerdict.pass_, replacement=None, reason=output.reason, model=self.name)
+            return InspectOutcome(verdict=InspectVerdict.pass_, replacement=None, reason=output.reason, model=self.name, cost=cost)
         if output.decision == "D":
-            return InspectOutcome(verdict=InspectVerdict.drop, replacement=None, reason=output.reason, model=self.name)
+            return InspectOutcome(verdict=InspectVerdict.drop, replacement=None, reason=output.reason, model=self.name, cost=cost)
         return InspectOutcome(
-            verdict=stage1.verdict, replacement=stage1.replacement, reason=stage1.reason, model=self.name,
+            verdict=stage1.verdict, replacement=stage1.replacement, reason=stage1.reason, model=self.name, cost=cost,
         )
+
+    def _cost_of(self, usage: Usage | None) -> Cost | None:
+        if usage is None:
+            return None
+        return Cost.of(usage, self._config.price_per_1m_input, self._config.price_per_1m_output)
 
     def _unavailable(self, stage1: Stage1Outcome, error: str) -> InspectOutcome:
         return InspectOutcome(

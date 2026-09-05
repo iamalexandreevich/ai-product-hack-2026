@@ -24,6 +24,16 @@ class ModelConfig(BaseModel):
     api_key_env: str | None = None
     timeout_ms: int = 3000
     structured_output: bool = True
+    price_per_1m_input: float | None = None
+    price_per_1m_output: float | None = None
+
+    @model_validator(mode="after")
+    def _prices_set_together(self) -> "ModelConfig":
+        if (self.price_per_1m_input is None) != (self.price_per_1m_output is None):
+            raise ValueError(
+                "price_per_1m_input and price_per_1m_output must both be set or both omitted"
+            )
+        return self
 
 
 class ModelsConfig(BaseModel):

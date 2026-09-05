@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field, computed_field
 
 from agentgate.api.schemas import (
     PROTOCOL,
+    Cost,
     DecideRequest,
     DecideResponse,
     DecisionKind,
@@ -134,6 +135,10 @@ class DecisionRecord(BaseModel):
     replacement: str | None = Field(
         default=None, description="The `output` a `mask` verdict returned; `null` otherwise."
     )
+    cost: Cost | None = Field(
+        default=None,
+        description="Token usage and money cost of the stage-2 call. `null` when stage 2 did not run.",
+    )
 
     @computed_field(description="Same ULID as `id`; mirrors the field name /v1/decide returns.")
     @property
@@ -146,7 +151,7 @@ class DecisionRecord(BaseModel):
         return DecideResponse(
             decision=self.decision, reason=self.reason, suggest=self.suggest, stage=self.stage,
             rule_id=self.rule_id, model=self.model, latency_ms=self._latency_ms(),
-            cached=self.cached, decision_id=self.id, protocol=self.protocol,
+            cached=self.cached, decision_id=self.id, protocol=self.protocol, cost=self.cost,
         )
 
     def to_inspect_response(self) -> InspectResponse:
@@ -159,7 +164,7 @@ class DecisionRecord(BaseModel):
         return InspectResponse(
             verdict=InspectVerdict(self.decision), output=self.replacement, reason=self.reason, suggest=self.suggest,
             stage=self.stage, rule_id=self.rule_id, model=self.model, latency_ms=self._latency_ms(),
-            cached=self.cached, decision_id=self.id, protocol=self.protocol,
+            cached=self.cached, decision_id=self.id, protocol=self.protocol, cost=self.cost,
         )
 
     def _latency_ms(self) -> LatencyMs:
@@ -238,4 +243,5 @@ class Decision:
             call_id=self.request.call_id,
             rules_level=self.request.rules.level if self.request.rules else None,
             rules_digest=ClientRules.of(self.request.rules).digest() if self.request.rules else None,
+            cost=self.verdict.cost,
         )

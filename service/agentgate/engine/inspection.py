@@ -9,7 +9,7 @@ shared with `/v1/decisions`.
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from agentgate.api.schemas import InspectRequest, InspectResponse, InspectVerdict
+from agentgate.api.schemas import Cost, InspectRequest, InspectResponse, InspectVerdict
 from agentgate.domain.dialogue import Dialogue
 from agentgate.engine.decision import DecisionRecord
 from agentgate.engine.timings import Latency
@@ -35,6 +35,7 @@ class Inspection:
     cached: bool = False
     findings: tuple[str, ...] = ()
     idempotency_key: str | None = None
+    cost: Cost | None = None
     # The workspace `detect_workspace(request.args.cwd)` resolved, kept so
     # `session_ref` can hand the writer a row to ensure without resolving it
     # a second time or importing the profile loader into `store`.
@@ -90,6 +91,7 @@ class Inspection:
             history=[], history_digest=Dialogue.of(self.request.history).digest(),
             idempotency_key=self.idempotency_key, request_digest=self.request.identity_digest(),
             kind="inspect", call_id=self.request.call_id, provenance=provenance, replacement=self.replacement,
+            cost=self.cost,
         )
 
     def allow_cache_entry(self) -> None:

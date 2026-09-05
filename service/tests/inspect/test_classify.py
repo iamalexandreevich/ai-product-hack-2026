@@ -10,6 +10,7 @@ from agentgate.inspect.classify import (
     INSPECT_STRUCTURED_OUTPUT,
     InspectCase,
     InspectOutput,
+    LLMInspectClassifier,
     build_inspect_prompt,
     build_inspect_system_prompt,
 )
@@ -94,7 +95,7 @@ def _ok(content: str) -> httpx.Response:
 
 async def test_llm_client_parses_a_valid_pmd_answer():
     client = _inspect_client(lambda request: _ok(json.dumps({"decision": "P", "reason": "quoted"})))
-    out, _raw = await client.classify("sys", "usr")
+    out, _raw, _usage = await client.classify("sys", "usr")
     assert out.decision == "P"
     assert out.reason == "quoted"
 
@@ -104,3 +105,49 @@ async def test_llm_client_raises_stage2_error_on_an_invalid_answer():
     with pytest.raises(Stage2Error) as excinfo:
         await client.classify("sys", "usr")
     assert excinfo.value.kind == "invalid_schema"
+
+
+def _ok_with_usage(content: str, usage: dict) -> httpx.Response:
+    return httpx.Response(200, json={"choices": [{"message": {"content": content}}], "usage": usage})
+
+
+async def test_inspect_classifier_cost_is_none_without_usage():
+    def handler(request):
+        return _ok(json.dumps({"decision": "P", "reason": "fine"}))
+
+    cfg = ModelConfig(base_url="http://llm/v1", model="q")
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    outcome = await LLMInspectClassifier("m", cfg, http).classify(_case())
+    assert outcome.cost is None
+
+
+async def test_inspect_classifier_cost_has_tokens_but_no_amount_without_prices():
+    def handler(request):
+        return _ok_with_usage(json.dumps({"decision": "P", "reason": "fine"}), {"prompt_tokens": 100, "completion_tokens": 20})
+
+    cfg = ModelConfig(base_url="http://llm/v1", model="q")
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    outcome = await LLMInspectClassifier("m", cfg, http).classify(_case())
+    assert outcome.cost.input_tokens == 100
+    assert outcome.cost.output_tokens == 20
+    assert outcome.cost.amount is None
+
+
+async def test_inspect_classifier_cost_has_amount_when_priced():
+    def handler(request):
+        return _ok_with_usage(json.dumps({"decision": "P", "reason": "fine"}), {"prompt_tokens": 100, "completion_tokens": 20})
+
+    cfg = ModelConfig(base_url="http://llm/v1", model="q", price_per_1m_input=0.15, price_per_1m_output=0.60)
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    outcome = await LLMInspectClassifier("m", cfg, http).classify(_case())
+    assert outcome.cost.amount == (100 * 0.15 + 20 * 0.60) / 1_000_000
+
+
+async def test_inspect_classifier_cost_is_none_when_unavailable():
+    def handler(request):
+        return httpx.Response(500)
+
+    cfg = ModelConfig(base_url="http://llm/v1", model="q", price_per_1m_input=0.15, price_per_1m_output=0.60)
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    outcome = await LLMInspectClassifier("m", cfg, http).classify(_case())
+    assert outcome.cost is None

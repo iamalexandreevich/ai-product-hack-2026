@@ -15,6 +15,7 @@ from dataclasses import dataclass
 import httpx
 from pydantic import BaseModel, ValidationError
 
+from agentgate.domain.usage import Usage
 from agentgate.profiles.schema import ModelConfig
 
 
@@ -82,7 +83,7 @@ class LLMClient:
             }
         return body
 
-    async def classify(self, system: str, user: str) -> tuple[BaseModel, dict]:
+    async def classify(self, system: str, user: str) -> tuple[BaseModel, dict, Usage | None]:
         """One request, no retries. Raises Stage2Error on every failure path."""
         url = self.config.base_url.rstrip("/") + "/chat/completions"
         try:
@@ -133,9 +134,10 @@ class LLMClient:
             raise Stage2Error("invalid_json", content[:200]) from exc
 
         try:
-            return self._structured_output.model.model_validate(data), raw
+            output = self._structured_output.model.model_validate(data)
         except ValidationError as exc:
             raise Stage2Error("invalid_schema", str(exc)[:200]) from exc
+        return output, raw, Usage.from_raw_response(raw)
 
 
 def _strip_fences(text: str) -> str:

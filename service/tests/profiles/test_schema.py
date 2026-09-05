@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from agentgate.profiles.schema import DenyWindow, History, InspectSettings, NetworkMode, PerTurnChars, Profile
+from agentgate.profiles.schema import DenyWindow, History, InspectSettings, ModelConfig, NetworkMode, PerTurnChars, Profile
 from tests.factories import minimal_profile_data, profile
 
 
@@ -97,3 +97,25 @@ def test_inspect_classifier_defaults_to_off():
 
 def test_inspect_classifier_accepts_on_flag():
     assert InspectSettings(classifier="on-flag").classifier == "on-flag"
+
+
+def test_model_config_prices_default_to_unset():
+    cfg = ModelConfig(base_url="http://x/v1", model="q")
+    assert cfg.price_per_1m_input is None
+    assert cfg.price_per_1m_output is None
+
+
+def test_model_config_accepts_both_prices():
+    cfg = ModelConfig(base_url="http://x/v1", model="q", price_per_1m_input=0.15, price_per_1m_output=0.60)
+    assert cfg.price_per_1m_input == 0.15
+    assert cfg.price_per_1m_output == 0.60
+
+
+def test_model_config_rejects_only_input_price():
+    with pytest.raises(ValueError):
+        ModelConfig(base_url="http://x/v1", model="q", price_per_1m_input=0.15)
+
+
+def test_model_config_rejects_only_output_price():
+    with pytest.raises(ValueError):
+        ModelConfig(base_url="http://x/v1", model="q", price_per_1m_output=0.60)

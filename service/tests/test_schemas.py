@@ -15,6 +15,7 @@ from agentgate.api.schemas import (
     RULES_MAX_PATTERNS,
     USER_REQUEST_MAX_CHARS,
     Author,
+    Cost,
     DecideRequest,
     DecideResponse,
     DecisionKind,
@@ -26,6 +27,7 @@ from agentgate.api.schemas import (
     Turn,
     TurnRole,
 )
+from agentgate.domain.usage import Usage
 
 
 def _req(**over):
@@ -370,3 +372,42 @@ def test_inspect_response_output_only_makes_sense_for_mask():
     assert r.protocol == PROTOCOL
     with pytest.raises(ValidationError, match="mask requires output"):
         InspectResponse(verdict="mask", reason="r", stage=1, latency_ms=LatencyMs(total=1), decision_id="01J")
+
+
+def test_cost_carries_tokens_and_amount_when_priced():
+    cost = Cost.of(Usage(input_tokens=812, output_tokens=41), 0.15, 0.60)
+    dumped = cost.model_dump()
+    assert dumped == {
+        "input_tokens": 812, "output_tokens": 41, "reasoning_tokens": 0,
+        "currency": "USD", "amount": (812 * 0.15 + 41 * 0.60) / 1_000_000,
+    }
+
+
+def test_cost_drops_amount_and_currency_without_prices():
+    cost = Cost.of(Usage(input_tokens=812, output_tokens=41), None, None)
+    dumped = cost.model_dump()
+    assert dumped == {"input_tokens": 812, "output_tokens": 41, "reasoning_tokens": 0}
+    assert "amount" not in dumped and "currency" not in dumped
+
+
+def test_decide_response_omits_cost_key_when_stage2_did_not_run():
+    r = DecideResponse(decision="allow", stage=1, latency_ms=LatencyMs(total=1), decision_id="01J")
+    assert "cost" not in r.model_dump()
+    assert "cost" not in json.loads(r.model_dump_json())
+
+
+def test_decide_response_carries_cost_when_stage2_ran():
+    cost = Cost(input_tokens=10, output_tokens=5)
+    r = DecideResponse(decision="deny", stage=2, latency_ms=LatencyMs(total=1), decision_id="01J", cost=cost)
+    assert r.model_dump()["cost"]["input_tokens"] == 10
+
+
+def test_inspect_response_omits_cost_key_when_stage2_did_not_run():
+    r = InspectResponse(verdict="pass", stage=1, latency_ms=LatencyMs(total=1), decision_id="01J")
+    assert "cost" not in r.model_dump()
+
+
+def test_inspect_response_carries_cost_when_stage2_ran():
+    cost = Cost(input_tokens=10, output_tokens=5)
+    r = InspectResponse(verdict="pass", stage=2, latency_ms=LatencyMs(total=1), decision_id="01J", cost=cost)
+    assert r.model_dump()["cost"]["input_tokens"] == 10

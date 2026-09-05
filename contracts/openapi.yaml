@@ -202,6 +202,7 @@ paths:
                     cached: false
                     decision_id: 01J8QZ4T7K3M9V2B5N6P0R1S2T
                     protocol: 1
+                    cost: null
                 deny_unknown_package:
                   summary: deny — HTTP 200, with reason and suggest
                   description: Answer to the `deny_unknown_package` request. Note the status
@@ -222,6 +223,12 @@ paths:
                     cached: false
                     decision_id: 01J8QZ4V2C8H4E7A1D3F5G7J9K
                     protocol: 1
+                    cost:
+                      input_tokens: 812
+                      output_tokens: 41
+                      reasoning_tokens: 0
+                      currency: USD
+                      amount: 0.000147
                 deny_history_reveals_the_injection:
                   summary: deny — the instruction came from a tool result, not the user
                   description: 'Answer to the `deny_history_reveals_the_injection` request.
@@ -242,6 +249,7 @@ paths:
                     cached: false
                     decision_id: 01J8QZ4W3D9J5F8B2E4G6H8K0M
                     protocol: 1
+                    cost: null
                 ask_uncertain_db_cleanup:
                   summary: ask — the classifier was not confident
                   description: Answer to the `ask_uncertain_db_cleanup` request. `ask` means
@@ -263,6 +271,7 @@ paths:
                     cached: false
                     decision_id: 01J8QZ50B4N7Q9W2X4Y6Z8A0C2
                     protocol: 1
+                    cost: null
                 fail_closed_invalid_request:
                   summary: ask — fail-closed on a request the models rejected
                   description: 'There is no request example for this one: it is what an invalid
@@ -286,6 +295,7 @@ paths:
                     cached: false
                     decision_id: 01J8QZ51D6P0S2U4W6Y8A0C2E4
                     protocol: 1
+                    cost: null
         '401':
           description: |
             Missing or invalid bearer token. This is the only status the service returns
@@ -452,6 +462,7 @@ paths:
                     cached: false
                     decision_id: 01M1PJ8HBMHCX96BNY1W0TDXJK
                     protocol: 1
+                    cost: null
                 clean_git_status:
                   summary: pass — nothing to do
                   value:
@@ -469,6 +480,7 @@ paths:
                     cached: false
                     decision_id: 01M1PJ8J2K4M6N8P0Q2R4S6T8V
                     protocol: 1
+                    cost: null
         '401':
           description: |
             Missing or invalid bearer token. This is the only status the service returns
@@ -777,6 +789,52 @@ components:
       description: |-
         Who produced a turn. A `human`-role turn authored by an `agent` is a
         parent model's message to a subagent, not the user's intent.
+    Cost:
+      properties:
+        input_tokens:
+          type: integer
+          title: Input Tokens
+          description: Prompt tokens the provider billed for the stage-2 call.
+        output_tokens:
+          type: integer
+          title: Output Tokens
+          description: Completion tokens the provider billed for the stage-2 call.
+        reasoning_tokens:
+          type: integer
+          title: Reasoning Tokens
+          description: Hidden reasoning tokens the provider billed, or `0` when the provider
+            does not report them. A nonzero value while the model is configured with reasoning
+            off means the setting did not take effect.
+          default: 0
+        currency:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Currency
+          description: '`USD`, present only when `amount` is.'
+        amount:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Amount
+          description: Money cost of the call at the operator's configured price; absent when
+            no price is configured for this model.
+      type: object
+      required:
+      - input_tokens
+      - output_tokens
+      title: Cost
+      description: |-
+        Token usage of the stage-2 call, and its money cost when the operator
+        priced the model in `profiles/schema.py::ModelConfig`.
+
+        `amount` and `currency` are both absent from the wire form when the
+        operator did not configure a price -- the tokens are still worth
+        reporting, the money is not (see
+        docs/superpowers/service/specs/response-cost-reporting.md). This whole
+        field is absent from the response, not merely `null`, whenever stage 2
+        was not called: `allow` from stage 1 and `allow` from the cache cost
+        nothing to compute, which is a different fact than "we didn't count."
     DecideRequest:
       description: One proposed agent action, plus the intent behind it.
       properties:
@@ -937,6 +995,12 @@ components:
           title: Protocol
           description: Protocol version of this response. Always `1` in this release.
           default: 1
+        cost:
+          anyOf:
+          - $ref: '#/components/schemas/Cost'
+          - type: 'null'
+          description: Token usage and money cost of the stage-2 call. Absent when stage 2
+            did not run.
       type: object
       required:
       - decision
@@ -1148,6 +1212,12 @@ components:
           - type: 'null'
           title: Replacement
           description: The `output` a `mask` verdict returned; `null` otherwise.
+        cost:
+          anyOf:
+          - $ref: '#/components/schemas/Cost'
+          - type: 'null'
+          description: Token usage and money cost of the stage-2 call. `null` when stage 2
+            did not run.
         decision_id:
           type: string
           title: Decision Id
@@ -1460,6 +1530,12 @@ components:
           type: integer
           title: Protocol
           default: 1
+        cost:
+          anyOf:
+          - $ref: '#/components/schemas/Cost'
+          - type: 'null'
+          description: Token usage and money cost of the stage-2 call. Absent when stage 2
+            did not run.
       type: object
       required:
       - verdict
@@ -1578,6 +1654,16 @@ components:
           type: boolean
           title: Structured Output
           default: true
+        price_per_1m_input:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Price Per 1M Input
+        price_per_1m_output:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Price Per 1M Output
       type: object
       required:
       - base_url

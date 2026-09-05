@@ -5,9 +5,10 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from ulid import ULID
 
-from agentgate.api.schemas import DecisionKind, InspectVerdict
+from agentgate.api.schemas import Cost, DecisionKind, InspectVerdict
 from agentgate.domain.dialogue import Dialogue
 from agentgate.domain.session import RECENT_MAXLEN, SessionState
+from agentgate.domain.usage import Usage
 from agentgate.domain.verdict import Verdict
 from agentgate.engine.decision import Decision
 from agentgate.engine.timings import Latency
@@ -79,6 +80,25 @@ async def test_decision_insert_and_list(session_factory):
     assert [r.id for r in only_m] == [r2.id]
     page = await repo.list(session_id=None, model=None, limit=1, before=all_rows[0].id)
     assert page[0].id == all_rows[1].id
+
+
+async def test_decision_cost_roundtrips_through_postgres(session_factory):
+    await _seed_session(session_factory)
+    repo = DecisionRepo(session_factory)
+    base = rec(model="m")
+    priced = decision(
+        id=base.id, request=base.request, latency=base.latency,
+        verdict=Verdict(
+            decision=DecisionKind.deny, stage=2, model="m",
+            cost=Cost.of(Usage(input_tokens=812, output_tokens=41), 0.15, 0.60),
+        ),
+    )
+    await repo.insert(priced)
+    rows = await repo.list(session_id=None, model=None, limit=10, before=None)
+    row = next(r for r in rows if r.id == priced.id)
+    assert row.cost.input_tokens == 812
+    assert row.cost.output_tokens == 41
+    assert row.cost.amount == (812 * 0.15 + 41 * 0.60) / 1_000_000
 
 
 async def test_allow_cache_roundtrip(session_factory):

@@ -8,6 +8,7 @@ from agentgate.classify.base import ReviewCase
 from agentgate.classify.llm import LLMClassifier, build_classifiers
 from agentgate.domain.dialogue import Dialogue
 from agentgate.normalize import normalize
+from agentgate.profiles.schema import ModelConfig
 from tests.classify.test_prompt import P, WS
 
 
@@ -24,8 +25,11 @@ def classifier(handler) -> LLMClassifier:
     return LLMClassifier(name, cfg, httpx.AsyncClient(transport=httpx.MockTransport(handler)))
 
 
-def reply(payload):
-    return lambda r: httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(payload)}}]})
+def reply(payload, usage=None):
+    body = {"choices": [{"message": {"content": json.dumps(payload)}}]}
+    if usage is not None:
+        body["usage"] = usage
+    return lambda r: httpx.Response(200, json=body)
 
 
 @pytest.mark.parametrize(
@@ -66,3 +70,33 @@ def test_build_classifiers_names_one_per_configured_model():
     built = build_classifiers(P.profile, http)
     assert set(built) == set(P.profile.models.configs)
     assert [name for name, c in built.items() if c.name != name] == []
+
+
+async def test_cost_is_none_when_the_provider_reports_no_usage():
+    res = await classifier(reply({"decision": "A"})).classify(case())
+    assert res.cost is None
+
+
+async def test_cost_carries_tokens_but_no_amount_without_configured_prices():
+    res = await classifier(reply({"decision": "A"}, usage={"prompt_tokens": 812, "completion_tokens": 41})).classify(case())
+    assert res.cost.input_tokens == 812
+    assert res.cost.output_tokens == 41
+    assert res.cost.amount is None
+    assert res.cost.currency is None
+
+
+async def test_cost_carries_amount_when_the_model_is_priced():
+    cfg = ModelConfig(base_url="http://x/v1", model="q", price_per_1m_input=0.15, price_per_1m_output=0.60)
+    llm_classifier = LLMClassifier(
+        "m", cfg, httpx.AsyncClient(transport=httpx.MockTransport(reply(
+            {"decision": "A"}, usage={"prompt_tokens": 812, "completion_tokens": 41},
+        ))),
+    )
+    res = await llm_classifier.classify(case())
+    assert res.cost.amount == (812 * 0.15 + 41 * 0.60) / 1_000_000
+    assert res.cost.currency == "USD"
+
+
+async def test_cost_is_none_when_the_classifier_is_unavailable():
+    res = await classifier(lambda r: httpx.Response(500)).classify(case())
+    assert res.cost is None

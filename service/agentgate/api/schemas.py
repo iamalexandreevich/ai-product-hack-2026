@@ -13,7 +13,9 @@ import json
 from enum import Enum
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer, model_validator
+
+from agentgate.domain.usage import Usage, cost_amount
 
 USER_REQUEST_MAX_CHARS = 2048
 RAW_MAX_BYTES = 32768
@@ -389,6 +391,58 @@ class LatencyMs(BaseModel):
     total: int = Field(description="Total milliseconds the service spent on this decision.")
 
 
+COST_CURRENCY = "USD"
+
+
+class Cost(BaseModel):
+    """Token usage of the stage-2 call, and its money cost when the operator
+    priced the model in `profiles/schema.py::ModelConfig`.
+
+    `amount` and `currency` are both absent from the wire form when the
+    operator did not configure a price -- the tokens are still worth
+    reporting, the money is not (see
+    docs/superpowers/service/specs/response-cost-reporting.md). This whole
+    field is absent from the response, not merely `null`, whenever stage 2
+    was not called: `allow` from stage 1 and `allow` from the cache cost
+    nothing to compute, which is a different fact than "we didn't count."
+    """
+
+    input_tokens: int = Field(description="Prompt tokens the provider billed for the stage-2 call.")
+    output_tokens: int = Field(description="Completion tokens the provider billed for the stage-2 call.")
+    reasoning_tokens: int = Field(
+        default=0,
+        description=(
+            "Hidden reasoning tokens the provider billed, or `0` when the provider "
+            "does not report them. A nonzero value while the model is configured "
+            "with reasoning off means the setting did not take effect."
+        ),
+    )
+    currency: str | None = Field(
+        default=None, description=f"`{COST_CURRENCY}`, present only when `amount` is."
+    )
+    amount: float | None = Field(
+        default=None,
+        description="Money cost of the call at the operator's configured price; absent when no price is configured for this model.",
+    )
+
+    @model_serializer(mode="wrap")
+    def _drop_amount_when_unpriced(self, handler):
+        data = handler(self)
+        if self.amount is None:
+            data.pop("amount", None)
+            data.pop("currency", None)
+        return data
+
+    @classmethod
+    def of(cls, usage: Usage, price_per_1m_input: float | None, price_per_1m_output: float | None) -> "Cost":
+        amount = cost_amount(usage, price_per_1m_input, price_per_1m_output)
+        return cls(
+            input_tokens=usage.input_tokens, output_tokens=usage.output_tokens,
+            reasoning_tokens=usage.reasoning_tokens,
+            currency=COST_CURRENCY if amount is not None else None, amount=amount,
+        )
+
+
 class DecideResponse(BaseModel):
     """The gate's answer to one proposed action."""
 
@@ -445,6 +499,17 @@ class DecideResponse(BaseModel):
         default=PROTOCOL,
         description=f"Protocol version of this response. Always `{PROTOCOL}` in this release.",
     )
+    cost: Cost | None = Field(
+        default=None,
+        description="Token usage and money cost of the stage-2 call. Absent when stage 2 did not run.",
+    )
+
+    @model_serializer(mode="wrap")
+    def _drop_cost_when_stage2_did_not_run(self, handler):
+        data = handler(self)
+        if self.cost is None:
+            data.pop("cost", None)
+        return data
 
 
 class FileProvenance(BaseModel):
@@ -582,9 +647,20 @@ class InspectResponse(BaseModel):
     cached: bool = False
     decision_id: str
     protocol: int = Field(default=PROTOCOL)
+    cost: Cost | None = Field(
+        default=None,
+        description="Token usage and money cost of the stage-2 call. Absent when stage 2 did not run.",
+    )
 
     @model_validator(mode="after")
     def _mask_has_output(self) -> "InspectResponse":
         if self.verdict is InspectVerdict.mask and self.output is None:
             raise ValueError("mask requires output")
         return self
+
+    @model_serializer(mode="wrap")
+    def _drop_cost_when_stage2_did_not_run(self, handler):
+        data = handler(self)
+        if self.cost is None:
+            data.pop("cost", None)
+        return data
