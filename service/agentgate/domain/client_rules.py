@@ -48,9 +48,9 @@ class ClientRules:
         digest = _digest_of(rules.allow, rules.ask, rules.deny)
         return cls(
             level=rules.level,
-            allow=tuple(_expand(p) for p in rules.allow),
-            ask=tuple(_expand(p) for p in rules.ask),
-            deny=tuple(_expand(p) for p in rules.deny),
+            allow=tuple(_prepare(p) for p in rules.allow),
+            ask=tuple(_prepare(p) for p in rules.ask),
+            deny=tuple(_prepare(p) for p in rules.deny),
             _digest=digest,
         )
 
@@ -65,9 +65,7 @@ class ClientRules:
 
     def matches_path(self, kind: Kind, path: str) -> bool:
         folded_path = path.casefold()
-        return any(
-            fnmatch.fnmatchcase(folded_path, p.casefold()) for p in self.path_patterns(kind)
-        )
+        return any(fnmatch.fnmatchcase(folded_path, p) for p in self.path_patterns(kind))
 
     def matches_command(self, kind: Kind, canonical: str) -> bool:
         return any(fnmatch.fnmatchcase(canonical, p) for p in self.command_patterns(kind))
@@ -83,6 +81,17 @@ def _digest_of(allow: list[str], ask: list[str], deny: list[str]) -> str:
         separators=(",", ":"),
     )
     return hashlib.sha256(payload.encode("utf-8", "surrogatepass")).hexdigest()
+
+
+def _prepare(pattern: str) -> str:
+    """Expand ``~`` and, for a path pattern, casefold it once here.
+
+    Folding at construction time means `matches_path` never repeats the
+    fnmatch case-fold work per call; command patterns stay untouched
+    because shells are case-sensitive.
+    """
+    expanded = _expand(pattern)
+    return expanded.casefold() if is_path_pattern(expanded) else expanded
 
 
 def _expand(pattern: str) -> str:

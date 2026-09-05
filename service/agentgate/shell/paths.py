@@ -9,6 +9,7 @@ the normalizer straight back.
 from collections.abc import Sequence
 from enum import Enum, auto
 
+from agentgate.normalize.model import SimpleCommand
 from agentgate.normalize.paths import resolve_path
 from agentgate.shell.argv import ParsedArgv
 from agentgate.shell.commands import WriteTarget, spec_for
@@ -86,3 +87,15 @@ def _written_positionals(argv: Sequence[str], role: PathRole) -> tuple[str, ...]
 def _edits_in_place(argv: Sequence[str]) -> bool:
     """True if this argv asks the command to rewrite its inputs in place."""
     return any(a.startswith(_IN_PLACE_FLAGS) for a in argv[1:])
+
+
+def redirect_targets(command: SimpleCommand) -> tuple[str, ...]:
+    """Files a command's own file redirects (`>`, `>>`) write to.
+
+    `/dev/` targets are excluded: `> /dev/null` writes nowhere a path
+    policy needs to see. Shared by every rule that treats a command's
+    redirect targets as write targets, so the exclusion rule lives once.
+    """
+    return tuple(
+        r.target for r in command.redirects if r.op.endswith((">", ">>")) and not r.target.startswith("/dev/")
+    )

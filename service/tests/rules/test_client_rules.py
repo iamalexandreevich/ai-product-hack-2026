@@ -11,7 +11,9 @@ from tests.factories import WORKSPACE, rule_set, shell_action, stage1_policy
 
 def policy_with(**rules) -> Policy:
     base = stage1_policy()
-    return Policy.bind(base.profile, WORKSPACE, ClientRules.of(rule_set(**rules)))
+    empty = dict(allow=[], ask=[], deny=[])
+    empty.update(rules)
+    return Policy.bind(base.profile, WORKSPACE, ClientRules.of(rule_set(**empty)))
 
 
 def test_canonical_units_join_argv_and_pipelines_and_split_compounds():
@@ -34,11 +36,13 @@ def test_canonical_units_join_argv_and_pipelines_and_split_compounds():
         ("git status && git diff", dict(allow=["git status", "git diff*"]), DecisionKind.allow, "client.allow"),
         ("git status && npm run build", dict(allow=["git status"]), None, None),
         ("git status > out.txt", dict(allow=["git status*"]), None, None),
+        ("rm -rf ./dist", dict(deny=["rm -rf *"]), DecisionKind.deny, "client.deny"),
+        ("X=dist; rm -rf $X", dict(deny=["rm -rf *"]), DecisionKind.deny, "client.deny"),
     ],
     ids=[
         "allow_prefix", "allow_no_match", "deny_pipeline", "deny_pipeline_via_variable",
         "ask_prefix", "deny_any_part", "allow_every_part", "allow_not_every_part",
-        "allow_refuses_file_redirect",
+        "allow_refuses_file_redirect", "deny_headline_case", "deny_via_variable_obfuscation",
     ],
 )
 def test_client_rules_on_shell_commands(raw, rules, expected, rule_id):
@@ -61,6 +65,19 @@ def test_path_patterns_apply_to_every_tool():
     assert verdict.rule_id == "client.deny"
     cat = shell_action(f"cat {WORKSPACE}/config/.env")
     assert STAGE1.evaluate(cat, policy_with(deny=["**/.env"])).rule_id == "client.deny"
+
+
+def test_path_patterns_apply_to_redirect_targets():
+    write = shell_action(f"echo x > {WORKSPACE}/secret.txt")
+    assert STAGE1.evaluate(write, policy_with(deny=["**/secret.txt"])).rule_id == "client.deny"
+    append = shell_action(f"echo x >> {WORKSPACE}/secret.txt")
+    assert STAGE1.evaluate(append, policy_with(deny=["**/secret.txt"])).rule_id == "client.deny"
+
+
+def test_path_patterns_ignore_dev_redirect_targets():
+    devnull = shell_action("echo x > /dev/null")
+    verdict = STAGE1.evaluate(devnull, policy_with(deny=["/dev/**"]))
+    assert verdict is None or not verdict.rule_id.startswith("client.")
 
 
 def test_client_allow_never_beats_hard_deny_or_the_profile():

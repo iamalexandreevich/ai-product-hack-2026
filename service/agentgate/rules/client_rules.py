@@ -22,7 +22,7 @@ from agentgate.domain.client_rules import ClientRules
 from agentgate.domain.policy import Policy
 from agentgate.domain.verdict import Verdict
 from agentgate.normalize.model import NormalizedAction, SimpleCommand
-from agentgate.shell.paths import PathRole, command_paths
+from agentgate.shell.paths import PathRole, command_paths, redirect_targets
 
 Mode = Literal["allow", "ask", "deny"]
 
@@ -83,7 +83,11 @@ class ClientRulesRule:
 
 def _paths(action: NormalizedAction) -> list[str]:
     if action.tool is Tool.shell:
-        return [p for c in action.commands for p in command_paths(c.argv, action.cwd, PathRole.ANY)]
+        paths: list[str] = []
+        for command in action.commands:
+            paths += command_paths(command.argv, action.cwd, PathRole.ANY)
+            paths += redirect_targets(command)
+        return paths
     return list(action.paths)
 
 

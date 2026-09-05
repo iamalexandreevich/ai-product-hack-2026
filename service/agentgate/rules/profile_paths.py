@@ -16,7 +16,7 @@ from agentgate.domain.verdict import Verdict
 from agentgate.normalize.model import NormalizedAction, SimpleCommand
 from agentgate.normalize.paths import is_within
 from agentgate.shell.commands import Role, commands_with_role
-from agentgate.shell.paths import PathRole, command_paths
+from agentgate.shell.paths import PathRole, command_paths, redirect_targets
 
 _MUTATING = commands_with_role(Role.MUTATING)
 
@@ -38,9 +38,7 @@ def _mutating_targets(action: NormalizedAction) -> list[str]:
     targets: list[str] = []
     for command in action.commands:
         targets += _command_targets(command, action.cwd)
-        for redirect in command.redirects:
-            if redirect.op.endswith((">", ">>")) and not redirect.target.startswith("/dev/"):
-                targets.append(redirect.target)
+        targets += redirect_targets(command)
     if action.tool is Tool.file_write:
         targets += action.paths
     return targets
