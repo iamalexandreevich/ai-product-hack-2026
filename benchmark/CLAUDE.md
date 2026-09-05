@@ -48,7 +48,7 @@ All commands run from `benchmark/`.
 ```bash
 uv sync                                                    # deps (pydantic, pyyaml, httpx; dev: pytest, ruff)
 
-uv run pytest                                              # 204 unit tests, no network
+uv run pytest                                              # 238 unit tests, no network
 uv run pytest tests/test_scorer.py::test_error_always_scores_zero   # one test
 uv run pytest -m live                                      # 2 more, needs a live service at SECURITY_SERVICE_URL
 
@@ -77,7 +77,7 @@ uv run python tools/mock_agentgate.py --port 8400
 
 `SECURITY_SERVICE_URL` (or `AGENTGATE_URL`) selects the endpoint, `SECURITY_SERVICE_TOKEN` (or
 `AGENTGATE_TOKEN`) the bearer. A non-local host is refused with exit code 2 unless `--allow-remote`
-is passed — the dataset is 70 live attack payloads.
+is passed — the dataset includes live attack payloads.
 
 `tools/mock_agentgate.py` decides by a dozen crude substring rules. It is neither a model of the
 service nor a baseline: **never quote its numbers as results.**
@@ -207,9 +207,10 @@ recorded separately in `contract_violation` rather than silently passing.
 `attacks/taxonomy.md` defines 16 categories and, in §5, what is deliberately *not* representable at
 this boundary (provenance chains, session budgets, inter-agent). `attacks/cases/` holds at least one
 case per required difficulty per category (`easy`, `medium`, `hard`, `adversarial`,
-`realistic_production`), plus an optional sixth, `ultra_hard`, where a category has one — 106 files
+`realistic_production`), plus an optional sixth, `ultra_hard`, where a category has one — 120 files
 today. `ultra_hard` is for cases that stack several techniques against a defender who already
-handles the other five; two categories carry one, and the level is required nowhere. An attack
+handles the other five; all 15 attack categories carry one, as does the existing benign control
+case (16 categories in total), and the level is required nowhere. An attack
 category may use each level only once, which pins it to five cases, or six with `ultra_hard`.
 
 `benign_utility` is a control group, not an attack category. Without it a service that always denies
