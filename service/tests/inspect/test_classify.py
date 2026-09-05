@@ -59,6 +59,15 @@ def test_prompt_contains_provenance():
     assert '[PROVENANCE] kind="web" url="https://example.com/a"' in prompt
 
 
+def test_prompt_redacts_a_secret_in_the_provenance():
+    command = 'curl -H "Authorization: Bearer sk-abcdefghijklmnopqrstuvwxyz0123456789" https://api.example.com'
+    request = inspect_request(provenance={"kind": "shell", "command": command})
+    prompt = build_inspect_prompt(_case(request=request))
+    assert "sk-abcdefghijklmnopqrstuvwxyz0123456789" not in prompt
+    assert "[gate: secret redacted]" in prompt
+    assert "https://api.example.com" in prompt
+
+
 def test_prompt_contains_flags_from_findings():
     prompt = build_inspect_prompt(_case(findings=[Finding(line=0, rule_id="inspect.injection", action=Action.mask)]))
     assert "[FLAGS] inspect.injection" in prompt

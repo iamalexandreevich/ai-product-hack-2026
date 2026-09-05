@@ -7,7 +7,7 @@ import pytest
 from agentgate.api.schemas import InspectRequest
 from agentgate.inspect.detectors import Action
 from agentgate.inspect.mask import PRIVATE_KEY_REPLACEMENT, SECRET_REPLACEMENT
-from agentgate.inspect.secrets import NEEDLE_FORMS, entropy_candidates_allowed, scan_secrets
+from agentgate.inspect.secrets import NEEDLE_FORMS, entropy_candidates_allowed, redact_line, scan_secrets
 from tests.factories import WORKSPACE, inspect_request
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -60,6 +60,24 @@ def test_a_needle_prefilter_admits_every_line_its_own_pattern_matches(line, _exp
     for form in NEEDLE_FORMS:
         if form.pattern.search(line):
             assert any(needle in line.lower() for needle in form.needles), (form.needles, line)
+
+
+def test_redact_line_hides_a_recognized_form_and_keeps_the_rest():
+    line = 'curl -H "Authorization: Bearer sk-abcdefghijklmnopqrstuvwxyz0123456789" https://api.example.com'
+    redacted = redact_line(line)
+    assert "sk-abcdefghijklmnopqrstuvwxyz0123456789" not in redacted
+    assert SECRET_REPLACEMENT in redacted
+    assert redacted.startswith("curl -H ")
+    assert redacted.endswith(" https://api.example.com")
+
+
+def test_redact_line_returns_a_plain_line_unchanged():
+    assert redact_line("git status --short") == "git status --short"
+
+
+def test_redact_line_leaves_an_entropy_candidate_alone():
+    line = "DATABASE_URL=postgres://app:s3cr3tP4ssw0rd@db.internal:5432/app"
+    assert redact_line(line) == line
 
 
 def test_a_jwt_whose_header_is_not_json_is_not_a_secret():
