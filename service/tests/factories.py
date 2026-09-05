@@ -17,6 +17,7 @@ from agentgate.engine.inspection import Inspection
 from agentgate.engine.inspector import Inspector
 from agentgate.engine.timings import Latency
 from agentgate.inspect.chain import INSPECT_STAGE1
+from agentgate.inspect.classify import InspectCase, InspectClassifier, InspectVerdictOutcome
 from agentgate.normalize import normalize
 from agentgate.normalize.model import NormalizedAction
 from agentgate.profiles.schema import Profile
@@ -366,13 +367,52 @@ class FakeInspectCache:
         self.items[key] = inspection
 
 
-def inspector(cache=None, detectors=INSPECT_STAGE1, classifier=None, **profile_overrides) -> Inspector:
-    """An Inspector over "default" and "other" profiles."""
+class FakeInspectClassifier:
+    """An InspectClassifier that answers what it was told to, and keeps what it was asked.
+
+    `answer` is one of "P"/"M"/"D"; a "P" or "D" answer drops stage 1's
+    replacement (a rewrite is only meaningful for "M"). Passing `error`
+    instead produces a failure outcome carrying stage 1's own verdict, the
+    same shape `Inspector` falls back to on any stage-2 error.
+    """
+
+    def __init__(
+        self, answer: str | None = None, reason: str = "", error: str | None = None, name: str = "m",
+    ) -> None:
+        self.name = name
+        self.calls = 0
+        self.cases: list[InspectCase] = []
+        self._answer = answer
+        self._reason = reason
+        self._error = error
+
+    async def classify(self, case: InspectCase) -> InspectVerdictOutcome:
+        self.calls += 1
+        self.cases.append(case)
+        if self._error is not None:
+            return InspectVerdictOutcome(
+                verdict=case.stage1.verdict, replacement=case.stage1.replacement,
+                reason=case.stage1.reason, model=self.name, error=self._error,
+            )
+        if self._answer == "P":
+            return InspectVerdictOutcome(verdict=InspectVerdict.pass_, replacement=None, reason=self._reason, model=self.name)
+        if self._answer == "D":
+            return InspectVerdictOutcome(verdict=InspectVerdict.drop, replacement=None, reason=self._reason, model=self.name)
+        return InspectVerdictOutcome(
+            verdict=case.stage1.verdict, replacement=case.stage1.replacement, reason=self._reason, model=self.name,
+        )
+
+
+def inspector(cache=None, detectors=INSPECT_STAGE1, classifier: InspectClassifier | None = None, **profile_overrides) -> Inspector:
+    """An Inspector over "default" and "other" profiles, both sharing the given classifier."""
+    classifiers = None
+    if classifier is not None:
+        classifiers = {"default": {classifier.name: classifier}, "other": {classifier.name: classifier}}
     return Inspector(
         profiles={"default": profile(**profile_overrides), "other": profile(id="other")},
         default_profile="default",
         detectors=detectors,
         cache=cache if cache is not None else FakeInspectCache(),
         ttl_seconds=86400,
-        classifiers=classifier,
+        classifiers=classifiers,
     )

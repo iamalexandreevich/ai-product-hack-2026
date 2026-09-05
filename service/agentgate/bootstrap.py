@@ -20,6 +20,7 @@ from agentgate.config import Settings
 from agentgate.domain.replay import RestorableReplayStore
 from agentgate.domain.session import RestorableSessionStateStore
 from agentgate.engine.gate import Gate
+from agentgate.inspect.classify import build_inspect_classifiers
 from agentgate.log.jsonl import JsonlLogger
 from agentgate.profiles.loader import load_profiles
 from agentgate.rules.chain import STAGE1
@@ -85,6 +86,10 @@ async def build_service(
 
     http = http or httpx.AsyncClient()
     classifiers = {name: build_classifiers(profile, http) for name, profile in profiles.items()}
+    # Built here so every profile's inspect classifiers exist by startup, same
+    # as `classifiers` above; wiring them into an `Inspector` on `Service` is
+    # a later task, not this one.
+    _inspect_classifiers = {name: build_inspect_classifiers(profile, http) for name, profile in profiles.items()}
     gate = Gate(
         profiles, settings.default_profile, classifiers, STAGE1, store,
         settings.allow_cache_ttl_seconds,

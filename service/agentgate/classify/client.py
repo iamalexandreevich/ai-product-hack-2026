@@ -12,7 +12,7 @@ import json
 import os
 
 import httpx
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from agentgate.classify.schema import RESPONSE_JSON_SCHEMA, ClassifierOutput
 from agentgate.profiles.schema import ModelConfig
@@ -31,10 +31,23 @@ class Stage2Error(Exception):
 
 
 class LLMClient:
-    def __init__(self, name: str, config: ModelConfig, http: httpx.AsyncClient) -> None:
+    """Talks to one OpenAI-compatible chat-completions endpoint.
+
+    `schema`/`output_model` default to stage 1's decide schema so existing
+    callers are unaffected; `agentgate.inspect.classify` passes its own P/M/D
+    schema through the same request/error-handling path instead of
+    duplicating it.
+    """
+
+    def __init__(
+        self, name: str, config: ModelConfig, http: httpx.AsyncClient,
+        schema: dict = RESPONSE_JSON_SCHEMA, output_model: type[BaseModel] = ClassifierOutput,
+    ) -> None:
         self.name = name
         self.config = config
         self._http = http
+        self._schema = schema
+        self._output_model = output_model
 
     def _headers(self) -> dict[str, str]:
         headers = {"content-type": "application/json"}
@@ -54,11 +67,11 @@ class LLMClient:
         if self.config.structured_output:
             body["response_format"] = {
                 "type": "json_schema",
-                "json_schema": {"name": "agentgate_decision", "strict": True, "schema": RESPONSE_JSON_SCHEMA},
+                "json_schema": {"name": "agentgate_decision", "strict": True, "schema": self._schema},
             }
         return body
 
-    async def classify(self, system: str, user: str) -> tuple[ClassifierOutput, dict]:
+    async def classify(self, system: str, user: str) -> tuple[BaseModel, dict]:
         """One request, no retries. Raises Stage2Error on every failure path."""
         url = self.config.base_url.rstrip("/") + "/chat/completions"
         try:
@@ -109,7 +122,7 @@ class LLMClient:
             raise Stage2Error("invalid_json", content[:200]) from exc
 
         try:
-            return ClassifierOutput.model_validate(data), raw
+            return self._output_model.model_validate(data), raw
         except ValidationError as exc:
             raise Stage2Error("invalid_schema", str(exc)[:200]) from exc
 
