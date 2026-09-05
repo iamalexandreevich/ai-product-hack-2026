@@ -80,6 +80,18 @@ class CommandSpec:
     # a secret. A rule that allows a read from a trusted domain has to
     # refuse both, for opposite reasons.
     output_flags: frozenset[str] = field(default_factory=frozenset)
+    # The closed set of options a read-only invocation of this command may
+    # carry. Declared only for curl and wget: `ProfileDomainTrustedRule`
+    # checks a network command's argv against this list instead of
+    # inferring "read-only" from the absence of an upload/output flag,
+    # which missed eight write/upload flags in one review pass and would
+    # miss the next flag a new curl release adds. Includes both the
+    # no-argument flags and the value-taking ones in read_only_value_flags.
+    read_only_flags: frozenset[str] = field(default_factory=frozenset)
+    # The subset of read_only_flags whose value is a separate token, or an
+    # attached one on a two-character short flag, rather than the flag
+    # being complete on its own.
+    read_only_value_flags: frozenset[str] = field(default_factory=frozenset)
     write_target: WriteTarget = WriteTarget.NONE
     path_arguments: PathArguments = PathArguments.UNDECLARED
     # Subcommands of this command that only read.
@@ -92,6 +104,8 @@ def _row(
     value_flags: Sequence[str] = (),
     upload_flags: Sequence[str] = (),
     output_flags: Sequence[str] = (),
+    read_only_flags: Sequence[str] = (),
+    read_only_value_flags: Sequence[str] = (),
     write_target: WriteTarget = WriteTarget.NONE,
     path_arguments: PathArguments = PathArguments.UNDECLARED,
     readonly_subcommands: Sequence[str] = (),
@@ -102,6 +116,8 @@ def _row(
         value_flags=frozenset(value_flags),
         upload_flags=frozenset(upload_flags),
         output_flags=frozenset(output_flags),
+        read_only_flags=frozenset(read_only_flags),
+        read_only_value_flags=frozenset(read_only_value_flags),
         write_target=write_target,
         path_arguments=path_arguments,
         readonly_subcommands=frozenset(readonly_subcommands),
@@ -124,7 +140,18 @@ COMMANDS: Mapping[str, CommandSpec] = {
         _row("curl", Role.NETWORK, Role.DOWNLOADER, upload_flags=(
             "-T", "--upload-file", "-d", "--data", "--data-ascii", "--data-binary",
             "--data-raw", "--data-urlencode", "-F", "--form",
-        ), output_flags=("-o", "--output", "-O", "--remote-name", "--output-dir")),
+        ), output_flags=("-o", "--output", "-O", "--remote-name", "--output-dir"),
+             read_only_value_flags=(
+                 "-m", "--max-time", "--connect-timeout", "--retry", "--retry-delay",
+                 "-A", "--user-agent", "-H", "--header", "-X", "--request",
+             ), read_only_flags=(
+                 "-m", "--max-time", "--connect-timeout", "--retry", "--retry-delay",
+                 "-A", "--user-agent", "-H", "--header", "-X", "--request",
+                 "-s", "--silent", "-S", "--show-error", "-f", "--fail",
+                 "-L", "--location", "-I", "--head", "-i", "--include",
+                 "-v", "--verbose", "-4", "-6", "--compressed", "-G", "--get",
+                 "--http1.1", "--http2", "-N", "--no-buffer",
+             )),
         _row("cut", Role.READONLY),
         _row("dash", Role.SHELL, Role.INTERPRETER),
         _row("dd", Role.MUTATING, path_arguments=_EVERY),
@@ -215,6 +242,15 @@ COMMANDS: Mapping[str, CommandSpec] = {
              output_flags=(
                  "-O", "--output-document", "-P", "--directory-prefix",
                  "-o", "--output-file",
+             ),
+             read_only_value_flags=(
+                 "-O", "--output-document", "-T", "--timeout", "-t", "--tries",
+                 "-U", "--user-agent", "--header", "--max-redirect",
+             ),
+             read_only_flags=(
+                 "-O", "--output-document", "-T", "--timeout", "-t", "--tries",
+                 "-U", "--user-agent", "--header", "--max-redirect",
+                 "-q", "--quiet", "-4", "-6", "--no-verbose", "-nv",
              )),
         _row("which", Role.READONLY),
         _row("xargs", value_flags=(

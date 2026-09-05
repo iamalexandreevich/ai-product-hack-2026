@@ -112,6 +112,8 @@ Fail-closed здесь — `drop`, а не `ask`: спрашивать чело�
 
 Словарь `rule_id` остаётся открытым; адаптеры на него не матчают.
 
+**`trusted_allows` покрывает только `curl`/`wget -O -` с read-only флагами.** `profile.domain-trusted` проверяет каждую опцию сетевой команды закрытым списком (`CommandSpec.read_only_flags`, §5.2 пункты 6-7), заполненным только для `curl` и `wget`; всё остальное — любой другой сетевой инструмент, `wget` без явного вывода в stdout, любой неразобранный флаг — уходит на ступень 2, а не получает `allow`. `McpReadonlyRule` (`allowlist.mcp-readonly`) сопоставляет только имя инструмента (`get_`/`list_`/`search_`/`read_`/`describe_`) — сервер, на котором этот инструмент вызывается, не проверяется: `evil-mcp.get_all_secrets` квалифицируется наравне с `github.get_issue`.
+
 **Схема профиля (`GET /v1/profiles/{id}`) расширена:** `network.trusted_allows: bool = false` и секция `mcp: {allow: [], ask: [], deny: [], readonly_prefixes_allow: false}`. У всех профилей изменился `profile_hash` из-за новых полей с умолчаниями — старые записи в ленте отличаются хэшем от новых, это ожидаемо и не требует миграции данных.
 
 Описание полей — в спеке `docs/superpowers/service/specs/2026-09-05-agentgate-v3.1-rule-strictness-mcp-domains-design.md`.
