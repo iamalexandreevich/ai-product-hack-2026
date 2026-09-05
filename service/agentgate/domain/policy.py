@@ -13,7 +13,7 @@ import os
 from dataclasses import dataclass
 
 from agentgate.domain.client_rules import ClientRules
-from agentgate.profiles.schema import Escalation, History, InspectSettings, Network, Profile, Prose
+from agentgate.profiles.schema import Escalation, History, InspectSettings, McpPolicy, Network, Profile, Prose
 
 
 @dataclass(frozen=True)
@@ -71,6 +71,10 @@ class Policy:
     @property
     def inspect(self) -> InspectSettings:
         return self.profile.inspect
+
+    @property
+    def mcp(self) -> McpPolicy:
+        return self.profile.mcp
 
 
 def _expand(path: str, workspace: str) -> str:

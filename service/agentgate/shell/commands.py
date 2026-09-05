@@ -74,6 +74,12 @@ class CommandSpec:
     # Options whose value is transmitted outward: the argument becomes
     # request body or upload content.
     upload_flags: frozenset[str] = field(default_factory=frozenset)
+    # Options whose value names a file (or a directory) the command
+    # WRITES. Separate from upload_flags, which name what goes out:
+    # `curl -o report.html` keeps the response, `curl -d @secret` sends
+    # a secret. A rule that allows a read from a trusted domain has to
+    # refuse both, for opposite reasons.
+    output_flags: frozenset[str] = field(default_factory=frozenset)
     write_target: WriteTarget = WriteTarget.NONE
     path_arguments: PathArguments = PathArguments.UNDECLARED
     # Subcommands of this command that only read.
@@ -85,6 +91,7 @@ def _row(
     *roles: Role,
     value_flags: Sequence[str] = (),
     upload_flags: Sequence[str] = (),
+    output_flags: Sequence[str] = (),
     write_target: WriteTarget = WriteTarget.NONE,
     path_arguments: PathArguments = PathArguments.UNDECLARED,
     readonly_subcommands: Sequence[str] = (),
@@ -94,6 +101,7 @@ def _row(
         roles=frozenset(roles),
         value_flags=frozenset(value_flags),
         upload_flags=frozenset(upload_flags),
+        output_flags=frozenset(output_flags),
         write_target=write_target,
         path_arguments=path_arguments,
         readonly_subcommands=frozenset(readonly_subcommands),
@@ -116,7 +124,7 @@ COMMANDS: Mapping[str, CommandSpec] = {
         _row("curl", Role.NETWORK, Role.DOWNLOADER, upload_flags=(
             "-T", "--upload-file", "-d", "--data", "--data-ascii", "--data-binary",
             "--data-raw", "--data-urlencode", "-F", "--form",
-        )),
+        ), output_flags=("-o", "--output", "-O", "--remote-name", "--output-dir")),
         _row("cut", Role.READONLY),
         _row("dash", Role.SHELL, Role.INTERPRETER),
         _row("dd", Role.MUTATING, path_arguments=_EVERY),
@@ -202,7 +210,9 @@ COMMANDS: Mapping[str, CommandSpec] = {
         _row("uniq", Role.READONLY),
         _row("unzip", path_arguments=_EVERY),
         _row("wc", Role.READONLY, path_arguments=_EVERY),
-        _row("wget", Role.NETWORK, Role.DOWNLOADER, upload_flags=("--post-file", "--post-data")),
+        _row("wget", Role.NETWORK, Role.DOWNLOADER,
+             upload_flags=("--post-file", "--post-data"),
+             output_flags=("-O", "--output-document", "-P", "--directory-prefix")),
         _row("which", Role.READONLY),
         _row("xargs", value_flags=(
             "-n", "--max-args", "-P", "--max-procs", "-I", "-d", "--delimiter",

@@ -7,6 +7,7 @@ The reason text carries a domain taken from the action and must be
 escaped where it reaches the stage-2 prompt.
 """
 
+from agentgate.domain.domains import domain_allowed
 from agentgate.domain.policy import Policy
 from agentgate.domain.verdict import Verdict
 from agentgate.normalize.model import NormalizedAction
@@ -20,9 +21,9 @@ class ProfileDomainRule:
     def evaluate(self, action: NormalizedAction, policy: Policy) -> Verdict | None:
         if not action.domains or policy.network.mode is NetworkMode.open:
             return None
-        allowed = {d.lower() for d in policy.network.allowed_domains}
+        allowed = policy.network.allowed_domains
         for domain in action.domains:
-            if domain in allowed or any(domain.endswith("." + a) for a in allowed):
+            if domain_allowed(domain, allowed):
                 continue
             if policy.network.mode is NetworkMode.ask:
                 return Verdict.ask(self.id, f"domain {domain} is not in the allowlist")
