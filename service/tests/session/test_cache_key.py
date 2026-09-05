@@ -1,4 +1,4 @@
-from agentgate.session.cache_key import allow_cache_key
+from agentgate.session.cache_key import allow_cache_key, inspect_cache_key
 
 
 def test_cache_key_depends_on_all_parts():
@@ -20,3 +20,13 @@ def test_same_action_with_a_different_rules_digest_gets_a_different_key():
     # into a call that arrives with stricter (or no) rules for the same
     # action.
     assert allow_cache_key("ph", "ah", "task", "hd", "permissive") != allow_cache_key("ph", "ah", "task", "hd", "strict")
+
+
+def test_inspect_cache_key_depends_on_task_and_history_too():
+    a = inspect_cache_key("ph", "shell", "od", "td", "hd")
+    assert a != inspect_cache_key("ph", "shell", "od", "td2", "hd")
+    assert a != inspect_cache_key("ph", "shell", "od", "td", "hd2")
+    assert a != inspect_cache_key("ph", "web", "od", "td", "hd")
+    assert a != inspect_cache_key("ph2", "shell", "od", "td", "hd")
+    assert a != inspect_cache_key("ph", "shell", "od2", "td", "hd")
+    assert len(a) == 64
