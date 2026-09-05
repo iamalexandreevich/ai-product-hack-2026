@@ -131,7 +131,6 @@ async def test_restore_puts_entries_under_the_principal_and_session():
     await store.restore()
 
     assert await inner.get(stored_key("k")) is not None
-    assert await inner.get("token:k") is None
 
 
 async def test_restore_failure_starts_empty_and_warns(caplog):

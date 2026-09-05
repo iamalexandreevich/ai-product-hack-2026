@@ -20,7 +20,7 @@ could not hand one caller another's verdict.
 A principal running two sessions under one key is a third way to collide:
 without the session in the namespace, the two sessions' entries would evict
 each other and neither would ever be replayed. `ReplayKey` therefore also
-carries the session (or `NO_SESSION` for a call that named none), encoded
+carries the session (JSON `null` for a call that named none), encoded
 as a JSON array so that no character inside a session id or the caller's
 key can be mistaken for a field separator between the three parts.
 """
@@ -33,8 +33,6 @@ from agentgate.api.schemas import DecideRequest, DecideResponse, InspectRequest,
 from agentgate.engine.decision import DecisionRecord
 
 from agentgate.domain.principal import STATIC_PRINCIPAL, principal_of  # noqa: F401  (re-exported)
-
-NO_SESSION = "-"
 
 
 @dataclass(frozen=True)
@@ -50,12 +48,12 @@ class ReplayKey:
     """
 
     principal: str
-    session: str
+    session: str | None
     key: str
 
     @classmethod
     def of(cls, key_id: str | None, session_id: str | None, key: str) -> "ReplayKey":
-        return cls(principal_of(key_id), session_id or NO_SESSION, key)
+        return cls(principal_of(key_id), session_id, key)
 
     def storage_key(self) -> str:
         # A JSON array, not a "principal:session:key" join: either field could

@@ -1,4 +1,4 @@
-from agentgate.domain.replay import NO_SESSION, STATIC_PRINCIPAL, Replay, ReplayKey, principal_of
+from agentgate.domain.replay import STATIC_PRINCIPAL, Replay, ReplayKey, principal_of
 from tests.factories import decide_request, decision
 
 
@@ -14,13 +14,20 @@ def test_the_static_token_is_one_named_principal():
     assert principal_of(None) == STATIC_PRINCIPAL == "token"
 
 
-def test_the_storage_key_joins_principal_session_and_key():
-    assert ReplayKey.of("01HZKEYA", "s1", "abc").storage_key() == ReplayKey("01HZKEYA", "s1", "abc").storage_key()
+def test_the_storage_key_is_a_json_array_of_principal_session_and_key():
+    assert ReplayKey.of("01HZKEYA", "s1", "abc").storage_key() == '["01HZKEYA","s1","abc"]'
 
 
-def test_a_call_without_a_session_gets_its_own_namespace():
-    assert ReplayKey.of(None, None, "abc").storage_key() == ReplayKey(STATIC_PRINCIPAL, NO_SESSION, "abc").storage_key()
-    assert NO_SESSION == "-"
+def test_a_call_without_a_session_is_encoded_as_null():
+    assert ReplayKey.of(None, None, "abc").storage_key() == '["token",null,"abc"]'
+
+
+def test_a_session_named_dash_is_not_the_sessionless_slot():
+    assert ReplayKey.of(None, "-", "abc").storage_key() != ReplayKey.of(None, None, "abc").storage_key()
+
+
+def test_a_colon_in_the_session_cannot_alias_another_triple():
+    assert ReplayKey.of(None, "a:b", "k").storage_key() != ReplayKey.of(None, "a", "b:k").storage_key()
 
 
 def test_two_sessions_of_one_principal_do_not_share_a_slot():

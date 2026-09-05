@@ -13,8 +13,8 @@ depends_on = None
 
 # Kept literal on purpose: a migration is a frozen snapshot of the schema at
 # one moment, and importing agentgate.domain.principal would let a later edit
-# of that constant silently rewrite history. tests/store/test_repo.py checks
-# that the running schema and this text still say the same thing.
+# of that constant silently rewrite history. tests/domain/test_principal.py
+# reads this file and checks the literal still equals KEY_ID_PATTERN.
 _ULID = "^[0-9A-HJKMNP-TV-Z]{26}$"
 
 

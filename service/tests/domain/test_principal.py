@@ -1,4 +1,5 @@
 import re
+from pathlib import Path
 
 import pytest
 from ulid import ULID
@@ -39,3 +40,9 @@ def test_ensure_key_id_shape_rejects_anything_but_a_ulid(bad):
 
 def test_principal_of_still_answers_the_static_token():
     assert principal_of(None) == STATIC_PRINCIPAL
+
+
+def test_the_migration_repeats_the_pattern_literally():
+    migration = Path(__file__).resolve().parents[2] / "migrations" / "versions" / "0008_key_id_shape.py"
+    literal = re.search(r'_ULID = "([^"]+)"', migration.read_text()).group(1)
+    assert literal == KEY_ID_PATTERN
