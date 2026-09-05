@@ -101,6 +101,19 @@ Fail-closed здесь — `drop`, а не `ask`: спрашивать чело�
 
 Описание поля и решение «токены или деньги» — `docs/superpowers/service/specs/response-cost-reporting.md` (реализовано в v3).
 
+## v4: Context Guard
+
+`InspectRequest` не изменился: адаптер v3 работает против v4 без правок. `InspectResponse` дополнен двумя необязательными полями; `output` при `mask` по-прежнему авторитетен.
+
+- `spans` — что именно было замаскировано или отредактировано: `[{line_start, line_end, kind, source, confidence?}]`. Строки нумеруются с нуля по `output.split("\n")` **запроса**, `line_end` включительно (ответ при схлопнутом PEM-блоке короче). `kind`: `instruction | pipe-exec | encoded | invisible | secret`; `source`: `detector | model`; `confidence` только при `source: model`. Текста в спанах нет никогда.
+- `redacted` — сколько значений секретов скрыто. Секрет редактируется по значению: строка и имя ключа остаются (`AWS_SECRET_ACCESS_KEY=[gate: secret redacted]`, `Authorization: Bearer [gate: secret redacted]`), PEM-блок схлопывается в одну строку `[gate: private key redacted]`. Редакция не двигает порог `drop`: `.env` из тридцати строк приходит как `mask`, не `drop`.
+
+Новые `rule_id`: `inspect.secret` (сработал детектор секретов) и `inspect.semantic` (маска от спанов модели). Режим `classifier: always` в профиле зовёт модель и на чистой ступени 1 — единственный способ поймать перефразированную инъекцию; по умолчанию `off`.
+
+В ленте `GET /v1/decisions` строка inspect несёт те же `spans` и `redacted`, а также `spans_rejected` (сколько спанов модели отброшено валидацией). `raw` такой строки — текст **после** редакции: исходное значение секрета не хранится нигде и не отдаётся ни в одном поле.
+
+Описание — в спеке `docs/superpowers/service/specs/2026-09-05-agentgate-v4-context-guard-design.md`.
+
 ## hook_client.py — пример вызова
 
 Поддерживает hook-форматы Claude Code (`PreToolUse`, ключ `tool_name`) и OpenCode (`tool.execute.before`, ключ `sessionID`); формат выбирается автоматически по форме входного JSON.
