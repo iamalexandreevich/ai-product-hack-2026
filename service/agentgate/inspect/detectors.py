@@ -106,7 +106,7 @@ ENCODED = Detector(
 # a stray BOM (U+FEFF), bidi isolates (U+2066-U+2069), soft hyphen
 # (U+00AD), and Unicode tag characters (U+E0000-U+E007F).
 INVISIBLE_CHARS = re.compile(
-    "[­​-‏‪-‮⁠-⁩﻿\U000e0000-\U000e007f]"
+    "[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff\U000e0000-\U000e007f]"
 )
 
 INVISIBLE = Detector(

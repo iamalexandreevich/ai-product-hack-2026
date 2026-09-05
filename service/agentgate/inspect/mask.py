@@ -52,5 +52,5 @@ def apply(output: str, findings: list[Finding]) -> Stage1Outcome:
             rewritten.append(REPLACEMENT_LINE)
     return Stage1Outcome(
         InspectVerdict.mask, "\n".join(rewritten), lead,
-        f"rewrote {len(flagged)} line(s) that tried to instruct the model",
+        f"rewrote {len(flagged)} line(s) carrying instruction-like or invisible text",
     )

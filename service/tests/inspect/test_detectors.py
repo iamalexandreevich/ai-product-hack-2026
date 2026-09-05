@@ -70,14 +70,14 @@ def test_encoded_blob_boundary_is_513_chars():
 
 
 def test_invisible_characters_are_found_with_a_clean_action():
-    findings = scan("hello​world ‮evil", INSPECT_STAGE1)
+    findings = scan("hello\u200bworld \u202eevil", INSPECT_STAGE1)
     assert [f.rule_id for f in findings] == ["inspect.invisible"]
     assert findings[0].action is Action.clean
 
 
 @pytest.mark.parametrize(
     "line",
-    ["a⁧b", "a\U000e0041b", "a­b"],
+    ["a\u2067b", "a\U000e0041b", "a\u00adb"],
     ids=["bidi_isolate", "unicode_tag", "soft_hyphen"],
 )
 def test_invisible_characters_cover_extended_ranges(line):
