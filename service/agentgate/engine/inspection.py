@@ -35,6 +35,7 @@ class Inspection:
     cached: bool = False
     findings: tuple[str, ...] = ()
     idempotency_key: str | None = None
+    key_id: str | None = None
     cost: Cost | None = None
     # The workspace `detect_workspace(request.args.cwd)` resolved, kept so
     # `session_ref` can hand the writer a row to ensure without resolving it
@@ -73,8 +74,8 @@ class Inspection:
 
         Only the verdict-bearing fields of `self` survive: what content was
         judged and how. Everything specific to the call that produced it --
-        `error`, `raw_response`, `idempotency_key` -- is dropped rather than
-        copied, since the new call had none of those; carrying them forward
+        `error`, `raw_response`, `idempotency_key`, `key_id` -- is dropped rather
+        than copied, since the new call had none of those; carrying them forward
         would misreport it as having failed, produced a raw model response,
         or been submitted under someone else's idempotency key. `model` and
         `findings` stay: the verdict is deterministic on content, so they
@@ -111,6 +112,7 @@ class Inspection:
             idempotency_key=self.idempotency_key, request_digest=self.request.identity_digest(),
             kind="inspect", call_id=self.request.call_id, provenance=provenance, replacement=self.replacement,
             cost=self.cost, spans=list(self.spans), redacted=self.redacted, spans_rejected=self.spans_rejected,
+            key_id=self.key_id,
         )
 
     def allow_cache_entry(self) -> None:

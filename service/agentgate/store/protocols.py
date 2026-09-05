@@ -24,6 +24,7 @@ from agentgate.engine.decision import DecisionRecord
 class Stored(Protocol):
     id: str
     idempotency_key: str | None
+    key_id: str | None
 
     def to_record(self) -> DecisionRecord: ...
     def allow_cache_entry(self) -> tuple[str, str] | None: ...

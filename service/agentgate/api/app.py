@@ -260,6 +260,7 @@ class Outcome(Protocol):
     `Inspection` share this shape without a common base class."""
 
     idempotency_key: str | None
+    key_id: str | None
 
     def to_record(self) -> Any: ...
     def to_response(self) -> Any: ...
@@ -367,6 +368,7 @@ async def _answer(
     replay: ReplayStore,
     settings: Settings,
     writer: DecisionWriter,
+    key_id: str | None,
 ) -> Any:
     """The shape shared by `/v1/decide` and `/v1/inspect`: parse the body,
     refuse a bad one, replay an identical retry, run the engine fail-closed,
@@ -391,6 +393,9 @@ async def _answer(
     except Exception as exc:  # noqa: BLE001 - fail-closed: no exception may escape as a 500
         log.exception("%s failed", spec.log_label)
         return spec.refuse("api.internal-error", f"internal error: {type(exc).__name__}")
+    # Attribution is attached before the replay entry is built: a restored
+    # replay must carry the same key_id the live decision did.
+    outcome = replace(outcome, key_id=key_id)
     if key is not None:
         outcome = replace(outcome, idempotency_key=key)
         await _remember(replay, key, Replay.of(outcome.to_record()), settings.allow_cache_ttl_seconds)
@@ -427,6 +432,9 @@ def create_app(
         openapi_tags=TAGS,
     )
     auth = Depends(make_require_token(settings, key_repo=key_repo, cache_ttl_seconds=settings.api_key_cache_ttl_seconds))
+    # Routes that need the credential's identity take it as a parameter:
+    # `dependencies=[auth]` runs the dependency but throws its value away.
+    KeyId = Annotated[str | None, auth]
     decide_spec = RouteSpec(
         model=DecideRequest, refuse=_refuse, refusal_rules=DECIDE_REFUSAL_RULES,
         run=gate.decide, log_label="Gate.decide",
@@ -439,7 +447,6 @@ def create_app(
     @app.post(
         "/v1/decide",
         response_model=DecideResponse,
-        dependencies=[auth],
         operation_id="decide",
         summary="Decide on one proposed agent action",
         tags=["decide"],
@@ -456,7 +463,7 @@ def create_app(
         },
         openapi_extra=DECIDE_OPENAPI,
     )
-    async def decide(request: Request, background: BackgroundTasks) -> DecideResponse:
+    async def decide(request: Request, background: BackgroundTasks, key_id: KeyId) -> DecideResponse:
         """Decide on one proposed agent action. This is the call a harness makes from its
         pre-tool-use hook (`PreToolUse` in Claude Code, `tool.execute.before` in
         OpenCode) while the tool call is suspended.
@@ -505,12 +512,11 @@ def create_app(
         `deny_unknown_package`, `ask_uncertain_db_cleanup`. The fourth response example
         has no request counterpart because it shows what an invalid request produces.
         """
-        return await _answer(request, background, decide_spec, replay, settings, writer)
+        return await _answer(request, background, decide_spec, replay, settings, writer, key_id)
 
     @app.post(
         "/v1/inspect",
         response_model=InspectResponse,
-        dependencies=[auth],
         operation_id="inspect",
         summary="Judge one tool result",
         tags=["inspect"],
@@ -527,7 +533,7 @@ def create_app(
         },
         openapi_extra=INSPECT_OPENAPI,
     )
-    async def inspect(request: Request, background: BackgroundTasks) -> InspectResponse:
+    async def inspect(request: Request, background: BackgroundTasks, key_id: KeyId) -> InspectResponse:
         """Judge one tool result, held back from the model until this call answers.
 
         **Always HTTP 200.** `pass`, `mask` and `drop` come back as `verdict` values
@@ -541,7 +547,7 @@ def create_app(
         for a `mask`. An `Idempotency-Key` request header replays the stored verdict
         for a repeat of the same request, the same way it does on `/v1/decide`.
         """
-        return await _answer(request, background, inspect_spec, replay, settings, writer)
+        return await _answer(request, background, inspect_spec, replay, settings, writer, key_id)
 
     @app.get(
         "/v1/decisions",

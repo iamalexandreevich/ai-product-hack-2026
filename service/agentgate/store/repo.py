@@ -52,7 +52,10 @@ class DecisionRepo:
         # Core insert against the Table, keyed by column *names* (so `metadata`
         # is just `metadata`), not the ORM entity with its `metadata_` attribute.
         table = DecisionRow.__table__
-        values = stored.to_record().model_dump(exclude={"decision_id"})
+        # `key_id` has no column yet (attribution lands in a later task); it
+        # is excluded here rather than in DecisionRecord so the JSONL log,
+        # which writes the full record, keeps carrying it.
+        values = stored.to_record().model_dump(exclude={"decision_id", "key_id"})
         stmt = pg_insert(table).values(**values).on_conflict_do_nothing(
             index_elements=[table.c.idempotency_key],
             index_where=table.c.idempotency_key.isnot(None),

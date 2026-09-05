@@ -1257,6 +1257,13 @@ components:
           title: Spans Rejected
           description: Model spans discarded by validation before application (spec 4.5).
           default: 0
+        key_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Key Id
+          description: ULID of the issued API key this call was authenticated with; `null`
+            for the static `AGENTGATE_TOKEN` and for a localhost bind with no token.
         decision_id:
           type: string
           title: Decision Id

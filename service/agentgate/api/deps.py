@@ -26,6 +26,11 @@ exception) is treated as "not a match", never an authenticated pass -- see
 `_KeyVerifier.verify`. A cache entry can therefore serve a now-revoked key
 for up to the TTL window; this is a deliberate, documented trade-off (see
 the spec's "Отзыв ограничен временем жизни кэша").
+
+The dependency's value is the resolved `key_id` (None for the static
+token), which api/app.py attaches to the outcome so a decision can be
+attributed to the credential that asked for it. The key itself and its
+hash never leave this module.
 """
 
 import logging
@@ -154,17 +159,24 @@ def make_require_token(
     async def require_token(
         background: BackgroundTasks,
         authorization: str | None = Header(default=None, include_in_schema=False),
-    ) -> None:
+    ) -> str | None:
+        """The `key_id` this call is attributed to, or None.
+
+        None means "authenticated, but not by an issued key": the static
+        `AGENTGATE_TOKEN`, or a localhost dev bind with no token at all.
+        The static token is checked first, so a bearer that somehow matches
+        both loses its attribution rather than gaining someone else's.
+        """
         if expected is None:
-            return
+            return None
         if authorization is not None and secrets.compare_digest(authorization, expected):
-            return
+            return None
         if verifier is not None and authorization is not None and authorization.startswith(_BEARER_PREFIX):
             token = authorization[len(_BEARER_PREFIX):]
             key_id = await verifier.verify(token)
             if key_id is not None:
                 background.add_task(_touch_last_used_safe, key_repo, key_id)
-                return
+                return key_id
         raise HTTPException(status_code=401, detail="invalid or missing bearer token")
 
     return require_token

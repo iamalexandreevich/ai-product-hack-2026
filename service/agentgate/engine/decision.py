@@ -147,6 +147,13 @@ class DecisionRecord(BaseModel):
     spans_rejected: int = Field(
         default=0, description="Model spans discarded by validation before application (spec 4.5)."
     )
+    key_id: str | None = Field(
+        default=None,
+        description=(
+            "ULID of the issued API key this call was authenticated with; `null` for "
+            "the static `AGENTGATE_TOKEN` and for a localhost bind with no token."
+        ),
+    )
 
     @computed_field(description="Same ULID as `id`; mirrors the field name /v1/decide returns.")
     @property
@@ -198,6 +205,7 @@ class Decision:
     history_digest: str = ""
     dialogue: Dialogue | None = None
     idempotency_key: str | None = None
+    key_id: str | None = None
 
     def to_response(self) -> DecideResponse:
         return self.to_record().to_response()
@@ -253,4 +261,5 @@ class Decision:
             rules_level=self.request.rules.level if self.request.rules else None,
             rules_digest=ClientRules.of(self.request.rules).digest() if self.request.rules else None,
             cost=self.verdict.cost,
+            key_id=self.key_id,
         )

@@ -685,3 +685,42 @@ async def test_feed_filters_by_kind(tmp_path):
     await call(app, "POST", "/v1/inspect", json=inspect_body())
     items = (await call(app, "GET", "/v1/decisions?kind=inspect")).json()["items"]
     assert [i["kind"] for i in items] == ["inspect"]
+
+
+# --- key_id attribution -----------------------------------------------------
+
+
+async def test_a_decision_made_with_a_key_records_the_key_id(tmp_path):
+    from agentgate.store.keys import hash_key
+
+    plaintext = "agk_" + "b" * 43
+    app, drepo, _, _ = build(tmp_path, token="secret", key_repo=FakeKeyRepo({hash_key(plaintext): "key-9"}))
+
+    response = await call(app, "POST", "/v1/decide", json=body(),
+                          headers={"authorization": f"Bearer {plaintext}"})
+
+    assert response.status_code == 200
+    assert "key_id" not in response.json()
+    assert drepo.rows[-1].to_record().key_id == "key-9"
+    logged = json.loads((tmp_path / "d.jsonl").read_text().splitlines()[-1])
+    assert logged["key_id"] == "key-9"
+
+
+async def test_a_decision_made_with_the_static_token_records_no_key_id(tmp_path):
+    app, drepo, _, _ = build(tmp_path, token="secret")
+
+    await call(app, "POST", "/v1/decide", json=body(), headers={"authorization": "Bearer secret"})
+
+    assert drepo.rows[-1].to_record().key_id is None
+
+
+async def test_an_inspect_verdict_records_the_key_id_too(tmp_path):
+    from agentgate.store.keys import hash_key
+
+    plaintext = "agk_" + "c" * 43
+    app, drepo, _, _ = build(tmp_path, token="secret", key_repo=FakeKeyRepo({hash_key(plaintext): "key-9"}))
+
+    await call(app, "POST", "/v1/inspect", json=inspect_body(),
+               headers={"authorization": f"Bearer {plaintext}"})
+
+    assert drepo.rows[-1].to_record().key_id == "key-9"
