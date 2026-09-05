@@ -1571,8 +1571,9 @@ components:
             $ref: '#/components/schemas/Span'
           type: array
           title: Spans
-          description: Ranges the verdict masked or redacted, by line coordinates; never the
-            text itself.
+          description: Ranges the verdict masked or redacted, by line coordinates in the request's
+            `output.split("\n")` -- not in the `output` field of this response, which a collapsed
+            private-key block makes shorter; never the text itself.
         redacted:
           type: integer
           minimum: 0.0

@@ -21,13 +21,14 @@ from dataclasses import dataclass, replace
 
 from agentgate.api.schemas import InspectVerdict, Span
 from agentgate.inspect.classify import InspectOutcome
-from agentgate.inspect.detectors import Action, Finding
+from agentgate.inspect.detectors import INJECTION, PIPE_EXEC, Finding
 from agentgate.inspect.mask import SEMANTIC_RULE, Stage1Outcome, apply
 from agentgate.inspect.segments import Segments
 from agentgate.inspect.spans import validate
 from agentgate.profiles.schema import ModelBudget
 
 EMPTY_SPANS = "empty-spans"
+LIFTABLE_RULES = (INJECTION.id, PIPE_EXEC.id)
 
 
 @dataclass(frozen=True)
@@ -66,11 +67,13 @@ def reconcile(
 
 
 def _lifted(output: str, kept: list[Finding], model_reason: str) -> Reconciled:
-    """What survives a `pass`: the `clean` and `redact` findings, described
-    the way stage 1 described them. Only when nothing survives does the
-    model's sentence become the reason -- it is then the reason the result
-    passed."""
-    outcome = _from_findings(output, [f for f in kept if f.action is not Action.mask], "", rejected=0)
+    """What survives a `pass`: everything but the findings the model is
+    allowed to overrule -- instruction-like text and pipe-to-shell, the
+    two calls a detector can get wrong. An encoded blob, a `clean` and a
+    `redact` stay; they are described the way stage 1 described them.
+    Only when nothing survives does the model's sentence become the
+    reason -- it is then the reason the result passed."""
+    outcome = _from_findings(output, [f for f in kept if f.rule_id not in LIFTABLE_RULES], "", rejected=0)
     if outcome.verdict is InspectVerdict.pass_:
         return replace(outcome, reason=model_reason)
     return outcome

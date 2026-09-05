@@ -699,7 +699,11 @@ class InspectResponse(BaseModel):
     )
     spans: list[Span] = Field(
         default_factory=list,
-        description="Ranges the verdict masked or redacted, by line coordinates; never the text itself.",
+        description=(
+            "Ranges the verdict masked or redacted, by line coordinates in the request's "
+            "`output.split(\"\\n\")` -- not in the `output` field of this response, which a collapsed "
+            "private-key block makes shorter; never the text itself."
+        ),
     )
     redacted: int = Field(default=0, ge=0, description="How many secret values were redacted.")
 

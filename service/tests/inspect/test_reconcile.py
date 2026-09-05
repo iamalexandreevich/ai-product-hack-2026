@@ -164,3 +164,12 @@ def test_a_model_drop_over_a_clean_stage_one_is_attributed_to_the_semantic_rule(
     out = "ok\nok\n"
     r = reconcile(out, [], apply(out, []), _outcome("drop", reason="the whole page argues"), _all(out), BUDGET)
     assert (r.verdict, r.rule_id) == (InspectVerdict.drop, "inspect.semantic")
+
+
+def test_pass_does_not_lift_an_encoded_blob_below_the_drop_share():
+    out = "head\n" + "QUJD" * 200 + "\nok\nok\nok\n"
+    findings = [_mask(1, "inspect.encoded")]
+    r = reconcile(out, findings, apply(out, findings), _outcome("pass"), _all(out), BUDGET)
+    assert r.verdict is InspectVerdict.mask
+    assert "QUJD" not in r.replacement
+    assert r.rule_id == "inspect.encoded"

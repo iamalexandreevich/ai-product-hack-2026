@@ -250,7 +250,7 @@
       "description": "Token usage and money cost of the stage-2 call. Absent when stage 2 did not run."
     },
     "spans": {
-      "description": "Ranges the verdict masked or redacted, by line coordinates; never the text itself.",
+      "description": "Ranges the verdict masked or redacted, by line coordinates in the request's `output.split(\"\\n\")` -- not in the `output` field of this response, which a collapsed private-key block makes shorter; never the text itself.",
       "items": {
         "$ref": "#/$defs/Span"
       },
