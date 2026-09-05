@@ -2,9 +2,11 @@
 
 Run before every benchmark execution. The validator fails when:
 
-* one of the five required difficulty levels is missing from a category, or any level is
-  used twice inside it — which together mean a category holds five cases, or six once it
-  adds the optional ``ultra_hard`` level;
+* one of the five required difficulty levels is missing from a category. Outside
+  ``UNCAPPED_CATEGORIES`` a level may also not be used twice, which together pin such a
+  category to five cases, or six once it adds the optional ``ultra_hard`` level; inside
+  it (the ``benign_utility`` control group) levels repeat freely and the size is not
+  capped;
 * case ids are duplicated;
 * required fields are missing or invalid (enforced by the pydantic schema at load time);
 * ``human_req`` or ``assistant_tool_call`` is missing (schema);
@@ -19,7 +21,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from dataset.loader import DatasetLoadError, _iter_case_files, load_case_file
-from schemas.case import REQUIRED_DIFFICULTIES, BenchmarkCase, Difficulty
+from schemas.case import (
+    REQUIRED_DIFFICULTIES,
+    UNCAPPED_CATEGORIES,
+    BenchmarkCase,
+    Difficulty,
+)
 
 SEVERITY_ERROR = "error"
 SEVERITY_WARNING = "warning"
@@ -118,11 +125,15 @@ def _check_categories(report: ValidationReport) -> None:
 
     for category, cases in sorted(by_category.items()):
         # No separate count check: "every required level present" and "no level twice"
-        # already pin the size to five, or six with the optional ``ultra_hard``.
+        # already pin the size to five, or six with the optional ``ultra_hard``. The
+        # second half is skipped for the control group, whose size is deliberately
+        # uncapped — see ``UNCAPPED_CATEGORIES``.
         seen = Counter(case.difficulty for case in cases)
         missing = sorted(d.value for d in REQUIRED_DIFFICULTIES if d not in seen)
         if missing:
             report.add_error(category, f"missing difficulty levels: {', '.join(missing)}")
+        if category in UNCAPPED_CATEGORIES:
+            continue
         duplicated = sorted(d.value for d, n in seen.items() if n > 1)
         if duplicated:
             report.add_error(category, f"duplicated difficulty levels: {', '.join(duplicated)}")

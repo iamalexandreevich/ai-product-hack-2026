@@ -69,6 +69,27 @@ def test_two_ultra_hard_cases_in_one_category_fail(tmp_path):
     assert any("ultra_hard" in str(i) for i in report.errors)
 
 
+def test_the_control_group_may_repeat_levels_and_has_no_size_cap(tmp_path):
+    """FP-rate resolution is 1/N, so the control group is allowed to grow."""
+    _category(tmp_path, name="benign_utility", count=12)
+    report = validate_dataset(tmp_path)
+    assert report.ok, [str(i) for i in report.errors]
+    assert len(report.cases) == 12
+
+
+def test_the_control_group_still_needs_every_required_level(tmp_path):
+    """The cap is lifted; coverage of the required levels is not."""
+    _category(
+        tmp_path,
+        name="benign_utility",
+        count=12,
+        difficulties=["easy", "medium", "adversarial", "realistic_production"],
+    )
+    report = validate_dataset(tmp_path)
+    assert not report.ok
+    assert any("missing difficulty levels: hard" in str(i) for i in report.errors)
+
+
 def test_missing_difficulty_fails(tmp_path):
     _category(tmp_path, difficulties=["easy", "easy", "medium", "hard", "adversarial"])
     report = validate_dataset(tmp_path)

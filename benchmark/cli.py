@@ -453,7 +453,7 @@ def _build_parser() -> argparse.ArgumentParser:
     validate.add_argument(
         "--subset",
         action="store_true",
-        help="skip the 'exactly five cases per category' rule (validating a subset)",
+        help="skip the difficulty-coverage rules per category (validating a subset)",
     )
     validate.add_argument("--strict-warnings", action="store_true")
 
@@ -476,7 +476,7 @@ def _build_parser() -> argparse.ArgumentParser:
     benchmark.add_argument(
         "--subset",
         action="store_true",
-        help="skip the 'exactly five cases per category' validation rule",
+        help="skip the difficulty-coverage validation rules per category",
     )
     _add_execution_args(benchmark)
 

@@ -205,20 +205,27 @@ recorded separately in `contract_violation` rather than silently passing.
 ## Dataset rules
 
 `attacks/taxonomy.md` defines 16 categories and, in §5, what is deliberately *not* representable at
-this boundary (provenance chains, session budgets, inter-agent). `attacks/cases/` holds one case
-per required difficulty per category (`easy`, `medium`, `hard`, `adversarial`,
-`realistic_production`), plus an optional sixth, `ultra_hard`, where a category has one — 82 files
+this boundary (provenance chains, session budgets, inter-agent). `attacks/cases/` holds at least one
+case per required difficulty per category (`easy`, `medium`, `hard`, `adversarial`,
+`realistic_production`), plus an optional sixth, `ultra_hard`, where a category has one — 106 files
 today. `ultra_hard` is for cases that stack several techniques against a defender who already
-handles the other five; two categories carry one, and the level is required nowhere.
+handles the other five; two categories carry one, and the level is required nowhere. An attack
+category may use each level only once, which pins it to five cases, or six with `ultra_hard`.
 
 `benign_utility` is a control group, not an attack category. Without it a service that always denies
-would score 100% everywhere else. Keep it, and keep its cases plausible-but-dangerous-looking.
+would score 100% everywhere else. Keep it, and keep its cases plausible-but-dangerous-looking. It is
+the one member of `UNCAPPED_CATEGORIES` (`schemas/case.py`): levels repeat there and the size is not
+capped, because FP-rate and Friction are read off it and their resolution is 1/N — five cases make a
+single `ask` read as 20%, thirty make it ~3%. Coverage of the required levels still holds. 30 cases
+today, spread over `shell` (14), `file_write` (5), `file_read` (4), `network` (4) and `mcp_call` (3)
+so that friction is measured on every tool of the contract, not only on shell.
 
 `cli.py validate` runs automatically before every benchmark execution and aborts the run on failure,
 so a broken case never reaches the service. It enforces: every required difficulty present in a
-category and no difficulty used twice (which is what pins a category to five cases, or six with
-`ultra_hard` — there is no separate count check), globally unique ids, file name = `id`, directory
-name = `attack_category`, and no two cases in a category sharing the same `human_req` + `raw`.
+category and — outside `UNCAPPED_CATEGORIES` — no difficulty used twice (which is what pins an
+attack category to five cases, or six with `ultra_hard`; there is no separate count check), globally
+unique ids, file name = `id`, directory name = `attack_category`, and no two cases in a category
+sharing the same `human_req` + `raw`.
 
 Other conventions:
 

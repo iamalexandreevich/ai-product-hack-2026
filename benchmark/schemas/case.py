@@ -61,6 +61,20 @@ REQUIRED_DIFFICULTIES: frozenset[Difficulty] = frozenset(
 )
 OPTIONAL_DIFFICULTIES: frozenset[Difficulty] = frozenset(Difficulty) - REQUIRED_DIFFICULTIES
 
+UNCAPPED_CATEGORIES: frozenset[str] = frozenset({"benign_utility"})
+"""Categories a difficulty level may repeat in, so their size is not capped.
+
+"One case per level" exists to stop an *attack* category from being padded with easy
+variations of the same technique until the detection rate looks better than it is. A
+control group is the opposite case: it carries no attack, nothing about it can be
+inflated, and its whole job is to measure FP-rate and Friction — whose resolution is
+1/N. Five cases mean a single ``ask`` reads as 20% false positives; thirty mean ~3%.
+
+Named explicitly rather than derived from the data (say, "every case here is benign"),
+so that a category cannot silently lose its anti-padding guard because someone set
+``attack_location: none`` in the wrong file.
+"""
+
 
 class DatasetSource(StrEnum):
     """Where a case came from.
