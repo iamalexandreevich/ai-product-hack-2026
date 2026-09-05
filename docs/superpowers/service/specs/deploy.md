@@ -16,7 +16,8 @@
 
 ```
 make build     — docker build локально (или на сервере, см. ниже)
-make deploy    — выкатить текущий закоммиченный код на сервер
+make deploy    — выкатить текущий закоммиченный код на сервер (только из checkout на main)
+make deploy-main — то же, но из любого checkout: origin/main выкачивается во временный worktree и уезжает оттуда
 make logs      — docker compose logs -f с сервера
 make ps        — статус контейнеров на сервере
 make rollback  — откат на предыдущий образ
@@ -59,7 +60,7 @@ make rollback  — откат на предыдущий образ
 
 ### Что реализовано и работает
 
-`service/Makefile`, цели `check-clean`, `deploy`, `logs`, `ps`, `rollback`. `make deploy` по шагам: отказ при грязном рабочем дереве → `rsync -az --delete` с исключениями → `docker compose up -d --build` → `docker compose exec -T gate uv run alembic upgrade head` → опрос `/healthz` до 30 секунд, ненулевой код = деплой неуспешен.
+`service/Makefile`, цели `check-clean`, `deploy`, `deploy-main`, `logs`, `ps`, `rollback`. `deploy-main` (с v4) снимает требование держать checkout на `main`: цель делает `git fetch`, выкачивает `origin/main` в отсоединённый временный worktree, запускает там `deploy` с `DEPLOY_REF=origin/main` (guard сверяет `HEAD` с этим ref вместо имени ветки) и удаляет worktree даже при неудаче; на сервер уезжает ровно `origin/main`, никогда локальное дерево. `make deploy` по шагам: отказ при грязном рабочем дереве → `rsync -az --delete` с исключениями → `docker compose up -d --build` → `docker compose exec -T gate uv run alembic upgrade head` → опрос `/healthz` до 30 секунд, ненулевой код = деплой неуспешен.
 
 Секретов Makefile не несёт: `DEPLOY_HOST ?= agentgate` — псевдоним из `~/.ssh/config`, а не адрес. Псевдоним настроен, указывает на `109.172.95.51`, пользователь `root`, ключ `~/.ssh/id_ed25519_vpn` **без парольной фразы**. Неинтерактивный вход проверен и работает. То есть `make deploy` запускается как есть.
 

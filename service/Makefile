@@ -35,23 +35,34 @@ HEALTHZ_PORT ?= 8400
 # feature branch cannot reach the server by accident (it happened once);
 # override knowingly with DEPLOY_BRANCH=<branch>.
 DEPLOY_BRANCH ?= main
+# Set by `deploy-main` for the throwaway worktree it deploys from: there
+# HEAD is detached, so the branch-name check is replaced by "HEAD is exactly
+# this ref". Not meant to be set by hand.
+DEPLOY_REF ?=
 
 # Server-side compose invocation: the base file plus the server-only
 # overlay (Caddy). Every remote target goes through this so nobody runs
 # `docker compose` on the server with only half the stack.
 COMPOSE := docker compose -f docker-compose.yml -f docker-compose.deploy.yml
 
-.PHONY: deploy logs ps rollback check-clean
+.PHONY: deploy deploy-main logs ps rollback check-clean
 
 # Refuse to ship anything but a clean checkout of $(DEPLOY_BRANCH):
 # `make deploy` deploys committed code from the release branch only. Scoped to `service/` and `../frontend/`, since that is
 # exactly what gets rsynced below -- uncommitted changes elsewhere in
 # the repo do not block a deploy.
 check-clean:
-	@branch=$$(git rev-parse --abbrev-ref HEAD); \
-	if [ "$$branch" != "$(DEPLOY_BRANCH)" ]; then \
-		echo "error: on branch '$$branch' -- deploys ship '$(DEPLOY_BRANCH)' only. Check it out first (or set DEPLOY_BRANCH=$$branch knowingly)." >&2; \
-		exit 1; \
+	@if [ -n "$(DEPLOY_REF)" ]; then \
+		if [ "$$(git rev-parse HEAD)" != "$$(git rev-parse $(DEPLOY_REF))" ]; then \
+			echo "error: HEAD is not $(DEPLOY_REF) -- deploy-main ships that ref only." >&2; \
+			exit 1; \
+		fi; \
+	else \
+		branch=$$(git rev-parse --abbrev-ref HEAD); \
+		if [ "$$branch" != "$(DEPLOY_BRANCH)" ]; then \
+			echo "error: on branch '$$branch' -- deploys ship '$(DEPLOY_BRANCH)' only. Check it out first, or run 'make deploy-main' from any checkout (or set DEPLOY_BRANCH=$$branch knowingly)." >&2; \
+			exit 1; \
+		fi; \
 	fi
 	@if [ -n "$$(git status --porcelain -- . ../frontend)" ]; then \
 		echo "error: service/ or frontend/ has uncommitted changes -- refusing to deploy a dirty tree. Commit or stash first." >&2; \
@@ -109,6 +120,21 @@ deploy: check-clean
 	fi
 
 # Tail logs from the server.
+# make deploy-main: `make deploy` from any checkout, on any branch, dirty or
+# not. Fetches origin/main, checks it out detached into a throwaway
+# worktree, runs `deploy` there and removes the worktree even when the
+# deploy fails. What ships is exactly origin/main -- never the local tree,
+# so a stale or feature-branch checkout cannot leak into the server, and
+# no permanent `main` worktree has to exist for deploys.
+deploy-main:
+	@git fetch -q origin main
+	@tmp=$$(mktemp -d "$${TMPDIR:-/tmp}/agentgate-deploy.XXXXXX"); \
+	echo "==> checking out origin/main into $$tmp"; \
+	git worktree add -q --detach "$$tmp" origin/main || exit 1; \
+	$(MAKE) -C "$$tmp/service" deploy DEPLOY_REF=origin/main; status=$$?; \
+	git worktree remove --force "$$tmp"; \
+	exit $$status
+
 logs:
 	ssh $(DEPLOY_HOST) 'cd $(DEPLOY_DIR) && $(COMPOSE) logs -f'
 
