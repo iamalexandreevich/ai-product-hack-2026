@@ -7,7 +7,7 @@ from agentgate.normalize import normalize
 from agentgate.profiles.schema import Profile
 from agentgate.rules.chain import STAGE1
 from agentgate.rules.client_rules import ClientRulesRule, canonical_units
-from tests.factories import WORKSPACE, rule_set, shell_action, stage1_policy
+from tests.factories import WORKSPACE, mcp_action, rule_set, shell_action, stage1_policy
 
 
 def policy_with(**rules) -> Policy:
@@ -138,3 +138,67 @@ def test_client_deny_is_never_a_floor():
     outcome = STAGE1.run(shell_action("npm run deploy"), policy_with(deny=["npm run deploy*"]))
     assert outcome.verdict.rule_id == "client.deny" and outcome.verdict.floor is False
     assert outcome.floor is None
+
+
+def test_canonical_units_of_an_mcp_call_are_one_string_twice():
+    units, singles = canonical_units(mcp_action("github", "get_issue"))
+    assert units == ["github.get_issue"]
+    assert singles == ["github.get_issue"]
+
+
+def test_canonical_units_of_an_mcp_call_ignore_the_arguments():
+    with_args = canonical_units(mcp_action("github", "get_issue", {"repo": "org/x", "id": 7}))
+    assert with_args == canonical_units(mcp_action("github", "get_issue"))
+
+
+@pytest.mark.parametrize(
+    ("server", "tool", "rules", "expected", "rule_id"),
+    [
+        ("github", "get_issue", dict(allow=["github.get_*"]), DecisionKind.allow, "client.allow"),
+        ("github", "delete_repo", dict(deny=["*.delete_*"]), DecisionKind.deny, "client.deny"),
+        ("github", "create_pr", dict(allow=["github.get_*"]), None, None),
+        ("github", "get_issue", dict(allow=["github.*"]), DecisionKind.allow, "client.allow"),
+        ("filesystem", "write_file", dict(deny=["filesystem.write_file"]), DecisionKind.deny, "client.deny"),
+        ("github", "Get_Issue", dict(allow=["github.get_*"]), None, None),
+    ],
+    ids=[
+        "allow_prefix_glob", "deny_across_servers", "allow_no_match",
+        "allow_whole_server", "deny_exact", "case_is_not_folded",
+    ],
+)
+def test_client_rules_on_mcp_calls(server, tool, rules, expected, rule_id):
+    verdict = STAGE1.evaluate(mcp_action(server, tool), policy_with(**rules))
+    if expected is None:
+        assert verdict is None or not verdict.rule_id.startswith("client.")
+    else:
+        assert verdict is not None
+        assert verdict.decision is expected
+        assert verdict.rule_id == rule_id
+
+
+def test_an_mcp_ask_pattern_is_a_floor_like_any_other():
+    outcome = STAGE1.run(mcp_action("github", "create_pr"), policy_with(ask=["github.create_*"]))
+    assert outcome.verdict is None
+    assert outcome.floor is not None
+    assert outcome.floor.rule_id == "client.ask"
+
+
+def test_an_mcp_allow_does_not_depend_on_the_arguments():
+    with_args = STAGE1.evaluate(
+        mcp_action("github", "get_issue", {"body": "rm -rf /"}), policy_with(allow=["github.get_*"])
+    )
+    assert with_args is not None
+    assert with_args.rule_id == "client.allow"
+
+
+def test_a_server_name_with_a_slash_falls_into_the_path_patterns_and_never_matches():
+    # Documented limitation, spec v3.1 §4.1: `is_path_pattern` reads a `/` as
+    # "this is a path", so such a pattern is matched against paths an MCP call
+    # does not have. Not validated away -- a user's pattern is not required to
+    # match anything -- but written down in contracts/README.md and connect.md.
+    verdict = STAGE1.evaluate(mcp_action("org/github", "get_issue"), policy_with(deny=["org/github.*"]))
+    assert verdict is None or not verdict.rule_id.startswith("client.")
+
+
+def test_an_mcp_call_with_no_matching_rule_is_left_to_stage_two():
+    assert STAGE1.evaluate(mcp_action("github", "create_pr"), stage1_policy()) is None

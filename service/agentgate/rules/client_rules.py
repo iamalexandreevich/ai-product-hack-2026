@@ -18,6 +18,13 @@ file redirects), because an allow is a promise about the whole line.
 (`Verdict.ask(..., floor=True)`), so the chain records it and keeps
 running. A user asking to confirm a command must not thereby switch off
 the classifier's own `deny` on it -- that is the whole of spec v3.1 §3.2.
+
+An MCP call has one canonical form, `server.tool` (`github.get_issue`),
+exactly as it arrives in `McpArgs`. It is not compound, so the "units" and
+the "singles" are the same single string. Case is not folded -- MCP tool
+names are case-sensitive -- and the call's `arguments` never take part in
+matching: they are arbitrary JSON, and globbing their serialization would
+be deciding on untrusted text.
 """
 
 from typing import Literal
@@ -33,13 +40,25 @@ Mode = Literal["allow", "ask", "deny"]
 
 
 def canonical_units(action: NormalizedAction) -> tuple[list[str], list[str]]:
-    """Pipelines as one string each, and every single command on its own."""
+    """Pipelines as one string each, and every single command on its own.
+
+    An MCP call is neither: it is one `server.tool` string, returned as
+    both, because there is nothing compound to take apart.
+    """
+    if action.tool is Tool.mcp_call:
+        return (_mcp_units(action), _mcp_units(action))
     by_pipeline: dict[int, list[str]] = {}
     for command in action.commands:
         by_pipeline.setdefault(command.pipeline_id, []).append(" ".join(command.argv))
     units = [" | ".join(parts) for parts in by_pipeline.values()]
     singles = [" ".join(command.argv) for command in action.commands]
     return units, singles
+
+
+def _mcp_units(action: NormalizedAction) -> list[str]:
+    if action.mcp is None:
+        return []
+    return [f"{action.mcp.server}.{action.mcp.tool}"]
 
 
 class ClientRulesRule:
@@ -69,6 +88,13 @@ class ClientRulesRule:
         return any(rules.matches_command(self.mode, s) for s in [*units, *singles])
 
     def _allow(self, action: NormalizedAction, rules: ClientRules) -> Verdict | None:
+        if action.tool is Tool.mcp_call:
+            # No eval, no substitution, no redirect to refuse: an MCP call
+            # is a name and a JSON body, and only the name is matched.
+            units, _ = canonical_units(action)
+            if units and all(rules.matches_command("allow", u) for u in units):
+                return Verdict.allow(self.id)
+            return None
         if action.tool is not Tool.shell:
             paths = _paths(action)
             if paths and all(rules.matches_path("allow", p) for p in paths):
