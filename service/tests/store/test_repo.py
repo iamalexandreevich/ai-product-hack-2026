@@ -8,6 +8,7 @@ from ulid import ULID
 
 from agentgate.api.schemas import Cost, DecisionKind, InspectVerdict, Span
 from agentgate.domain.dialogue import Dialogue
+from agentgate.domain.principal import STATIC_PRINCIPAL
 from agentgate.domain.session import RECENT_MAXLEN, SessionState
 from agentgate.domain.usage import Usage
 from agentgate.domain.verdict import Verdict
@@ -30,6 +31,8 @@ from tests.factories import (
 )
 
 pytestmark = requires_db
+
+KEY_A, KEY_B = str(ULID()), str(ULID())
 
 
 def rec(session_id: str | None = "s1", model: str | None = None, metadata: dict | None = None,
@@ -511,11 +514,11 @@ async def test_load_replayable_limit_keeps_the_newest_keyed_rows(session_factory
 async def test_load_replayable_carries_the_key_id_back(session_factory):
     await _seed_session(session_factory)
     repo = DecisionRepo(session_factory)
-    await repo.insert(replace(rec(), idempotency_key="k", key_id="01HZKEYA"))
+    await repo.insert(replace(rec(), idempotency_key="k", key_id=KEY_A))
 
     records = await repo.load_replayable(datetime.now(timezone.utc) - timedelta(hours=1))
 
-    assert [r.key_id for r in records] == ["01HZKEYA"]
+    assert [r.key_id for r in records] == [KEY_A]
 
 
 async def test_v3_columns_round_trip(session_factory):
@@ -564,8 +567,8 @@ async def test_two_principals_may_share_one_idempotency_key(session_factory):
     await _seed_session(session_factory)
     repo = DecisionRepo(session_factory)
 
-    first = replace(rec(), idempotency_key="same", key_id="01HZKEYA")
-    second = replace(rec(), idempotency_key="same", key_id="01HZKEYB")
+    first = replace(rec(), idempotency_key="same", key_id=KEY_A)
+    second = replace(rec(), idempotency_key="same", key_id=KEY_B)
 
     assert await repo.insert(first) is True
     assert await repo.insert(second) is True
@@ -575,8 +578,8 @@ async def test_one_principal_may_not_use_one_idempotency_key_twice(session_facto
     await _seed_session(session_factory)
     repo = DecisionRepo(session_factory)
 
-    assert await repo.insert(replace(rec(), idempotency_key="same", key_id="01HZKEYA")) is True
-    assert await repo.insert(replace(rec(), idempotency_key="same", key_id="01HZKEYA")) is False
+    assert await repo.insert(replace(rec(), idempotency_key="same", key_id=KEY_A)) is True
+    assert await repo.insert(replace(rec(), idempotency_key="same", key_id=KEY_A)) is False
 
 
 async def test_the_static_token_is_one_principal_too(session_factory):
@@ -590,9 +593,69 @@ async def test_the_static_token_is_one_principal_too(session_factory):
 async def test_list_filters_by_key_id(session_factory):
     await _seed_session(session_factory)
     repo = DecisionRepo(session_factory)
-    await repo.insert(replace(rec(), key_id="01HZKEYA"))
-    await repo.insert(replace(rec(), key_id="01HZKEYB"))
+    await repo.insert(replace(rec(), key_id=KEY_A))
+    await repo.insert(replace(rec(), key_id=KEY_B))
 
-    rows = await repo.list(session_id=None, model=None, limit=100, before=None, key_id="01HZKEYA")
+    rows = await repo.list(session_id=None, model=None, limit=100, before=None, key_id=KEY_A)
 
-    assert [r.key_id for r in rows] == ["01HZKEYA"]
+    assert [r.key_id for r in rows] == [KEY_A]
+
+
+# --- v3.3: the shape of key_id is the database's business --------------------
+
+
+async def test_a_key_id_outside_the_ulid_shape_is_refused_by_the_database(session_factory):
+    await _seed_session(session_factory)
+    repo = DecisionRepo(session_factory)
+
+    with pytest.raises(IntegrityError):
+        await repo.insert(replace(rec(), key_id=STATIC_PRINCIPAL))
+
+
+async def test_a_null_key_id_is_still_allowed(session_factory):
+    await _seed_session(session_factory)
+    repo = DecisionRepo(session_factory)
+
+    assert await repo.insert(replace(rec(), key_id=None)) is True
+
+
+# --- v3.3: one idempotency key per principal *and* session -------------------
+
+
+async def test_one_key_in_two_sessions_of_one_principal_writes_two_rows(session_factory):
+    await _seed_session(session_factory, "s1")
+    await _seed_session(session_factory, "s2")
+    repo = DecisionRepo(session_factory)
+
+    first = replace(rec(session_id="s1"), idempotency_key="same", key_id=KEY_A)
+    second = replace(rec(session_id="s2"), idempotency_key="same", key_id=KEY_A)
+
+    assert await repo.insert(first) is True
+    assert await repo.insert(second) is True
+
+
+async def test_one_key_twice_in_one_session_still_writes_one_row(session_factory):
+    await _seed_session(session_factory, "s1")
+    repo = DecisionRepo(session_factory)
+
+    assert await repo.insert(replace(rec(session_id="s1"), idempotency_key="dup3", key_id=KEY_A)) is True
+    assert await repo.insert(replace(rec(session_id="s1"), idempotency_key="dup3", key_id=KEY_A)) is False
+
+
+async def test_a_sessionless_row_and_a_session_row_do_not_collide(session_factory):
+    # NULL and a named session are different slots: a coalesce-style fallback
+    # that mapped NULL onto a sentinel string could silently merge them.
+    await _seed_session(session_factory)
+    repo = DecisionRepo(session_factory)
+
+    assert await repo.insert(replace(rec(session_id=None), idempotency_key="dup5", key_id=KEY_A)) is True
+    assert await repo.insert(replace(rec(session_id="s1"), idempotency_key="dup5", key_id=KEY_A)) is True
+
+
+async def test_two_sessionless_calls_still_compete_for_the_key(session_factory):
+    # NULL <> NULL in Postgres, so without NULLS NOT DISTINCT this pair would
+    # both land and the uniqueness we are here to keep would be gone.
+    repo = DecisionRepo(session_factory)
+
+    assert await repo.insert(replace(rec(session_id=None), idempotency_key="dup4", key_id=KEY_A)) is True
+    assert await repo.insert(replace(rec(session_id=None), idempotency_key="dup4", key_id=KEY_A)) is False

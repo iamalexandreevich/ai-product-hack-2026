@@ -6,11 +6,14 @@ follow the project's established DB-test guard (tests/conftest.py).
 
 import base64
 import hashlib
+import re
+
+from agentgate.domain.principal import KEY_ID_PATTERN, ensure_key_id_shape
 from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from agentgate.store.keys import KEY_PREFIX, ApiKeyRecord, ApiKeyRepo, generate_key, hash_key
+from agentgate.store.keys import KEY_PREFIX, ApiKeyRecord, ApiKeyRepo, generate_key, hash_key, mint_key_id
 from tests.conftest import requires_db
 
 # --- generation: shape and entropy -------------------------------------------
@@ -180,3 +183,25 @@ async def test_touch_last_used_sets_timestamp(session_factory):
 async def test_touch_last_used_on_unknown_id_is_a_no_op(session_factory):
     repo = ApiKeyRepo(session_factory)
     await repo.touch_last_used("does-not-exist")  # must not raise
+
+
+# --- v3.3: an issued id has the shape the principal namespace depends on ----
+
+
+def test_a_minted_key_id_has_the_shape_the_principal_namespace_needs():
+
+    assert re.fullmatch(KEY_ID_PATTERN, mint_key_id()) is not None
+
+
+def test_a_minted_key_id_passes_the_guard_the_database_repeats():
+    # Minting and the CHECK must agree, or a key issued by the CLI would be
+    # refused the first time a decision under it is written.
+
+    key_id = mint_key_id()
+
+    assert ensure_key_id_shape(key_id) == key_id
+
+
+def test_minted_ids_are_distinct():
+
+    assert len({mint_key_id() for _ in range(20)}) == 20

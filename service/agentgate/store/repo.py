@@ -36,8 +36,8 @@ class DecisionRepo:
 
     async def insert(self, stored: Stored) -> bool:
         """Insert one row (a decide or an inspect outcome); ``False`` when a
-        row with this idempotency key already existed and nothing was
-        inserted.
+        row with this idempotency key already existed **for this principal and
+        this session** and nothing was inserted.
 
         A row whose ``idempotency_key`` is already present is silently not
         inserted: two concurrent repeats of one call must leave one row --
@@ -54,7 +54,7 @@ class DecisionRepo:
         table = DecisionRow.__table__
         values = stored.to_record().model_dump(exclude={"decision_id"})
         stmt = pg_insert(table).values(**values).on_conflict_do_nothing(
-            index_elements=[table.c.principal, table.c.idempotency_key],
+            index_elements=[table.c.principal, table.c.session_id, table.c.idempotency_key],
             index_where=table.c.idempotency_key.isnot(None),
         )
         async with self._sf() as s:

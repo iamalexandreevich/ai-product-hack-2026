@@ -384,7 +384,7 @@ async def _answer(
     except ValidationError as exc:
         return _refusal_for(exc.errors(), spec.refuse, spec.refusal_rules)
     key = _replay_key(request)
-    replay_key = ReplayKey.of(key_id, key) if key is not None else None
+    replay_key = ReplayKey.of(key_id, parsed.session_id, key) if key is not None else None
     if replay_key is not None:
         replayed = await _replayed(replay, replay_key.storage_key())
         if replayed is not None and replayed.answers(parsed, replay_key.principal):

@@ -66,7 +66,8 @@ class PersistentReplayStore:
                 log.warning("replay store restore skipped unprojectable record id=%s", record.id, exc_info=True)
                 continue
             await self._inner.put(
-                ReplayKey.of(record.key_id, record.idempotency_key).storage_key(), replay, remaining
+                ReplayKey.of(record.key_id, record.session_id, record.idempotency_key).storage_key(),
+                replay, remaining,
             )
 
     async def get(self, key: str) -> Replay | None:

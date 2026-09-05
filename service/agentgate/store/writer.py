@@ -57,7 +57,7 @@ class PostgresDecisionWriter:
             # Only an explicit False means "skipped" -- a fake repo whose
             # insert has no return value is falsy (None) but did insert.
             log.warning(
-                "decision %s not stored: idempotency key %s already has a row",
+                "decision %s not stored: idempotency key %s already has a row for this principal and session",
                 stored.id, stored.idempotency_key,
             )
             return

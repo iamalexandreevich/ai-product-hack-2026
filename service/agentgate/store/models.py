@@ -5,12 +5,14 @@ Postgres only (asyncpg driver, JSONB columns). No SQLite fallback.
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, Computed, DateTime, ForeignKey, Index, Integer, String, Text, text
+from sqlalchemy import (
+    Boolean, CheckConstraint, Computed, DateTime, ForeignKey, Index, Integer, String, Text, text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from agentgate.api.schemas import IDEMPOTENCY_KEY_MAX_CHARS, PROTOCOL
-from agentgate.domain.principal import STATIC_PRINCIPAL
+from agentgate.domain.principal import KEY_ID_PATTERN, STATIC_PRINCIPAL
 
 
 class Base(DeclarativeBase):
@@ -93,9 +95,20 @@ class DecisionRow(Base):
         Index("ix_decisions_kind_id", "kind", "id"),
         Index("ix_decisions_call_id", "call_id"),
         Index("ix_decisions_key_id_id", "key_id", "id"),
+        # The triple, not the pair: one integrator running two sessions under
+        # one key lost the second session's audit row to the pair. NULLS NOT
+        # DISTINCT because session_id is nullable and a sessionless call must
+        # still compete for its key -- in Postgres NULL <> NULL otherwise.
         Index(
-            "ux_decisions_principal_idempotency_key", "principal", "idempotency_key", unique=True,
+            "ux_decisions_principal_session_idempotency_key",
+            "principal", "session_id", "idempotency_key", unique=True,
             postgresql_where=text("idempotency_key IS NOT NULL"),
+            postgresql_nulls_not_distinct=True,
+        ),
+        # The generated `principal` above is only a namespace while no key id
+        # can spell STATIC_PRINCIPAL. This is where that stops being a habit.
+        CheckConstraint(
+            f"key_id IS NULL OR key_id ~ '{KEY_ID_PATTERN}'", name="ck_decisions_key_id_ulid"
         ),
     )
 
@@ -131,3 +144,7 @@ class ApiKeyRow(Base):
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(f"id ~ '{KEY_ID_PATTERN}'", name="ck_api_keys_id_ulid"),
+    )

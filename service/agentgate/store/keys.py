@@ -26,10 +26,21 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from ulid import ULID
 
+from agentgate.domain.principal import ensure_key_id_shape
 from agentgate.store.models import ApiKeyRow
 
 KEY_PREFIX = "agk_"
 _ENTROPY_BYTES = 32
+
+
+def mint_key_id() -> str:
+    """The public id of a new key: a ULID, checked before it leaves here.
+
+    The id is the principal a decision is attributed to, and the static
+    token's principal is a literal that no id may equal -- so the shape is
+    checked where the id is born, not where it is read.
+    """
+    return ensure_key_id_shape(str(ULID()))
 
 
 def generate_key() -> str:
@@ -96,7 +107,7 @@ class ApiKeyRepo:
         key_hash = hash_key(plaintext)
         now = datetime.now(timezone.utc)
         row = ApiKeyRow(
-            id=str(ULID()), key_hash=key_hash, label=label, created_at=now,
+            id=mint_key_id(), key_hash=key_hash, label=label, created_at=now,
             expires_at=expires_at, revoked_at=None, last_used_at=None,
         )
         async with self._sf() as s:
