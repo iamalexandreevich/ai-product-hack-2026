@@ -554,6 +554,7 @@ async def test_inspect_spans_and_redaction_roundtrip_through_postgres(session_fa
         {"line_start": 2, "line_end": 3, "kind": "instruction", "source": "model", "confidence": 0.7},
     ]
     assert (record.redacted, record.spans_rejected) == (1, 1)
+    assert record.raw == "K=[gate: secret redacted]\n"
 
 
 # --- v3.2: key attribution and per-principal idempotency ---------------------

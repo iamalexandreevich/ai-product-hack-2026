@@ -93,7 +93,7 @@ async def require_token(
 ### 3.3. Форма записи
 
 - `DecisionRecord.key_id: str | None = None` — последнее поле модели, после добавленных v4 `spans`/`redacted`/`spans_rejected`; «ULID выданного API-ключа, которым был аутентифицирован вызов; `null` для статического токена и для локального режима без токена».
-- `DecisionRow.key_id` — `String(26)`, nullable, последним столбцом после `spans_rejected`; индекс `ix_decisions_key_id_ts` по `(key_id, ts)`: типичный вопрос ленты — «последние решения этого клиента».
+- `DecisionRow.key_id` — `String(26)`, nullable, последним столбцом после `spans_rejected`; индекс `ix_decisions_key_id_id` по `(key_id, id)` — как и `ix_decisions_kind_id` для `kind`, вторым столбцом идёт `id`, а не `ts`, потому что `repo.list` сортирует ленту по `id DESC`, а не по `ts`.
 - Внешнего ключа на `api_keys.id` нет: удалять выданный ключ мы не умеем (только `revoked_at`), но и запрещать это на уровне схемы ради строки аудита не нужно — запись переживает ключ намеренно.
 - JSONL получает поле само: `JsonlDecisionWriter` пишет `stored.to_record().model_dump(mode="json")`.
 - `key_id` не входит в `identity_digest()` запроса: дайджест считается по телу запроса, а credential живёт в заголовке. Разделение принципалов делает `principal` в ключе повтора, а не дайджест.
@@ -322,7 +322,7 @@ paths=[] domains=["github.com"]
 
 ### 7.4. Миграция
 
-`0007_key_attribution` (`revision = "0007"`, `down_revision = "0006"`) добавляет `decisions.key_id`, генерируемый `decisions.principal`, индекс `ix_decisions_key_id_ts`, снимает `ux_decisions_idempotency_key` и ставит `ux_decisions_principal_idempotency_key`.
+`0007_key_attribution` (`revision = "0007"`, `down_revision = "0006"`) добавляет `decisions.key_id`, генерируемый `decisions.principal`, индекс `ix_decisions_key_id_id`, снимает `ux_decisions_idempotency_key` и ставит `ux_decisions_principal_idempotency_key`.
 
 Голова в дереве одна. v4 слит в `main` до начала v3.2 и занял `0006` (`0006_v4_spans_and_redaction.py`, `revision = '0006'`), поэтому v3.2 просто продолжает линейную цепочку: `0005 → 0006 → 0007`. Merge-ревизия не нужна и не создаётся; `alembic upgrade head` на базе с данными проходит одним проходом.
 

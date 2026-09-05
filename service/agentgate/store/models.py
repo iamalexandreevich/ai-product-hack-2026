@@ -10,6 +10,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from agentgate.api.schemas import IDEMPOTENCY_KEY_MAX_CHARS, PROTOCOL
+from agentgate.domain.principal import STATIC_PRINCIPAL
 
 
 class Base(DeclarativeBase):
@@ -80,7 +81,7 @@ class DecisionRow(Base):
     # generated column cannot drift from key_id the way a second writable
     # column could.
     principal: Mapped[str] = mapped_column(
-        String(26), Computed("coalesce(key_id, 'token')", persisted=True)
+        String(26), Computed(f"coalesce(key_id, '{STATIC_PRINCIPAL}')", persisted=True)
     )
 
     __table_args__ = (
@@ -91,7 +92,7 @@ class DecisionRow(Base):
         Index("ix_decisions_metadata", "metadata", postgresql_using="gin"),
         Index("ix_decisions_kind_id", "kind", "id"),
         Index("ix_decisions_call_id", "call_id"),
-        Index("ix_decisions_key_id_ts", "key_id", "ts"),
+        Index("ix_decisions_key_id_id", "key_id", "id"),
         Index(
             "ux_decisions_principal_idempotency_key", "principal", "idempotency_key", unique=True,
             postgresql_where=text("idempotency_key IS NOT NULL"),

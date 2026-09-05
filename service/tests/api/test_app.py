@@ -139,6 +139,16 @@ async def test_invalid_body_is_ask_200(tmp_path):
     assert r.json()["rule_id"] == "api.invalid-request"
 
 
+async def test_an_unknown_network_method_is_ask_200_invalid_request(tmp_path):
+    app, _, _, _ = build(tmp_path)
+    r = await call(
+        app, "POST", "/v1/decide",
+        json=body(tool="network", raw="curl https://github.com", args={"cwd": WORKSPACE, "method": "TRACE"}),
+    )
+    assert r.status_code == 200
+    assert (r.json()["decision"], r.json()["stage"], r.json()["rule_id"]) == ("ask", 0, "api.invalid-request")
+
+
 async def test_decide_raises_is_ask_200_internal_error(tmp_path):
     class RaisingGate:
         async def decide(self, req):
@@ -699,6 +709,19 @@ async def test_the_feed_filters_by_key_id(tmp_path):
     page = await call(app, "GET", "/v1/decisions?key_id=key-9", headers={"authorization": "Bearer secret"})
 
     assert [i["key_id"] for i in page.json()["items"]] == ["key-9"]
+
+
+async def test_an_empty_key_id_query_param_means_no_filter(tmp_path):
+    from agentgate.store.keys import hash_key
+
+    plaintext = "agk_" + "d" * 43
+    app, _, _, _ = build(tmp_path, token="secret", key_repo=FakeKeyRepo({hash_key(plaintext): "key-9"}))
+    await call(app, "POST", "/v1/decide", json=body(), headers={"authorization": f"Bearer {plaintext}"})
+    await call(app, "POST", "/v1/decide", json=body(), headers={"authorization": "Bearer secret"})
+
+    page = await call(app, "GET", "/v1/decisions?key_id=", headers={"authorization": "Bearer secret"})
+
+    assert len(page.json()["items"]) == 2
 
 
 # --- key_id attribution -----------------------------------------------------

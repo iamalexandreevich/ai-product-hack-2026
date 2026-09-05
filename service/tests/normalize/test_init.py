@@ -87,7 +87,8 @@ def test_a_network_action_carries_its_method():
          "user_request": "x"}
     ))
 
-    assert action.method == "HEAD" and action.domains == ["github.com"]
+    assert action.method == "HEAD"
+    assert action.domains == ["github.com"]
 
 
 def test_a_shell_action_has_no_method_even_when_the_request_carries_one():

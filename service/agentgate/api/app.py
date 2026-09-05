@@ -72,7 +72,7 @@ from agentgate.api.schemas import (
     UnsupportedRules,
 )
 from agentgate.config import Settings
-from agentgate.domain.replay import Replay, ReplayKey, ReplayStore, principal_of
+from agentgate.domain.replay import Replay, ReplayKey, ReplayStore
 from agentgate.domain.verdict import Verdict
 from agentgate.engine.gate import Gate
 from agentgate.engine.inspector import Inspector
@@ -384,23 +384,25 @@ async def _answer(
     except ValidationError as exc:
         return _refusal_for(exc.errors(), spec.refuse, spec.refusal_rules)
     key = _replay_key(request)
-    storage_key = ReplayKey.of(key_id, key).storage_key() if key is not None else None
-    if storage_key is not None:
-        replayed = await _replayed(replay, storage_key)
-        if replayed is not None and replayed.answers(parsed, principal_of(key_id)):
+    replay_key = ReplayKey.of(key_id, key) if key is not None else None
+    if replay_key is not None:
+        replayed = await _replayed(replay, replay_key.storage_key())
+        if replayed is not None and replayed.answers(parsed, replay_key.principal):
             return replayed.response
     try:
         outcome = await spec.run(parsed)
     except Exception as exc:  # noqa: BLE001 - fail-closed: no exception may escape as a 500
         log.exception("%s failed", spec.log_label)
         return spec.refuse("api.internal-error", f"internal error: {type(exc).__name__}")
-    # Attribution is attached before the replay entry is built: a restored
-    # replay must carry the same key_id the live decision did.
+    # Attribution is attached before the replay entry is built: Replay.of
+    # derives its principal from key_id, so a store restore must recover the
+    # same principal the live decision was scoped to, not just the same key.
     outcome = replace(outcome, key_id=key_id)
-    if storage_key is not None:
+    if replay_key is not None:
         outcome = replace(outcome, idempotency_key=key)
         await _remember(
-            replay, storage_key, Replay.of(outcome.to_record()), settings.allow_cache_ttl_seconds
+            replay, replay_key.storage_key(), Replay.of(outcome.to_record()),
+            settings.allow_cache_ttl_seconds,
         )
     background.add_task(writer.write, outcome)
     return outcome.to_response()
@@ -615,7 +617,8 @@ def create_app(
         credential when the service is configured with one.
         """
         rows = await decision_repo.list(
-            session_id=session_id, model=model, limit=limit, before=before, kind=kind, key_id=key_id
+            session_id=session_id, model=model, limit=limit, before=before, kind=kind,
+            key_id=key_id or None,
         )
         next_before = rows[-1].id if len(rows) == limit else None
         return DecisionListResponse(items=rows, next_before=next_before)

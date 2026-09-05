@@ -22,7 +22,7 @@ def upgrade() -> None:
             sa.Computed("coalesce(key_id, 'token')", persisted=True), nullable=False,
         ),
     )
-    op.create_index('ix_decisions_key_id_ts', 'decisions', ['key_id', 'ts'])
+    op.create_index('ix_decisions_key_id_id', 'decisions', ['key_id', 'id'])
     op.drop_index('ux_decisions_idempotency_key', table_name='decisions')
     op.create_index(
         'ux_decisions_principal_idempotency_key', 'decisions', ['principal', 'idempotency_key'],
@@ -32,10 +32,12 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_index('ux_decisions_principal_idempotency_key', table_name='decisions')
+    # Fails if two principals wrote the same idempotency_key: rows must be
+    # de-duplicated by hand before this downgrade runs.
     op.create_index(
         'ux_decisions_idempotency_key', 'decisions', ['idempotency_key'],
         unique=True, postgresql_where=sa.text('idempotency_key IS NOT NULL'),
     )
-    op.drop_index('ix_decisions_key_id_ts', table_name='decisions')
+    op.drop_index('ix_decisions_key_id_id', table_name='decisions')
     op.drop_column('decisions', 'principal')
     op.drop_column('decisions', 'key_id')

@@ -33,7 +33,8 @@ TRUSTED = trusted_policy()
 )
 def test_a_read_from_a_trusted_domain_is_allowed(raw):
     verdict = RULE.evaluate(shell_action(raw), TRUSTED)
-    assert verdict is not None and verdict.rule_id == "profile.domain-trusted"
+    assert verdict is not None
+    assert verdict.rule_id == "profile.domain-trusted"
     assert verdict.decision is DecisionKind.allow
 
 
@@ -89,7 +90,8 @@ def test_the_rule_works_in_mode_ask():
     # Condition 1: the operator set both flags on purpose -- "ask about other
     # people's domains, let mine through".
     verdict = RULE.evaluate(shell_action("curl https://pypi.org/simple/"), trusted_policy(mode="ask"))
-    assert verdict is not None and verdict.rule_id == "profile.domain-trusted"
+    assert verdict is not None
+    assert verdict.rule_id == "profile.domain-trusted"
 
 
 def test_the_rule_is_silent_while_trusted_allows_is_off():
@@ -203,7 +205,8 @@ def test_condition_7_curl_capital_o_stays_refused_as_a_write():
 
 def test_a_plain_get_with_no_output_flag_stays_allowed():
     verdict = RULE.evaluate(shell_action("curl https://pypi.org/simple/"), TRUSTED)
-    assert verdict is not None and verdict.rule_id == "profile.domain-trusted"
+    assert verdict is not None
+    assert verdict.rule_id == "profile.domain-trusted"
 
 
 @pytest.mark.parametrize(
@@ -264,7 +267,8 @@ def test_final_review_delete_by_method_is_refused():
 )
 def test_a_read_only_method_and_flag_set_is_allowed(raw):
     verdict = RULE.evaluate(shell_action(raw), TRUSTED)
-    assert verdict is not None and verdict.rule_id == "profile.domain-trusted"
+    assert verdict is not None
+    assert verdict.rule_id == "profile.domain-trusted"
 
 
 @pytest.mark.parametrize(
@@ -274,7 +278,8 @@ def test_a_read_only_method_and_flag_set_is_allowed(raw):
 )
 def test_wget_to_stdout_is_allowed(raw):
     verdict = RULE.evaluate(shell_action(raw), TRUSTED)
-    assert verdict is not None and verdict.rule_id == "profile.domain-trusted"
+    assert verdict is not None
+    assert verdict.rule_id == "profile.domain-trusted"
 
 
 @pytest.mark.parametrize(
@@ -377,7 +382,8 @@ def test_a_literal_header_value_stays_allowed():
 def test_a_read_method_on_a_trusted_domain_is_allowed(method):
     verdict = RULE.evaluate(network_action(method=method), trusted_policy())
 
-    assert verdict is not None and verdict.decision is DecisionKind.allow
+    assert verdict is not None
+    assert verdict.decision is DecisionKind.allow
     assert verdict.rule_id == "profile.domain-trusted"
 
 
@@ -412,10 +418,12 @@ def test_the_flag_off_never_allows():
 def test_ask_mode_allows_a_read_of_a_declared_domain():
     verdict = RULE.evaluate(network_action(method="GET"), trusted_policy(mode="ask"))
 
-    assert verdict is not None and verdict.decision is DecisionKind.allow
+    assert verdict is not None
+    assert verdict.decision is DecisionKind.allow
 
 
 def test_a_subdomain_of_a_declared_domain_is_allowed():
     verdict = RULE.evaluate(network_action(domains=("files.github.com",), method="GET"), trusted_policy())
 
-    assert verdict is not None and verdict.decision is DecisionKind.allow
+    assert verdict is not None
+    assert verdict.decision is DecisionKind.allow

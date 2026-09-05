@@ -24,16 +24,7 @@ from typing import Protocol
 from agentgate.api.schemas import DecideRequest, DecideResponse, InspectRequest, InspectResponse
 from agentgate.engine.decision import DecisionRecord
 
-STATIC_PRINCIPAL = "token"
-
-
-def principal_of(key_id: str | None) -> str:
-    """Who a replay belongs to: the issued key's id, or the static token.
-
-    A key id is a ULID -- 26 characters of uppercase Crockford base32 --
-    so the literal below can never collide with one.
-    """
-    return key_id or STATIC_PRINCIPAL
+from agentgate.domain.principal import STATIC_PRINCIPAL, principal_of  # noqa: F401  (re-exported)
 
 
 @dataclass(frozen=True)
@@ -77,7 +68,7 @@ class Replay:
 
     request_digest: str
     response: DecideResponse | InspectResponse
-    principal: str = STATIC_PRINCIPAL
+    principal: str
 
     @classmethod
     def of(cls, record: DecisionRecord) -> "Replay":
