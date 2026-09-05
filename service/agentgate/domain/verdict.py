@@ -16,6 +16,18 @@ would be a decision wearing a disguise.
 ask. False for a hard verdict and for the user's own `client.deny`:
 turning a user's "no" into "ask me" is not a softening the service is
 entitled to.
+
+`raised_to` is the floor algebra for a verdict that already exists --
+a stage-2 classifier's answer, checked against the floor stage 1 left
+behind. It is deliberately asymmetric at a tie with `ChainOutcome.settled`
+(`rules/base.py`), which applies the floor to stage 1's own outcome: a
+stage-1 verdict exactly as strict as the floor keeps its own `rule_id`
+(it already settled the question stage 1 was asked), while a stage-2
+verdict exactly as strict as the floor is relabelled to the floor's
+`rule_id` (spec v3.1 §3.3: the user should see whose rule actually held,
+even though the model's `reason`, `model`, latency and cost are kept).
+Only a verdict strictly stricter than the floor is left alone by
+`raised_to`.
 """
 
 from dataclasses import dataclass, replace
@@ -79,6 +91,21 @@ class Verdict:
     def escalatable(self) -> bool:
         """Whether escalation may replace this verdict with an ask."""
         return not self.hard and self.rule_id not in _NOT_ESCALATABLE
+
+    def raised_to(self, floor: "Verdict | None") -> "Verdict":
+        """This verdict, or the floor's decision and rule_id if this
+        verdict did not settle at least as strict on its own.
+
+        Unchanged when there is no floor, when this verdict failed closed
+        (`error` is set -- it is already an `ask` and relabelling it would
+        hide that the classifier never answered), or when it is strictly
+        stricter than the floor. Otherwise only `decision` and `rule_id`
+        move to the floor's: `reason`, `model`, and `cost` belong to the
+        call that was made and paid for, not to the rule that bounds it.
+        """
+        if floor is None or self.error is not None or self.strictness > floor.strictness:
+            return self
+        return replace(self, decision=floor.decision, rule_id=floor.rule_id)
 
     def escalated(self, hits: int) -> "Verdict":
         """The verdict this one becomes when the session has hit the policy

@@ -1,3 +1,4 @@
+from agentgate.api.schemas import DecisionKind
 from agentgate.domain.verdict import Verdict
 from agentgate.rules.base import ChainOutcome, RuleChain
 
@@ -85,3 +86,51 @@ def test_evaluate_still_answers_with_the_verdict_alone():
 
 def test_evaluate_hides_a_floor_that_settled_nothing():
     assert RuleChain([floor_rule()]).evaluate(None, None) is None
+
+
+def test_settled_is_none_when_the_chain_answered_nothing():
+    assert ChainOutcome().settled() is None
+
+
+def test_settled_is_none_when_only_a_floor_was_recorded():
+    outcome = ChainOutcome(verdict=None, floor=Verdict.ask("client.ask", "confirm", floor=True))
+    assert outcome.settled() is None
+
+
+def test_settled_returns_the_verdict_when_there_is_no_floor():
+    outcome = ChainOutcome(verdict=Verdict.deny("profile.path", "outside"))
+    assert outcome.settled().rule_id == "profile.path"
+
+
+def test_settled_returns_a_denial_unchanged_under_a_floor():
+    outcome = ChainOutcome(
+        verdict=Verdict.deny("profile.path", "outside"),
+        floor=Verdict.ask("client.ask", "confirm", floor=True),
+    )
+    assert outcome.settled().rule_id == "profile.path"
+
+
+def test_settled_keeps_a_tied_asks_own_rule_id():
+    outcome = ChainOutcome(
+        verdict=Verdict.ask("ambiguous.wrapper-depth", "cannot resolve"),
+        floor=Verdict.ask("client.ask", "confirm", floor=True),
+    )
+    assert outcome.settled().rule_id == "ambiguous.wrapper-depth"
+
+
+def test_settled_raises_an_allow_to_the_floor():
+    outcome = ChainOutcome(
+        verdict=Verdict.allow("allowlist.readonly"),
+        floor=Verdict.ask("client.ask", "confirm", floor=True),
+    )
+    settled = outcome.settled()
+    assert settled.decision is DecisionKind.ask
+    assert settled.rule_id == "client.ask"
+
+
+def test_settled_raised_allow_is_not_itself_a_floor():
+    outcome = ChainOutcome(
+        verdict=Verdict.allow("allowlist.readonly"),
+        floor=Verdict.ask("client.ask", "confirm", floor=True),
+    )
+    assert outcome.settled().floor is False

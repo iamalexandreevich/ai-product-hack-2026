@@ -26,7 +26,7 @@ only care what the chain decided.
 """
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Protocol
 
 from agentgate.domain.policy import Policy
@@ -48,6 +48,23 @@ class ChainOutcome:
 
     verdict: Verdict | None = None
     floor: Verdict | None = None
+
+    def settled(self) -> Verdict | None:
+        """What stage 1 answers once its own floor is taken into account.
+
+        A stage-1 verdict at least as strict as the floor stands as it
+        is -- that covers every denial, all of which sit above the floor
+        in the chain, and a tie keeps the rule that actually answered.
+        An `allow` under a floor becomes the floor itself, settled at
+        stage 1 with no model call: the deterministic layer has already
+        proved the action safe, so nothing stricter than `ask` could
+        honestly come back from stage 2.
+        """
+        if self.verdict is None:
+            return None
+        if self.floor is None or self.verdict.strictness >= self.floor.strictness:
+            return self.verdict
+        return replace(self.floor, floor=False)
 
 
 class RuleChain:
