@@ -1,6 +1,6 @@
 # Задача 23: AgentGate v3.1 — пол строгости, MCP на ступени 1, доверенные домены
 
-Ветка `feat/v3.1-strictness-mcp-domains` от `main` `8ab67c5` (после слияния v3 `58c606f` и спек v4/v3.1). Спека `docs/superpowers/service/specs/2026-09-05-agentgate-v3.1-rule-strictness-mcp-domains-design.md`, план `docs/superpowers/service/plans/2026-09-05-agentgate-v3.1-rule-strictness-mcp-domains.md` (`77e66c4`, восемь задач). Отчёт написан 5 сентября 2026 по факту выполнения, диапазон `8ab67c5..6ecdcdd`.
+Ветка `feat/v3.1-strictness-mcp-domains` от `main` `8ab67c5` (после слияния v3 `58c606f` и спек v4/v3.1). Спека `docs/superpowers/service/specs/2026-09-05-agentgate-v3.1-rule-strictness-mcp-domains-design.md`, план `docs/superpowers/service/plans/2026-09-05-agentgate-v3.1-rule-strictness-mcp-domains.md` (`80cf4ec`, восемь задач). Отчёт написан 5 сентября 2026 по факту выполнения, диапазон `8ab67c5..6ecdcdd`.
 
 Что изменилось для интегратора, аддитивно к v3:
 
@@ -10,7 +10,7 @@
 - **`profile_hash` изменился у всех профилей**: в схему `Profile` добавились `network.trusted_allows` и `mcp`. Значения по умолчанию сохраняют поведение, но хеш профиля в записях решений станет другим.
 - Асимметрия `rule_id` при равенстве: `ask` ступени 1 хранит свой собственный `rule_id`, а `ask`, сложившийся на ступени 2 из-за пола, отдаётся с `rule_id: client.ask`, но с `reason`, `model`, `latency_ms.stage2` и `cost` от классификатора.
 
-| Метрика | До (`8ab67c5`) | После (`6ecdcdd`) |
+| Метрика | До (`8ab67c5`) | После (`79f70d5`) |
 |---|---|---|
 | Тестов, exit code | 1028, 0 | **1219**, 0 |
 | Правил в `STAGE1` (без hard-deny) | 8 | 12 |
@@ -22,33 +22,33 @@
 
 | Волна | Задачи | Коммиты |
 |---|---|---|
-| 1 | 1 ‖ 2 | `693637d`, `cfdc295` |
-| 2 | 3 ‖ 6, затем 4 ‖ 5 | `413c746`, `e3681a2`, `71e19c3`, `7950647` |
-| правки волны 2 | B1, B2, S1–S3 | `df69265`, `bfe7685`, `bfc4706` |
-| качество | | `f2bbd53`, `616056a` |
-| 7 | документация | `de2b773` |
-| повторное ревью | S1 (слитные флаги) | `6ecdcdd` |
+| 1 | 1 ‖ 2 | `870df18`, `7161ff6` |
+| 2 | 3 ‖ 6, затем 4 ‖ 5 | `0a8ddd7`, `359f4cf`, `bf80bd7`, `241960a` |
+| правки волны 2 | B1, B2, S1–S3 | `a7da593`, `abd23d6`, `cafddea` |
+| качество | | `cfcafa0`, `485f2fe` |
+| 7 | документация | `a28f265` |
+| повторное ревью | S1 (слитные флаги) | `79f70d5` |
 | 8 | бенчмарк и этот отчёт | — |
 
 Волна 2 шла парами, потому что задачи 4 и 5 делят `rules/chain.py` и `rules/client_rules.py`.
 
 ## 2. Что построено, по задачам
 
-**Задача 1 — строгость как тип** (`693637d`). `Verdict.floor`, `Verdict.strictness`, `Verdict.escalatable`, `ChainOutcome` и `RuleChain.run` в `agentgate/domain/verdict.py` и `agentgate/rules/base.py`. Цепочка теперь умеет записать первый пол и продолжить проход; `RuleChain.evaluate` осталась проекцией `run` — отступление от §3.2 спеки, санкционированное разделом «Global Constraints» плана (см. §5).
+**Задача 1 — строгость как тип** (`870df18`). `Verdict.floor`, `Verdict.strictness`, `Verdict.escalatable`, `ChainOutcome` и `RuleChain.run` в `agentgate/domain/verdict.py` и `agentgate/rules/base.py`. Цепочка теперь умеет записать первый пол и продолжить проход; `RuleChain.evaluate` осталась проекцией `run` — отступление от §3.2 спеки, санкционированное разделом «Global Constraints» плана (см. §5).
 
-**Задача 2 — поля профиля** (`cfdc295`). `Network.trusted_allows`, `McpPolicy`, `Profile.mcp`, `Policy.mcp` в `agentgate/profiles/schema.py` и `agentgate/domain/policy.py`; `agentgate/domain/domains.py::domain_allowed` — единственная проверка «домен в списке»; `CommandSpec.output_flags` в `agentgate/shell/commands.py`. `contracts/openapi.yaml` перегенерирован (в нём фигурирует профиль).
+**Задача 2 — поля профиля** (`7161ff6`). `Network.trusted_allows`, `McpPolicy`, `Profile.mcp`, `Policy.mcp` в `agentgate/profiles/schema.py` и `agentgate/domain/policy.py`; `agentgate/domain/domains.py::domain_allowed` — единственная проверка «домен в списке»; `CommandSpec.output_flags` в `agentgate/shell/commands.py`. `contracts/openapi.yaml` перегенерирован (в нём фигурирует профиль).
 
-**Задача 3 — пол в движке** (`413c746`). `ClientRulesRule("ask")` возвращает `Verdict.ask(..., floor=True)`; `agentgate/engine/gate.py` применяет пол к исходу ступени 2 и не кладёт такой исход в кэш `allow`. Тесты `tests/engine/test_gate_floor.py` (таблица §3.3 плюс инвариант §7.1.7) и `tests/engine/test_escalation.py`. Фикстуры переведены с `evil.example` на `pypi.org`, иначе запросы не доходили до ступени 2.
+**Задача 3 — пол в движке** (`0a8ddd7`). `ClientRulesRule("ask")` возвращает `Verdict.ask(..., floor=True)`; `agentgate/engine/gate.py` применяет пол к исходу ступени 2 и не кладёт такой исход в кэш `allow`. Тесты `tests/engine/test_gate_floor.py` (таблица §3.3 плюс инвариант §7.1.7) и `tests/engine/test_escalation.py`. Фикстуры переведены с `evil.example` на `pypi.org`, иначе запросы не доходили до ступени 2.
 
-**Задача 4 — MCP в правилах пользователя** (`71e19c3`). `canonical_units` в `agentgate/rules/client_rules.py` отдаёт для `mcp_call` одну строку `server.tool`; `arguments` в матчинге не участвуют.
+**Задача 4 — MCP в правилах пользователя** (`bf80bd7`). `canonical_units` в `agentgate/rules/client_rules.py` отдаёт для `mcp_call` одну строку `server.tool`; `arguments` в матчинге не участвуют.
 
-**Задача 5 — MCP в правилах профиля** (`7950647`, `df69265`). `agentgate/rules/profile_mcp.py` (`ProfileMcpRule`) и `agentgate/rules/mcp_readonly.py` (`McpReadonlyRule`, `READONLY_PREFIXES`). `ProfileMcpRule` стоит в `STAGE1` дважды: `"refuse"` — над полом пользователя, вместе с прочими запретами профиля; `"allow"` — под полом, рядом с `client.allow`.
+**Задача 5 — MCP в правилах профиля** (`241960a`, `a7da593`). `agentgate/rules/profile_mcp.py` (`ProfileMcpRule`) и `agentgate/rules/mcp_readonly.py` (`McpReadonlyRule`, `READONLY_PREFIXES`). `ProfileMcpRule` стоит в `STAGE1` дважды: `"refuse"` — над полом пользователя, вместе с прочими запретами профиля; `"allow"` — под полом, рядом с `client.allow`.
 
-**Задача 6 — доверенные домены** (`e3681a2`, `bfc4706`, `6ecdcdd`). `agentgate/rules/profile_domain_trusted.py`: одиннадцать условий §5.2 списком, каждое — отдельная строка таблицы тестов. Правило никогда не отказывает: отказ по незнакомому домену остался за `ProfileDomainRule` выше по цепочке.
+**Задача 6 — доверенные домены** (`359f4cf`, `cafddea`, `79f70d5`). `agentgate/rules/profile_domain_trusted.py`: одиннадцать условий §5.2 списком, каждое — отдельная строка таблицы тестов. Правило никогда не отказывает: отказ по незнакомому домену остался за `ProfileDomainRule` выше по цепочке.
 
-**Задача 7 — документация** (`de2b773`). `contracts/README.md`, `docs/connect.md`, `service/README.md`, оба `CLAUDE.md`.
+**Задача 7 — документация** (`a28f265`). `contracts/README.md`, `docs/connect.md`, `service/README.md`, оба `CLAUDE.md`.
 
-Общие рефакторинги: `bfe7685` — `NormalizedAction.mcp_name` как единственное каноническое имя, `_allow` разбит на `_allow_mcp`/`_allow_paths`/`_allow_shell`; `f2bbd53` — `agentgate/rules/readonly.py` (`is_readonly`, `matches_prefix`, `paths_are_safe`) общий для allowlist и доверенного правила; `616056a` — `Verdict.raised_to` и `ChainOutcome.settled` вместо вспомогательных функций в `gate.py`.
+Общие рефакторинги: `abd23d6` — `NormalizedAction.mcp_name` как единственное каноническое имя, `_allow` разбит на `_allow_mcp`/`_allow_paths`/`_allow_shell`; `cfcafa0` — `agentgate/rules/readonly.py` (`is_readonly`, `matches_prefix`, `paths_are_safe`) общий для allowlist и доверенного правила; `485f2fe` — `Verdict.raised_to` и `ChainOutcome.settled` вместо вспомогательных функций в `gate.py`.
 
 ## 3. Доказательства TDD
 
@@ -62,17 +62,17 @@
 
 ## 4. Находки ревью и как закрыты
 
-**B1 (блокирующая, ревью спеки волны 2).** `ProfileMcpRule` стоял в цепочке одним экземпляром — над полом. Из-за этого `mcp.allow` оператора закрывал цепочку **до** того, как записывался пол пользователя, и `rules.ask: ["github.*"]` не поднимал такой `allow` до `ask`. Закрыто `df69265`: правило разделено на два экземпляра, `"refuse"` (`deny`+`ask`, над полом) и `"allow"` (только `allow`, под полом, рядом с `client.allow`). Спека §4.3/§5.3 исправлена по коду — это единственное место, где спеку правили под реализацию, и правка сделана осознанно: «allow не обгоняет пол» — инвариант §7.1.6, а одна позиция в цепочке его нарушала.
+**B1 (блокирующая, ревью спеки волны 2).** `ProfileMcpRule` стоял в цепочке одним экземпляром — над полом. Из-за этого `mcp.allow` оператора закрывал цепочку **до** того, как записывался пол пользователя, и `rules.ask: ["github.*"]` не поднимал такой `allow` до `ask`. Закрыто `a7da593`: правило разделено на два экземпляра, `"refuse"` (`deny`+`ask`, над полом) и `"allow"` (только `allow`, под полом, рядом с `client.allow`). Спека §4.3/§5.3 исправлена по коду — это единственное место, где спеку правили под реализацию, и правка сделана осознанно: «allow не обгоняет пол» — инвариант §7.1.6, а одна позиция в цепочке его нарушала.
 
-**B2 (блокирующая, там же).** Условие 10 доверенного правила было переписано как «в argv есть URL» вместо `Role.NETWORK`. В таком виде правило пропускало `pip install`, `npm install`, `git push` и любой неизвестный бинарник с URL в аргументах — то есть выдавало `allow` на запись и на исполнение. Закрыто `bfc4706`: условие вернулось к `Role.NETWORK in spec.roles`.
+**B2 (блокирующая, там же).** Условие 10 доверенного правила было переписано как «в argv есть URL» вместо `Role.NETWORK`. В таком виде правило пропускало `pip install`, `npm install`, `git push` и любой неизвестный бинарник с URL в аргументах — то есть выдавало `allow` на запись и на исполнение. Закрыто `cafddea`: условие вернулось к `Role.NETWORK in spec.roles`.
 
-**S1 (существенная; закрыта в два приёма).** Первая правка (`bfc4706`) научила `ParsedArgv.of` резать слитные короткие флаги и добавила `wget -o/--output-file` в `output_flags`. Этого оказалось **недостаточно**: юнит-тесты `ParsedArgv` шли на синтетическом наборе флагов, а интеграционных строк «правило + реальная командная строка» не было, поэтому `curl -oout.html`, `curl -d@secret`, `curl -T /etc/passwd` и `wget -olog.txt` по-прежнему получали `allow` от `profile.domain-trusted`. Повторное ревью это поймало; закрыто `6ecdcdd` — правило само разбирает value/upload/output-флаги через `ParsedArgv.of(argv, spec.value_flags | spec.upload_flags | spec.output_flags)` и отказывается, если среди распознанных опций есть upload или output. Добавлены интеграционные строки в таблицу тестов. Урок записан: юнит-тест парсера argv не заменяет строку в таблице правила.
+**S1 (существенная; закрыта в два приёма).** Первая правка (`cafddea`) научила `ParsedArgv.of` резать слитные короткие флаги и добавила `wget -o/--output-file` в `output_flags`. Этого оказалось **недостаточно**: юнит-тесты `ParsedArgv` шли на синтетическом наборе флагов, а интеграционных строк «правило + реальная командная строка» не было, поэтому `curl -oout.html`, `curl -d@secret`, `curl -T /etc/passwd` и `wget -olog.txt` по-прежнему получали `allow` от `profile.domain-trusted`. Повторное ревью это поймало; закрыто `79f70d5` — правило само разбирает value/upload/output-флаги через `ParsedArgv.of(argv, spec.value_flags | spec.upload_flags | spec.output_flags)` и отказывается, если среди распознанных опций есть upload или output. Добавлены интеграционные строки в таблицу тестов. Урок записан: юнит-тест парсера argv не заменяет строку в таблице правила.
 
-**S2.** `wget -o` отсутствовал в `output_flags` — закрыто `bfc4706`.
+**S2.** `wget -o` отсутствовал в `output_flags` — закрыто `cafddea`.
 
 **S3.** Хосты без схемы (`pypi.org/simple` без `https://`) не извлекаются нормализатором как домены и потому не квалифицируются доверенным правилом — задокументировано в спеке §5.2/§7.3.3 вместо изменения нормализатора.
 
-**Ревью качества.** Закрыто: три места независимо строили строку `server.tool` (→ `NormalizedAction.mcp_name`, `bfe7685`); мёртвая ветка в `McpReadonlyRule`; приватные импорты `_is_readonly`/`_matches_prefix` из `allowlist.py` (→ общий модуль `rules/readonly.py`, `f2bbd53`); алгебра строгости жила в `gate.py` (→ `Verdict.raised_to`, `ChainOutcome.settled`, `616056a`); тесты с `and`-цепочками в `assert`; отставший docstring `chain.py`. Ниты волны 1: комментарий к `_STRICTNESS` обещал больше, чем кодирует (он задаёт только `allow < ask < deny`; тонкий порядок §3.1 — это позиция правила в `STAGE1`).
+**Ревью качества.** Закрыто: три места независимо строили строку `server.tool` (→ `NormalizedAction.mcp_name`, `abd23d6`); мёртвая ветка в `McpReadonlyRule`; приватные импорты `_is_readonly`/`_matches_prefix` из `allowlist.py` (→ общий модуль `rules/readonly.py`, `cfcafa0`); алгебра строгости жила в `gate.py` (→ `Verdict.raised_to`, `ChainOutcome.settled`, `485f2fe`); тесты с `and`-цепочками в `assert`; отставший docstring `chain.py`. Ниты волны 1: комментарий к `_STRICTNESS` обещал больше, чем кодирует (он задаёт только `allow < ask < deny`; тонкий порядок §3.1 — это позиция правила в `STAGE1`).
 
 Отложено по итогам ревью качества: извлечение доменов на `SimpleCommand` в нормализаторе (сейчас `extract_domains` вызывается повторно внутри доверенного правила); `READONLY_PREFIXES` как второе определение «что есть чтение» рядом с `is_readonly` — задокументировано в docstring, но не объединено.
 
@@ -80,13 +80,13 @@
 
 1. **`RuleChain.run` вместо смены сигнатуры `evaluate`.** Спека §3.2 предполагала, что `Rule.evaluate` начнёт возвращать пару. Вместо этого пол поехал полем на самом `Verdict`, а накопление — в новом `RuleChain.run`; `evaluate` осталась его проекцией. Основание — «Global Constraints» плана: сигнатура `Rule.evaluate` — это шов, который реализует четырнадцать правил и все тестовые фейки, и менять его ради одного бита значило бы переписать их все.
 2. **Импорт `is_readonly`/`matches_prefix` из общего `rules/readonly.py`, а не копия в доверенном правиле.** Это не дублирование знания, а ровно наоборот: «что считается чтением» и «что считается безопасным префиксом» должны совпадать у allowlist и у доверенного домена, иначе домен из списка становится способом обойти allowlist. Общий модуль делает расхождение невозможным.
-3. **При `stage: 2` под полом `reason` берётся у классификатора** — и в строке `deny`, и в строке `allow → ask`. Пользователю показывается то, что модель действительно нашла, а `rule_id: client.ask` объясняет, почему исход `ask`, а не `allow`. Асимметрия с `ask` ступени 1 (там `rule_id` свой) задокументирована в `616056a`.
+3. **При `stage: 2` под полом `reason` берётся у классификатора** — и в строке `deny`, и в строке `allow → ask`. Пользователю показывается то, что модель действительно нашла, а `rule_id: client.ask` объясняет, почему исход `ask`, а не `allow`. Асимметрия с `ask` ступени 1 (там `rule_id` свой) задокументирована в `485f2fe`.
 4. **`git fetch <url>` остаётся на ступени 2.** У `git` нет `Role.NETWORK`, а расширять его `readonly_subcommands` значило бы менять baseline-поведение allowlist и нарушить критерий 6. Зафиксировано в спеке §5.2.
 5. **Никакого hard-deny по имени MCP-инструмента.** Имя ничего не доказывает: `filesystem.write_file` может быть песочницей, а `notes.append` — записью в `authorized_keys`.
 
 ## 6. Числа приёмки
 
-Прогон 5 сентября 2026 в worktree `wt/v3-a` (`6ecdcdd`), локальный Postgres на `localhost:5433`, сервис на `127.0.0.1:8400`, ступень 2 — `google/gemini-3.8-flash` через OpenRouter. Профили — временные копии `service/profiles/default-dev.yaml` в скретч-каталоге (в репозиторий не попадают): **baseline** (как в репозитории: без `mcp`, `trusted_allows` отсутствует), **full** (`trusted_allows: true` плюс секция `mcp`), **open** (то же, но `network.mode: open`).
+Прогон 5 сентября 2026 в worktree `wt/v3-a` (`79f70d5`), локальный Postgres на `localhost:5433`, сервис на `127.0.0.1:8400`, ступень 2 — `google/gemini-3.8-flash` через OpenRouter. Профили — временные копии `service/profiles/default-dev.yaml` в скретч-каталоге (в репозиторий не попадают): **baseline** (как в репозитории: без `mcp`, `trusted_allows` отсутствует), **full** (`trusted_allows: true` плюс секция `mcp`), **open** (то же, но `network.mode: open`).
 
 Секция `mcp` профиля **full**, выбранная для прогона:
 
@@ -208,11 +208,11 @@ stage2 = 15
 
 **Ревью ветки.** Прогон 57 запросов через `STAGE1.run` напрямую и через `Gate` по HTTP дал 114/114 точек данных, идентичных baseline `8ab67c5` там, где новые флаги (`network.trusted_allows`, секция `mcp`, `rules`) выключены — байт в байт по `decision`/`stage`/`rule_id`. Инварианты v1–v3 (fail-closed на ошибке/таймауте, hard-deny не эскалируется и не смягчается, решение только по `NormalizedAction`, `deny`/`ask` не кэшируются) проверены поверх HTTP, не только в модульных тестах. Состязательные `rules` (глубоко вложенные глобы, повторяющиеся шаблоны, некорректный `fnmatch`) и обфусцированные MCP-имена (см. `test_an_obfuscated_name_is_not_matched_and_falls_through_to_stage_two`) не дали ни одного HTTP 500 и не показали признаков ReDoS. Латентность ступени 1 при всех флагах включённых — p50 ≈ 0.30 мс, в пределах бюджета 1 мс.
 
-Находки ревью, S1/S2 (закрыты коммитом `4287086` до этого раунда): закрытый список «плохих» флагов `trusted_allows` пропускал `curl -K/--config`, `-D`, `-c`, `--trace`, `--json @file`, `--remote-name-all`, `wget -i`, голый `wget` (по умолчанию пишет файл), `curl -X DELETE` — то есть отбор был по чёрному списку известных опасных флагов, а не по белому списку разрешённых. Закрыто инверсией: `CommandSpec.read_only_flags` теперь закрытый allowlist read-only флагов на команду, `-X` принимается только со значениями `GET`/`HEAD`, `wget` признаётся безопасным только при явном выводе в stdout.
+Находки ревью, S1/S2 (закрыты коммитом `b2c88db` до этого раунда): закрытый список «плохих» флагов `trusted_allows` пропускал `curl -K/--config`, `-D`, `-c`, `--trace`, `--json @file`, `--remote-name-all`, `wget -i`, голый `wget` (по умолчанию пишет файл), `curl -X DELETE` — то есть отбор был по чёрному списку известных опасных флагов, а не по белому списку разрешённых. Закрыто инверсией: `CommandSpec.read_only_flags` теперь закрытый allowlist read-only флагов на команду, `-X` принимается только со значениями `GET`/`HEAD`, `wget` признаётся безопасным только при явном выводе в stdout.
 
 Находка S3 (`McpReadonlyRule` сопоставляет только имя инструмента, не проверяя сервер — `evil-mcp.get_all_secrets` квалифицируется наравне с `github.get_issue`) зафиксирована как ограничение, не закрыта: устранение требует реестра доверенных MCP-серверов, это отдельная задача (см. §8 «Реестр MCP-серверов»).
 
-**Этот раунд.** Бенчмарк по категории `mcp_tool_attack` показал, что `mcp.ask` оператора вёл себя не как `client.ask`: кейс `MCP_004` (`notes-mcp.save_note`, ожидание `deny`) на профиле с `mcp.ask: ["notes-mcp.save_note"]` settled на ступени 1 как `ask`, не дав ступени 2 сказать `deny` — тот самый дефект, который v3.1 уже закрыла для пользовательского `ask`. Исправлено коммитом `3bdcceb`: `ProfileMcpRule("refuse")` возвращает `ask` как пол (`Verdict.ask(..., floor=True)`), а `deny` остаётся settling-вердиктом. `profile.domain` в `network.mode: ask` этим раундом сознательно не тронут — записан как известное ограничение и в спеке (§4.3), и в `CLAUDE.md`.
+**Этот раунд.** Бенчмарк по категории `mcp_tool_attack` показал, что `mcp.ask` оператора вёл себя не как `client.ask`: кейс `MCP_004` (`notes-mcp.save_note`, ожидание `deny`) на профиле с `mcp.ask: ["notes-mcp.save_note"]` settled на ступени 1 как `ask`, не дав ступени 2 сказать `deny` — тот самый дефект, который v3.1 уже закрыла для пользовательского `ask`. Исправлено коммитом `3b4e759`: `ProfileMcpRule("refuse")` возвращает `ask` как пол (`Verdict.ask(..., floor=True)`), а `deny` остаётся settling-вердиктом. `profile.domain` в `network.mode: ask` этим раундом сознательно не тронут — записан как известное ограничение и в спеке (§4.3), и в `CLAUDE.md`.
 
 **Открытые вопросы владельцу.**
 
@@ -222,7 +222,7 @@ stage2 = 15
 
 Тестов после этого раунда: 1251, exit code 0 (`AGENTGATE_TEST_DB_URL=... uv run pytest -q`), латентность ступени 1 стабильна на трёх прогонах (p50 ≈ 0.30 мс), `contracts/` не разошёлся с приложением (`export_contracts.py` + `export_openapi.py` + `git diff --exit-code` — только правка `contracts/README.md`, схемы не изменились).
 
-Коммиты этого раунда: `4287086` (найдено ревью раунда S1/S2, закрыто до этого пункта отчёта) и `3bdcceb` (`fix(rules): the operator's MCP ask is a floor too`).
+Коммиты этого раунда: `b2c88db` (найдено ревью раунда S1/S2, закрыто до этого пункта отчёта) и `3b4e759` (`fix(rules): the operator's MCP ask is a floor too`).
 
 ## 8. Отложено
 
