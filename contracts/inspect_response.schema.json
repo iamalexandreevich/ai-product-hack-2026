@@ -105,7 +105,7 @@
       "type": "object"
     },
     "Span": {
-      "description": "One range of lines the verdict rewrote, by coordinates only -- never\nthe text. Lines are 0-based indexes into `output.split(\"\\n\")`,\n`line_end` inclusive.",
+      "description": "One range of lines the verdict rewrote, by coordinates only -- never\nthe text. Lines are 0-based indexes into the *request's*\n`output.split(\"\\n\")`, `line_end` inclusive -- not into this response's\n`output`, which a collapsed range (a PEM block becomes one marker line)\nleaves shorter than what was sent.",
       "properties": {
         "line_start": {
           "minimum": 0,

@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from ulid import ULID
 
-from agentgate.api.schemas import Cost, DecisionKind, InspectVerdict
+from agentgate.api.schemas import Cost, DecisionKind, InspectVerdict, Span
 from agentgate.domain.dialogue import Dialogue
 from agentgate.domain.session import RECENT_MAXLEN, SessionState
 from agentgate.domain.usage import Usage
@@ -528,8 +528,6 @@ async def test_list_filters_by_kind(session_factory):
 
 
 async def test_inspect_spans_and_redaction_roundtrip_through_postgres(session_factory):
-    from agentgate.api.schemas import Span
-
     repo = DecisionRepo(session_factory)
     await SessionRepo(session_factory).ensure("s1", WORKSPACE)
     stored = inspection(

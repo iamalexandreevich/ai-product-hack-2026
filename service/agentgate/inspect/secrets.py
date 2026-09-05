@@ -38,7 +38,7 @@ import binascii
 import math
 import re
 from collections import Counter
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 
 from agentgate.api.schemas import Provenance
@@ -120,8 +120,11 @@ JWT = Form(
     re.compile(r"(?P<value>eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})"),
     _jwt_is_a_token,
 )
+# The needles carry no colon: the pattern tolerates space before it, and a
+# needle stricter than its own pattern silently skips lines the pattern
+# would have matched.
 AUTH_HEADER = Form(
-    ("authorization:", "x-api-key:"),
+    ("authorization", "x-api-key"),
     re.compile(
         r"^\s*[<>*]?\s*(?:proxy-)?(?:authorization|x-api-key)\s*:\s*(?:(?:bearer|basic|token)\s+)?(?P<value>\S.*?)\s*$",
         re.I,
@@ -211,6 +214,17 @@ def scan_secrets(output: str, *, entropy_candidates: bool) -> list[Finding]:
     return findings
 
 
+def redact_line(line: str) -> str:
+    """`line` with every recognized form hidden, returned unchanged when no
+    form matches. Entropy candidates are never touched: a candidate is a
+    guess the classifier is allowed to overrule, and there is no line
+    number here for it to overrule with."""
+    rewritten = _apply_forms(line, NEEDLE_FORMS)
+    if _names_a_secret(line):
+        rewritten = _apply_forms(rewritten, (SENSITIVE_NAME,))
+    return rewritten
+
+
 def entropy_candidates_allowed(provenance: Provenance, workspace: str | None) -> bool:
     """Where a neutral-named high-entropy value is plausibly a secret
     (spec 4.1): a secret file, a shell command that prints the
@@ -277,17 +291,20 @@ def _pem_end(lines: Sequence[str], start: int) -> int:
 
 
 def _scan_line(number: int, line: str, flags: int, entropy_candidates: bool) -> Finding | None:
-    rewritten = line
-    for form, flag in zip(NEEDLE_FORMS, _FORM_FLAGS):
-        if flags & flag:
-            rewritten = _apply_form(form, rewritten)
+    rewritten = _apply_forms(line, (form for form, flag in zip(NEEDLE_FORMS, _FORM_FLAGS) if flags & flag))
     if flags & _SEP_FLAG and _names_a_secret(line):
-        rewritten = _apply_form(SENSITIVE_NAME, rewritten)
+        rewritten = _apply_forms(rewritten, (SENSITIVE_NAME,))
     if rewritten != line:
         return Finding(line=number, rule_id=SECRET_RULE, action=Action.redact, rewritten=rewritten)
     if entropy_candidates and flags & _SEP_FLAG:
         return _candidate(number, line)
     return None
+
+
+def _apply_forms(line: str, forms: Iterable[Form]) -> str:
+    for form in forms:
+        line = _apply_form(form, line)
+    return line
 
 
 def _apply_form(form: Form, line: str) -> str:

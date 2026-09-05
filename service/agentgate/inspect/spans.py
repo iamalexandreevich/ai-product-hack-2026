@@ -12,14 +12,30 @@ become `mask` findings and `mask.apply` counts them like any other.
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import get_args
 
-from agentgate.inspect.classify import ModelSpan
+from pydantic import BaseModel, ConfigDict
+
+from agentgate.api.schemas import SpanKind
 from agentgate.inspect.detectors import Action, Finding
 from agentgate.inspect.mask import SEMANTIC_RULE
 from agentgate.inspect.segments import Segments
 from agentgate.profiles.schema import ModelBudget
 
-MODEL_SPAN_KINDS = ("instruction", "pipe-exec", "encoded", "invisible")
+# Every kind a span can carry except `secret`, which stage 1 assigns and
+# the model may not ask for.
+MODEL_SPAN_KINDS: tuple[str, ...] = tuple(kind for kind in get_args(SpanKind) if kind != "secret")
+
+
+class ModelSpan(BaseModel):
+    """One range the model asks to mask, in `output.split("\\n")` coordinates."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    line_start: int
+    line_end: int
+    kind: str
+    confidence: float
 
 
 @dataclass(frozen=True)

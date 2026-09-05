@@ -23,10 +23,18 @@ def test_same_action_with_a_different_rules_digest_gets_a_different_key():
 
 
 def test_inspect_cache_key_depends_on_task_and_history_too():
-    a = inspect_cache_key("ph", "shell", "od", "td", "hd")
-    assert a != inspect_cache_key("ph", "shell", "od", "td2", "hd")
-    assert a != inspect_cache_key("ph", "shell", "od", "td", "hd2")
-    assert a != inspect_cache_key("ph", "web", "od", "td", "hd")
-    assert a != inspect_cache_key("ph2", "shell", "od", "td", "hd")
-    assert a != inspect_cache_key("ph", "shell", "od2", "td", "hd")
+    a = inspect_cache_key("ph", "shell", "od", "td", "hd", True)
+    assert a != inspect_cache_key("ph", "shell", "od", "td2", "hd", True)
+    assert a != inspect_cache_key("ph", "shell", "od", "td", "hd2", True)
+    assert a != inspect_cache_key("ph", "web", "od", "td", "hd", True)
+    assert a != inspect_cache_key("ph2", "shell", "od", "td", "hd", True)
+    assert a != inspect_cache_key("ph", "shell", "od2", "td", "hd", True)
     assert len(a) == 64
+
+
+def test_inspect_cache_key_depends_on_the_entropy_candidate_policy():
+    # Two shell commands share a provenance kind but not the policy that
+    # decides whether a neutral-named value is redacted.
+    assert inspect_cache_key("ph", "shell", "od", "td", "hd", True) != inspect_cache_key(
+        "ph", "shell", "od", "td", "hd", False
+    )

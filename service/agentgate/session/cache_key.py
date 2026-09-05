@@ -22,7 +22,11 @@ are cached too. A stage-1 verdict is a function of the output, the
 policy and where the output came from; a stage-2 verdict also depends on
 the task and the dialogue it was judged against, so both digests are in
 the key. Hits mostly happen inside one task (a retry, parallel calls of
-one turn), where they match anyway.
+one turn), where they match anyway. The key must carry everything the
+verdict depends on, and whether a neutral-named high-entropy value counts
+as a secret is a function of the *whole* provenance -- the path a `file`
+names, the command a `shell` ran -- not of its kind, so that decision
+rides the key as its own component.
 """
 
 import hashlib
@@ -39,6 +43,10 @@ def allow_cache_key(
 
 def inspect_cache_key(
     profile_hash: str, provenance_kind: str, output_digest: str, task_digest: str, history_digest: str,
+    entropy_candidates: bool,
 ) -> str:
-    payload = f"{profile_hash}\n{provenance_kind}\n{output_digest}\n{task_digest}\n{history_digest}".encode("utf-8")
+    candidates = "1" if entropy_candidates else "0"
+    payload = (
+        f"{profile_hash}\n{provenance_kind}\n{output_digest}\n{task_digest}\n{history_digest}\n{candidates}"
+    ).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()

@@ -11,13 +11,13 @@ from agentgate.inspect.classify import (
     InspectCase,
     InspectOutput,
     LLMInspectClassifier,
-    ModelSpan,
     build_inspect_prompt,
     build_inspect_system_prompt,
 )
 from agentgate.inspect.detectors import Action, Finding
 from agentgate.inspect.mask import Stage1Outcome
 from agentgate.inspect.segments import Segment, Segments
+from agentgate.inspect.spans import ModelSpan
 from agentgate.profiles.schema import ModelConfig
 from tests.factories import inspect_request, policy, turn
 
@@ -57,6 +57,15 @@ def test_prompt_contains_provenance():
     request = inspect_request(provenance={"kind": "web", "url": "https://example.com/a"})
     prompt = build_inspect_prompt(_case(request=request))
     assert '[PROVENANCE] kind="web" url="https://example.com/a"' in prompt
+
+
+def test_prompt_redacts_a_secret_in_the_provenance():
+    command = 'curl -H "Authorization: Bearer sk-abcdefghijklmnopqrstuvwxyz0123456789" https://api.example.com'
+    request = inspect_request(provenance={"kind": "shell", "command": command})
+    prompt = build_inspect_prompt(_case(request=request))
+    assert "sk-abcdefghijklmnopqrstuvwxyz0123456789" not in prompt
+    assert "[gate: secret redacted]" in prompt
+    assert "https://api.example.com" in prompt
 
 
 def test_prompt_contains_flags_from_findings():
@@ -165,13 +174,17 @@ async def test_classifier_outcome_carries_spans_and_unredact_but_no_text():
     assert outcome.verdict is InspectVerdict.mask
     assert outcome.spans == (ModelSpan(line_start=1, line_end=1, kind="instruction", confidence=0.8),)
     assert outcome.unredact == (3,)
-    assert not hasattr(outcome, "replacement")
 
 
-def test_system_prompt_tells_the_model_secrets_are_not_its_job_and_asks_for_spans():
+def test_system_prompt_tells_the_model_secrets_are_not_its_job():
     prompt = build_inspect_system_prompt(policy())
-    assert "spans" in prompt
-    assert "secret" in prompt
+    assert "`secret` is not a span kind you may return" in prompt
+
+
+def test_system_prompt_explains_what_unredact_does_with_a_candidate():
+    prompt = build_inspect_system_prompt(policy())
+    assert "[CANDIDATES] lists lines where a value was hidden only because it looked random" in prompt
+    assert "put a line number in `unredact`" in prompt
 
 
 def _ok_with_usage(content: str, usage: dict) -> httpx.Response:

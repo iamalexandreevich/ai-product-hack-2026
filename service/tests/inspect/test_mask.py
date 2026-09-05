@@ -152,3 +152,9 @@ def test_findings_out_of_line_order_are_applied_in_line_order():
     o = apply("a\nb\nc\nd\ne\n", [_mask(4), _mask(0)])
     assert o.replacement == f"{REPLACEMENT_LINE}\nb\nc\nd\n{REPLACEMENT_LINE}\n"
     assert [s.line_start for s in o.spans] == [0, 4]
+
+
+def test_the_reason_counts_rewritten_lines_not_findings():
+    out = "\n".join(f"line {i}" for i in range(12)) + "\n"
+    findings = [Finding(line=0, rule_id="inspect.semantic", action=Action.mask, line_end=4)]
+    assert "rewrote 5 line(s)" in apply(out, findings).reason

@@ -653,8 +653,10 @@ SpanSource = Literal["detector", "model"]
 
 class Span(BaseModel):
     """One range of lines the verdict rewrote, by coordinates only -- never
-    the text. Lines are 0-based indexes into `output.split("\\n")`,
-    `line_end` inclusive."""
+    the text. Lines are 0-based indexes into the *request's*
+    `output.split("\\n")`, `line_end` inclusive -- not into this response's
+    `output`, which a collapsed range (a PEM block becomes one marker line)
+    leaves shorter than what was sent."""
 
     line_start: int = Field(ge=0)
     line_end: int = Field(ge=0)
