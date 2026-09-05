@@ -91,6 +91,10 @@ def build_user_message(
     lines.append(f"[ACTION] tool={action.tool.value} cwd={j(action.cwd)}")
     if action.tool.value == "shell":
         lines.append(f"argv={argv}")
+    if action.method is not None:
+        # Already constrained to a closed set of verbs by the schema, so it
+        # cannot carry a newline and needs no escaping.
+        lines.append(f"method={action.method}")
     if action.mcp is not None:
         lines.append(f"mcp={json.dumps(action.mcp.model_dump(), ensure_ascii=False)}")
     lines.append(f"paths=[{paths}] domains=[{domains}]")

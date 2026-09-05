@@ -161,3 +161,13 @@ def test_record_defaults_spans_and_redaction_counters():
     assert record.spans == []
     assert record.redacted == 0
     assert record.spans_rejected == 0
+
+
+def test_a_decision_carries_its_key_id_into_the_record():
+    record = decision(key_id="01HZKEY").to_record()
+
+    assert record.key_id == "01HZKEY"
+
+
+def test_a_decision_without_a_key_records_none():
+    assert decision().to_record().key_id is None

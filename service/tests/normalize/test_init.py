@@ -79,3 +79,22 @@ def test_file_read_tilde_user_path_is_flagged_not_fabricated():
     a = normalize(req)
     assert a.flags.has_unresolved_expansion is True
     assert a.paths == ["/home/u/repo/a.py"]
+
+
+def test_a_network_action_carries_its_method():
+    action = normalize(DecideRequest.model_validate(
+        {"harness": "t", "tool": "network", "args": {"cwd": "/w", "domains": ["GitHub.com"], "method": "HEAD"},
+         "user_request": "x"}
+    ))
+
+    assert action.method == "HEAD"
+    assert action.domains == ["github.com"]
+
+
+def test_a_shell_action_has_no_method_even_when_the_request_carries_one():
+    action = normalize(DecideRequest.model_validate(
+        {"harness": "t", "tool": "shell", "raw": "curl -X DELETE https://github.com/o/r",
+         "args": {"cwd": "/w", "method": "GET"}, "user_request": "x"}
+    ))
+
+    assert action.method is None

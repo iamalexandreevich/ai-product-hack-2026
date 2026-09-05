@@ -640,6 +640,18 @@ paths:
           description: Return only rows of this kind. Omitted, both kinds are returned.
           title: Kind
         description: Return only rows of this kind. Omitted, both kinds are returned.
+      - name: key_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Return only decisions authenticated with this issued API key. Decisions
+            taken under the static token carry no key and are never returned.
+          title: Key Id
+        description: Return only decisions authenticated with this issued API key. Decisions
+          taken under the static token carry no key and are never returned.
       responses:
         '200':
           description: A page of decisions, newest first.
@@ -789,6 +801,15 @@ components:
           - type: 'null'
           default: null
           description: 'Server, tool and arguments of an MCP call. Used for `tool: mcp_call`.'
+        method:
+          anyOf:
+          - type: string
+          - type: 'null'
+          default: null
+          description: 'HTTP method of a `network` action, uppercase: GET, HEAD, POST, PUT,
+            PATCH, DELETE, OPTIONS. Optional — omitted means unknown, and unknown never earns
+            a positive verdict. Ignored for tools other than `network`.'
+          title: Method
       required:
       - cwd
       title: ActionArgs
@@ -1248,6 +1269,13 @@ components:
           title: Spans Rejected
           description: Model spans discarded by validation before application (spec 4.5).
           default: 0
+        key_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Key Id
+          description: ULID of the issued API key this call was authenticated with; `null`
+            for the static `AGENTGATE_TOKEN` and for a localhost bind with no token.
         decision_id:
           type: string
           title: Decision Id

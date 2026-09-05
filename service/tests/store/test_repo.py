@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -507,6 +508,16 @@ async def test_load_replayable_limit_keeps_the_newest_keyed_rows(session_factory
     assert [r.idempotency_key for r in loaded] == ["newest", "middle"]
 
 
+async def test_load_replayable_carries_the_key_id_back(session_factory):
+    await _seed_session(session_factory)
+    repo = DecisionRepo(session_factory)
+    await repo.insert(replace(rec(), idempotency_key="k", key_id="01HZKEYA"))
+
+    records = await repo.load_replayable(datetime.now(timezone.utc) - timedelta(hours=1))
+
+    assert [r.key_id for r in records] == ["01HZKEYA"]
+
+
 async def test_v3_columns_round_trip(session_factory):
     await _seed_session(session_factory)
     repo = DecisionRepo(session_factory)
@@ -544,3 +555,44 @@ async def test_inspect_spans_and_redaction_roundtrip_through_postgres(session_fa
     ]
     assert (record.redacted, record.spans_rejected) == (1, 1)
     assert record.raw == "K=[gate: secret redacted]\n"
+
+
+# --- v3.2: key attribution and per-principal idempotency ---------------------
+
+
+async def test_two_principals_may_share_one_idempotency_key(session_factory):
+    await _seed_session(session_factory)
+    repo = DecisionRepo(session_factory)
+
+    first = replace(rec(), idempotency_key="same", key_id="01HZKEYA")
+    second = replace(rec(), idempotency_key="same", key_id="01HZKEYB")
+
+    assert await repo.insert(first) is True
+    assert await repo.insert(second) is True
+
+
+async def test_one_principal_may_not_use_one_idempotency_key_twice(session_factory):
+    await _seed_session(session_factory)
+    repo = DecisionRepo(session_factory)
+
+    assert await repo.insert(replace(rec(), idempotency_key="same", key_id="01HZKEYA")) is True
+    assert await repo.insert(replace(rec(), idempotency_key="same", key_id="01HZKEYA")) is False
+
+
+async def test_the_static_token_is_one_principal_too(session_factory):
+    await _seed_session(session_factory)
+    repo = DecisionRepo(session_factory)
+
+    assert await repo.insert(replace(rec(), idempotency_key="same", key_id=None)) is True
+    assert await repo.insert(replace(rec(), idempotency_key="same", key_id=None)) is False
+
+
+async def test_list_filters_by_key_id(session_factory):
+    await _seed_session(session_factory)
+    repo = DecisionRepo(session_factory)
+    await repo.insert(replace(rec(), key_id="01HZKEYA"))
+    await repo.insert(replace(rec(), key_id="01HZKEYB"))
+
+    rows = await repo.list(session_id=None, model=None, limit=100, before=None, key_id="01HZKEYA")
+
+    assert [r.key_id for r in rows] == ["01HZKEYA"]

@@ -434,3 +434,27 @@ def test_inspect_response_defaults_spans_and_redacted():
     assert r.spans == []
     assert r.redacted == 0
     assert r.model_dump()["spans"] == []
+
+
+def test_network_method_is_uppercased():
+    request = DecideRequest.model_validate(
+        {"harness": "t", "tool": "network", "args": {"cwd": "/w", "domains": ["github.com"], "method": "get"},
+         "user_request": "x"}
+    )
+
+    assert request.args.method == "GET"
+
+
+def test_an_unknown_method_is_refused():
+    with pytest.raises(ValidationError):
+        DecideRequest.model_validate(
+            {"harness": "t", "tool": "network", "args": {"cwd": "/w", "method": "TRACE"}, "user_request": "x"}
+        )
+
+
+def test_method_defaults_to_none():
+    request = DecideRequest.model_validate(
+        {"harness": "t", "tool": "network", "args": {"cwd": "/w"}, "user_request": "x"}
+    )
+
+    assert request.args.method is None

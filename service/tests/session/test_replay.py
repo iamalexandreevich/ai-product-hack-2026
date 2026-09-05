@@ -77,20 +77,45 @@ async def test_restore_loads_keyed_rows_with_their_remaining_ttl():
     records = FakeReplayRecords([record("fresh", age_seconds=100), record("stale", age_seconds=90000)])
     store = PersistentReplayStore(inner, records, ttl_seconds=86400)
     await store.restore()
-    assert await store.get("fresh") is not None
-    assert await store.get("stale") is None
+    assert await store.get("token:fresh") is not None
+    assert await store.get("token:stale") is None
     assert records.cutoffs and records.cutoffs[0] < datetime.now(timezone.utc)
     clock.advance(86400 - 100 + 1)
-    assert await store.get("fresh") is None
+    assert await store.get("token:fresh") is None
 
 
 async def test_restore_keeps_the_identity_the_row_was_decided_for():
     stored = record("fresh", age_seconds=100)
     store = PersistentReplayStore(InMemoryReplayStore(), FakeReplayRecords([stored]), ttl_seconds=86400)
     await store.restore()
-    restored = await store.get("fresh")
+    restored = await store.get("token:fresh")
     assert restored.request_digest == decide_request("ls -la").identity_digest()
     assert restored.request_digest == stored.request_digest
+
+
+def keyed_record(key: str = "k", key_id: str | None = None):
+    return decision(
+        id="01J000", idempotency_key=key, key_id=key_id, ts=datetime.now(timezone.utc)
+    ).to_record()
+
+
+async def test_restore_puts_an_entry_under_its_principals_key():
+    inner = InMemoryReplayStore()
+    store = PersistentReplayStore(inner, FakeReplayRecords([keyed_record("k", "01HZKEYA")]), 3600)
+
+    await store.restore()
+
+    assert await inner.get("01HZKEYA:k") is not None
+    assert await inner.get("k") is None
+
+
+async def test_restore_namespaces_a_static_token_entry_too():
+    inner = InMemoryReplayStore()
+    store = PersistentReplayStore(inner, FakeReplayRecords([keyed_record("k", None)]), 3600)
+
+    await store.restore()
+
+    assert await inner.get("token:k") is not None
 
 
 async def test_restore_failure_starts_empty_and_warns(caplog):
@@ -117,7 +142,7 @@ async def test_restore_skips_one_unprojectable_record_without_failing_the_others
     )
     with caplog.at_level(logging.WARNING):
         await store.restore()
-    assert await store.get("before") is not None
-    assert await store.get("after") is not None
-    assert await store.get("bad") is None
+    assert await store.get("token:before") is not None
+    assert await store.get("token:after") is not None
+    assert await store.get("token:bad") is None
     assert bad.id in caplog.text

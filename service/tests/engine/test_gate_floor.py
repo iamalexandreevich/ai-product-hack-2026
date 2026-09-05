@@ -231,3 +231,28 @@ async def test_operator_mcp_ask_floor_beats_the_operators_own_mcp_allow():
     assert decision.verdict.rule_id == "profile.mcp-ask"
     assert decision.to_response().model is None
     assert classifier.calls == 0
+
+
+def network_request(**overrides):
+    data = dict(tool="network", args={"cwd": "/home/u/repo", "domains": ["github.com"], "method": "GET"})
+    data.update(overrides)
+    return decide_request("", **data)
+
+
+async def test_a_client_deny_outranks_an_otherwise_trusted_domain():
+    """The reviewer's HTTP scenario: `trusted_allows` on, a GET to a domain
+    the profile declares, and `rules.deny: ["*"]` -- the user's own denial
+    must win over `profile.domain-trusted`'s allow, per root CLAUDE.md's
+    "клиентские правила поднимают пол... `client.deny` строже любого
+    запрета сервиса".
+    """
+    classifier = FakeClassifier()
+    trusting_gate = gate(
+        classifier,
+        network={"mode": "allowlist", "allowed_domains": ["github.com"], "trusted_allows": True},
+    )
+    decision = await trusting_gate.decide(network_request(rules=rules(**dict(version=1, level="custom", allow=[], ask=[], deny=["*"]))))
+    assert decision.verdict.decision is DecisionKind.deny
+    assert decision.verdict.rule_id == "client.deny"
+    assert decision.verdict.stage == 1
+    assert classifier.calls == 0

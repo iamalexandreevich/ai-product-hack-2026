@@ -5,11 +5,12 @@ Postgres only (asyncpg driver, JSONB columns). No SQLite fallback.
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, text
+from sqlalchemy import Boolean, Computed, DateTime, ForeignKey, Index, Integer, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from agentgate.api.schemas import IDEMPOTENCY_KEY_MAX_CHARS, PROTOCOL
+from agentgate.domain.principal import STATIC_PRINCIPAL
 
 
 class Base(DeclarativeBase):
@@ -73,6 +74,15 @@ class DecisionRow(Base):
     spans: Mapped[list] = mapped_column(JSONB, default=list)
     redacted: Mapped[int] = mapped_column(Integer, default=0)
     spans_rejected: Mapped[int] = mapped_column(Integer, default=0)
+    key_id: Mapped[str | None] = mapped_column(String(26), nullable=True)
+    # Generated, not written: the replay uniqueness key must have no NULLs
+    # (in Postgres NULL <> NULL, so a unique index over a nullable key_id
+    # would let every static-token caller reuse one idempotency key), and a
+    # generated column cannot drift from key_id the way a second writable
+    # column could.
+    principal: Mapped[str] = mapped_column(
+        String(26), Computed(f"coalesce(key_id, '{STATIC_PRINCIPAL}')", persisted=True)
+    )
 
     __table_args__ = (
         Index("ix_decisions_session_ts", "session_id", "ts"),
@@ -80,12 +90,13 @@ class DecisionRow(Base):
         Index("ix_decisions_decision_ts", "decision", "ts"),
         Index("ix_decisions_harness_ts", "harness", "ts"),
         Index("ix_decisions_metadata", "metadata", postgresql_using="gin"),
-        Index(
-            "ux_decisions_idempotency_key", "idempotency_key", unique=True,
-            postgresql_where=text("idempotency_key IS NOT NULL"),
-        ),
         Index("ix_decisions_kind_id", "kind", "id"),
         Index("ix_decisions_call_id", "call_id"),
+        Index("ix_decisions_key_id_id", "key_id", "id"),
+        Index(
+            "ux_decisions_principal_idempotency_key", "principal", "idempotency_key", unique=True,
+            postgresql_where=text("idempotency_key IS NOT NULL"),
+        ),
     )
 
 
@@ -107,11 +118,8 @@ class ApiKeyRow(Base):
     used by the CLI (``keys list`` / ``keys revoke``, see ``agentgate/cli.py``)
     and for revocation -- it never encodes or derives from the key itself.
 
-    NOTE: the spec also calls for ``key_id`` flowing into ``DecisionRow`` and
-    the JSONL log so a decision can be attributed to the key that made it.
-    That wiring does not exist yet -- only ``last_used_at`` on this row is
-    updated (best-effort, after the response, see ``agentgate/api/deps.py``).
-    Per-decision key attribution remains a roadmap item.
+    ``id`` is what a decision row stores in its ``key_id`` column, so a
+    decision can be attributed to the key that asked for it.
     """
 
     __tablename__ = "api_keys"

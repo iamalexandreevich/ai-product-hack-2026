@@ -35,6 +35,19 @@
           ],
           "default": null,
           "description": "Server, tool and arguments of an MCP call. Used for `tool: mcp_call`."
+        },
+        "method": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "HTTP method of a `network` action, uppercase: GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS. Optional — omitted means unknown, and unknown never earns a positive verdict. Ignored for tools other than `network`.",
+          "title": "Method"
         }
       },
       "required": [

@@ -200,3 +200,42 @@ async def test_db_error_does_not_poison_the_cache_as_a_permanent_pass():
     repo.raise_on_call = False
     repo.by_hash[hash_key(plaintext)] = _valid_record()
     await _authenticate(require_token, f"Bearer {plaintext}")  # recovers once the store is healthy again
+
+
+# --- what the dependency returns: the key_id the call is attributed to ------
+
+
+async def test_require_token_returns_the_key_id_of_a_valid_key():
+    plaintext = "agk_" + "a" * 20
+    repo = FakeKeyRepo(by_hash={hash_key(plaintext): _valid_record("key-7")})
+    require_token = make_require_token(_settings(token="secret"), key_repo=repo)
+
+    key_id = await require_token(background=BackgroundTasks(), authorization=f"Bearer {plaintext}")
+
+    assert key_id == "key-7"
+
+
+async def test_require_token_returns_none_for_the_static_token():
+    require_token = make_require_token(_settings(token="secret"), key_repo=FakeKeyRepo())
+
+    result = await require_token(background=BackgroundTasks(), authorization="Bearer secret")
+
+    assert result is None
+
+
+async def test_require_token_returns_none_when_no_token_is_configured():
+    require_token = make_require_token(_settings(token=None))
+
+    result = await require_token(background=BackgroundTasks(), authorization=None)
+
+    assert result is None
+
+
+async def test_the_static_token_wins_over_a_key_with_the_same_bearer():
+    # Losing the attribution is safer than attributing to the wrong holder.
+    repo = FakeKeyRepo(by_hash={hash_key("secret"): _valid_record("key-7")})
+    require_token = make_require_token(_settings(token="secret"), key_repo=repo)
+
+    result = await require_token(background=BackgroundTasks(), authorization="Bearer secret")
+
+    assert result is None

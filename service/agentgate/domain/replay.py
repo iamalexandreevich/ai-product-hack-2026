@@ -9,6 +9,13 @@ by the caller and shared across sessions, so a colliding key from another
 agent would otherwise be handed someone else's verdict -- and with it a
 bypass of stage 1. `Replay` therefore stores the request identity beside
 the answer, and the API honours an entry only when the identity matches.
+
+The key alone was not enough for a second reason too: it is global to the
+service. Two integrators may pick the same string, so the entry is stored
+under `ReplayKey` -- the key namespaced by the principal that supplied it
+(the issued key's id, or "token" for the static one) -- and `answers`
+checks the principal again, so a store that flattened the namespace still
+could not hand one caller another's verdict.
 """
 
 from dataclasses import dataclass
@@ -16,6 +23,28 @@ from typing import Protocol
 
 from agentgate.api.schemas import DecideRequest, DecideResponse, InspectRequest, InspectResponse
 from agentgate.engine.decision import DecisionRecord
+
+from agentgate.domain.principal import STATIC_PRINCIPAL, principal_of  # noqa: F401  (re-exported)
+
+
+@dataclass(frozen=True)
+class ReplayKey:
+    """The caller-supplied key, namespaced by whoever supplied it.
+
+    The key is chosen by the caller and was global to the service until
+    this type existed: two integrators picking the same string shared one
+    entry, and one of them lost the audit row to the other's unique index.
+    """
+
+    principal: str
+    key: str
+
+    @classmethod
+    def of(cls, key_id: str | None, key: str) -> "ReplayKey":
+        return cls(principal_of(key_id), key)
+
+    def storage_key(self) -> str:
+        return f"{self.principal}:{self.key}"
 
 
 @dataclass(frozen=True)
@@ -39,14 +68,18 @@ class Replay:
 
     request_digest: str
     response: DecideResponse | InspectResponse
+    principal: str
 
     @classmethod
     def of(cls, record: DecisionRecord) -> "Replay":
         response = record.to_inspect_response() if record.kind == "inspect" else record.to_response()
-        return cls(request_digest=record.request_digest, response=response)
+        return cls(
+            request_digest=record.request_digest, response=response,
+            principal=principal_of(record.key_id),
+        )
 
-    def answers(self, request: DecideRequest | InspectRequest) -> bool:
-        return self.request_digest == request.identity_digest()
+    def answers(self, request: DecideRequest | InspectRequest, principal: str) -> bool:
+        return self.principal == principal and self.request_digest == request.identity_digest()
 
 
 class ReplayStore(Protocol):

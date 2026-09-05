@@ -76,3 +76,15 @@ def test_a_cache_hit_keeps_spans_redaction_and_redacted_text_but_not_rejections(
     assert hit.redacted == 1
     assert hit.redacted_output == "r"
     assert hit.spans_rejected == 0
+
+
+def test_an_inspection_carries_its_key_id_into_the_record():
+    assert inspection(key_id="01HZKEY").to_record().key_id == "01HZKEY"
+
+
+def test_a_cache_hit_does_not_inherit_the_key_id_of_the_call_that_filled_it():
+    hit = inspection(key_id="01HZKEY").as_cached(
+        "01HZNEW", inspect_request(), Latency(total_ms=1), "/w"
+    )
+
+    assert hit.key_id is None

@@ -35,12 +35,13 @@ class FakeDecisionRepo:
     async def insert(self, decision):
         self.rows.append(decision)
 
-    async def list(self, session_id, model, limit, before, kind=None):
+    async def list(self, session_id, model, limit, before, kind=None, key_id=None):
         rows = [
             r for r in self.rows
             if (session_id is None or r.request.session_id == session_id)
             and (model is None or r.verdict.model == model)
             and (kind is None or r.to_record().kind == kind)
+            and (key_id is None or r.to_record().key_id == key_id)
         ]
         rows = sorted(rows, key=lambda r: r.id, reverse=True)
         if before:
@@ -136,6 +137,16 @@ async def test_invalid_body_is_ask_200(tmp_path):
     r = await call(app, "POST", "/v1/decide", content=b"not json", headers={"content-type": "application/json"})
     assert r.status_code == 200 and r.json()["decision"] == "ask"
     assert r.json()["rule_id"] == "api.invalid-request"
+
+
+async def test_an_unknown_network_method_is_ask_200_invalid_request(tmp_path):
+    app, _, _, _ = build(tmp_path)
+    r = await call(
+        app, "POST", "/v1/decide",
+        json=body(tool="network", raw="curl https://github.com", args={"cwd": WORKSPACE, "method": "TRACE"}),
+    )
+    assert r.status_code == 200
+    assert (r.json()["decision"], r.json()["stage"], r.json()["rule_id"]) == ("ask", 0, "api.invalid-request")
 
 
 async def test_decide_raises_is_ask_200_internal_error(tmp_path):
@@ -531,7 +542,7 @@ async def test_a_replay_store_given_to_the_app_is_the_one_used(tmp_path):
     replay = InMemoryReplayStore()
     app, _, _, _ = build(tmp_path, replay=replay)
     await call(app, "POST", "/v1/decide", json=body(), headers={"idempotency-key": "seen"})
-    assert (await replay.get("seen")) is not None
+    assert (await replay.get("token:seen")) is not None
 
 
 async def test_a_colliding_key_from_another_session_never_replays_and_hard_deny_still_wins(tmp_path):
@@ -685,3 +696,99 @@ async def test_feed_filters_by_kind(tmp_path):
     await call(app, "POST", "/v1/inspect", json=inspect_body())
     items = (await call(app, "GET", "/v1/decisions?kind=inspect")).json()["items"]
     assert [i["kind"] for i in items] == ["inspect"]
+
+
+async def test_the_feed_filters_by_key_id(tmp_path):
+    from agentgate.store.keys import hash_key
+
+    plaintext = "agk_" + "d" * 43
+    app, _, _, _ = build(tmp_path, token="secret", key_repo=FakeKeyRepo({hash_key(plaintext): "key-9"}))
+    await call(app, "POST", "/v1/decide", json=body(), headers={"authorization": f"Bearer {plaintext}"})
+    await call(app, "POST", "/v1/decide", json=body(), headers={"authorization": "Bearer secret"})
+
+    page = await call(app, "GET", "/v1/decisions?key_id=key-9", headers={"authorization": "Bearer secret"})
+
+    assert [i["key_id"] for i in page.json()["items"]] == ["key-9"]
+
+
+async def test_an_empty_key_id_query_param_means_no_filter(tmp_path):
+    from agentgate.store.keys import hash_key
+
+    plaintext = "agk_" + "d" * 43
+    app, _, _, _ = build(tmp_path, token="secret", key_repo=FakeKeyRepo({hash_key(plaintext): "key-9"}))
+    await call(app, "POST", "/v1/decide", json=body(), headers={"authorization": f"Bearer {plaintext}"})
+    await call(app, "POST", "/v1/decide", json=body(), headers={"authorization": "Bearer secret"})
+
+    page = await call(app, "GET", "/v1/decisions?key_id=", headers={"authorization": "Bearer secret"})
+
+    assert len(page.json()["items"]) == 2
+
+
+# --- key_id attribution -----------------------------------------------------
+
+
+async def test_a_decision_made_with_a_key_records_the_key_id(tmp_path):
+    from agentgate.store.keys import hash_key
+
+    plaintext = "agk_" + "b" * 43
+    app, drepo, _, _ = build(tmp_path, token="secret", key_repo=FakeKeyRepo({hash_key(plaintext): "key-9"}))
+
+    response = await call(app, "POST", "/v1/decide", json=body(),
+                          headers={"authorization": f"Bearer {plaintext}"})
+
+    assert response.status_code == 200
+    assert "key_id" not in response.json()
+    assert drepo.rows[-1].to_record().key_id == "key-9"
+    logged = json.loads((tmp_path / "d.jsonl").read_text().splitlines()[-1])
+    assert logged["key_id"] == "key-9"
+
+
+async def test_a_decision_made_with_the_static_token_records_no_key_id(tmp_path):
+    app, drepo, _, _ = build(tmp_path, token="secret")
+
+    await call(app, "POST", "/v1/decide", json=body(), headers={"authorization": "Bearer secret"})
+
+    assert drepo.rows[-1].to_record().key_id is None
+
+
+async def test_an_inspect_verdict_records_the_key_id_too(tmp_path):
+    from agentgate.store.keys import hash_key
+
+    plaintext = "agk_" + "c" * 43
+    app, drepo, _, _ = build(tmp_path, token="secret", key_repo=FakeKeyRepo({hash_key(plaintext): "key-9"}))
+
+    await call(app, "POST", "/v1/inspect", json=inspect_body(),
+               headers={"authorization": f"Bearer {plaintext}"})
+
+    assert drepo.rows[-1].to_record().key_id == "key-9"
+
+
+# --- replay namespaced by principal ------------------------------------------
+
+
+async def test_a_repeat_under_another_key_is_decided_afresh(tmp_path):
+    from agentgate.store.keys import hash_key
+
+    first_plain, second_plain = "agk_" + "e" * 43, "agk_" + "f" * 43
+    keys = FakeKeyRepo({hash_key(first_plain): "key-A", hash_key(second_plain): "key-B"})
+    app, _, _, _ = build(tmp_path, token="secret", key_repo=keys)
+    headers_a = {"authorization": f"Bearer {first_plain}", "idempotency-key": "shared"}
+    headers_b = {"authorization": f"Bearer {second_plain}", "idempotency-key": "shared"}
+
+    first = await call(app, "POST", "/v1/decide", json=body(), headers=headers_a)
+    second = await call(app, "POST", "/v1/decide", json=body(), headers=headers_b)
+
+    assert first.json()["decision_id"] != second.json()["decision_id"]
+
+
+async def test_a_repeat_under_the_same_key_is_still_replayed(tmp_path):
+    from agentgate.store.keys import hash_key
+
+    plaintext = "agk_" + "g" * 43
+    app, _, _, _ = build(tmp_path, token="secret", key_repo=FakeKeyRepo({hash_key(plaintext): "key-A"}))
+    headers = {"authorization": f"Bearer {plaintext}", "idempotency-key": "shared"}
+
+    first = await call(app, "POST", "/v1/decide", json=body(), headers=headers)
+    second = await call(app, "POST", "/v1/decide", json=body(), headers=headers)
+
+    assert first.json()["decision_id"] == second.json()["decision_id"]
