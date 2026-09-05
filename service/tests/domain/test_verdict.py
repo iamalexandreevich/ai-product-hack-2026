@@ -57,3 +57,32 @@ def test_escalated_reason_names_the_hit_count():
 
 def test_escalated_keeps_the_stage_of_the_verdict_it_replaces():
     assert Verdict.deny("profile.path", "x", stage=1).escalated(2).stage == 1
+
+
+def test_a_verdict_is_not_a_floor_by_default():
+    assert Verdict.allow("allowlist.readonly").floor is False
+    assert Verdict.ask("client.ask", "confirm").floor is False
+
+
+def test_ask_can_be_built_as_a_floor():
+    verdict = Verdict.ask("client.ask", "confirm", floor=True)
+    assert verdict.floor is True and verdict.decision is DecisionKind.ask and verdict.stage == 1
+
+
+def test_strictness_orders_allow_below_ask_below_deny():
+    allow = Verdict.allow("allowlist.readonly")
+    ask = Verdict.ask("client.ask", "confirm")
+    deny = Verdict.deny("client.deny", "no")
+    assert allow.strictness < ask.strictness < deny.strictness
+
+
+def test_an_ordinary_verdict_is_escalatable():
+    assert Verdict.deny("profile.path", "outside").escalatable is True
+
+
+def test_a_hard_verdict_is_not_escalatable():
+    assert Verdict.deny("hard-deny.pipe-exec", "no", hard=True).escalatable is False
+
+
+def test_the_users_own_denial_is_not_escalatable():
+    assert Verdict.deny("client.deny", "blocked by your rules").escalatable is False
