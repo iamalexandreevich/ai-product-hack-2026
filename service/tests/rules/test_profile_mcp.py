@@ -51,6 +51,19 @@ def test_ask_wins_over_allow_when_both_match():
     assert _evaluate("github", "get_issue", policy).rule_id == "profile.mcp-ask"
 
 
+def test_the_operators_mcp_ask_is_a_floor():
+    # Spec principle (v3.1): an ask never lowers the ceiling. The operator's
+    # own mcp.ask must not settle the chain before stage 2 -- it has to be
+    # carried as a floor, exactly like the user's client.ask.
+    verdict = REFUSE.evaluate(mcp_action("github", "create_pr"), POLICY)
+    assert verdict.rule_id == "profile.mcp-ask" and verdict.floor is True
+
+
+def test_the_operators_mcp_deny_is_not_a_floor():
+    verdict = REFUSE.evaluate(mcp_action("github", "delete_repo"), POLICY)
+    assert verdict.rule_id == "profile.mcp-deny" and verdict.floor is False
+
+
 @pytest.mark.parametrize(
     ("server", "tool"),
     [

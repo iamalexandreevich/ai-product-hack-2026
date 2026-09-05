@@ -251,8 +251,12 @@ def test_an_operator_denial_of_an_mcp_call_beats_a_users_ask():
 
 
 def test_an_operator_allow_of_an_mcp_call_sits_above_the_readonly_convention():
+    # `mcp.ask` is a floor (v3.1 fix below): the readonly convention still
+    # fires and settles the chain, but the floor pulls the outcome back up
+    # to `ask` -- the operator's confirmation is never silently skipped.
     policy = mcp_policy(ask=["github.get_*"], readonly_prefixes_allow=True)
-    assert STAGE1.evaluate(mcp_action("github", "get_issue"), policy).rule_id == "profile.mcp-ask"
+    outcome = STAGE1.run(mcp_action("github", "get_issue"), policy)
+    assert outcome.settled().rule_id == "profile.mcp-ask"
 
 
 # --- blocking fix, spec v3.1 §3.3: `profile.mcp-allow` settles below the
@@ -278,9 +282,14 @@ def test_operator_mcp_deny_still_beats_everything_below_it():
 
 
 def test_operator_mcp_ask_still_beats_everything_below_it():
+    # Blocking fix, this round: `profile.mcp-ask` is a floor, not a settling
+    # verdict -- the operator's own `allow` fires and settles the chain, but
+    # `settled()` pulls the outcome back up to `ask`, exactly like the
+    # user's `client.ask` floor above.
     policy = mcp_policy(ask=["github.create_*"], allow=["github.*"])
     outcome = STAGE1.run(mcp_action("github", "create_pr"), policy)
-    assert outcome.verdict.rule_id == "profile.mcp-ask"
+    assert outcome.verdict is not None and outcome.verdict.rule_id == "profile.mcp-allow"
+    assert outcome.settled().rule_id == "profile.mcp-ask"
 
 
 def test_profile_mcp_runs_twice_at_its_two_documented_positions():

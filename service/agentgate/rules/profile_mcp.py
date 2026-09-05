@@ -6,9 +6,17 @@ sit at two different points of `STAGE1`, mirroring `ClientRulesRule`:
 `ProfileMcpRule("refuse")` checks `deny` then `ask`, right after the
 profile's other denials, so an operator's refusal cannot be softened by
 anything below it. `ProfileMcpRule("allow")` checks only `allow`, right
-before the server allowlist -- below the user's own `ask` floor, so an
-operator's `allow` on an MCP tool is settled as `ask` at stage 1 when the
-user asked to confirm it, exactly like every other allow in the chain.
+before the server allowlist -- below the operator's own `ask` floor, so
+an operator's `allow` on an MCP tool is settled as `ask` at stage 1 when
+the operator asked to confirm it, exactly like every other allow in the
+chain.
+
+The operator's `ask` is a floor (`Verdict.ask(..., floor=True)`), not a
+settling verdict: it must not silence a stage-2 `deny` on the same call,
+the same defect v3.1 fixed for the user's own `ask` (spec principle: an
+`ask` never lowers the ceiling). The operator's `deny` stays a settling
+verdict -- it already sits above every floor in the chain, so there is
+nothing below it left to protect.
 
 There is deliberately no hard-deny here. A name proves nothing:
 `filesystem.write_file` may be a sandbox, and `notes.append` may be a
@@ -51,7 +59,9 @@ class ProfileMcpRule:
                 "Ask the operator to extend the profile's mcp.allow if this was intended",
             )
         if _matches(name, mcp.ask):
-            return Verdict.ask("profile.mcp-ask", f"MCP tool {name} needs confirmation by the profile")
+            return Verdict.ask(
+                "profile.mcp-ask", f"MCP tool {name} needs confirmation by the profile", floor=True
+            )
         return None
 
     def _allow(self, name: str, policy: Policy) -> Verdict | None:

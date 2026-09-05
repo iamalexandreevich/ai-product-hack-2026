@@ -198,3 +198,36 @@ async def test_an_allow_cached_without_the_ask_rule_is_not_replayed_once_it_is_a
     assert second.cached is False
     assert second.verdict.decision is DecisionKind.ask
     assert second.verdict.rule_id == "client.ask"
+
+
+# --- the operator's own mcp.ask is a floor too, this round: it must not
+# silence a stage-2 deny on the same MCP call, and it must not let an
+# operator's own mcp.allow on the same tool slip past it either.
+
+
+def mcp_request(server: str = "notes-mcp", tool: str = "save_note", **overrides):
+    data = dict(tool="mcp_call", args={"cwd": "/home/u/repo", "mcp": {"server": server, "tool": tool, "arguments": {}}})
+    data.update(overrides)
+    return decide_request("", **data)
+
+
+async def test_operator_mcp_ask_floor_does_not_silence_a_stage2_deny():
+    classifier = FakeClassifier(stage2_verdict("D", "writes into a shared notebook"))
+    decision = await gate(classifier, mcp={"ask": ["notes-mcp.save_note"]}).decide(mcp_request())
+    assert decision.verdict.decision is DecisionKind.deny
+    assert decision.verdict.stage == 2
+    assert decision.verdict.rule_id != "profile.mcp-ask"
+    assert decision.verdict.reason == "writes into a shared notebook"
+    assert classifier.calls == 1
+
+
+async def test_operator_mcp_ask_floor_beats_the_operators_own_mcp_allow():
+    classifier = FakeClassifier()
+    decision = await gate(
+        classifier, mcp={"ask": ["notes-mcp.save_note"], "allow": ["notes-mcp.save_note"]}
+    ).decide(mcp_request())
+    assert decision.verdict.decision is DecisionKind.ask
+    assert decision.verdict.stage == 1
+    assert decision.verdict.rule_id == "profile.mcp-ask"
+    assert decision.to_response().model is None
+    assert classifier.calls == 0

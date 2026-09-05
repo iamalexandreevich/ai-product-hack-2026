@@ -105,7 +105,7 @@ Fail-closed здесь — `drop`, а не `ask`: спрашивать чело�
 **Новые значения `rule_id`:**
 
 - `profile.mcp-deny` — MCP-вызов запрещён `mcp.deny` профиля;
-- `profile.mcp-ask` — MCP-вызов требует подтверждения по `mcp.ask` профиля;
+- `profile.mcp-ask` — MCP-вызов требует подтверждения по `mcp.ask` профиля; это тоже **пол**, как `client.ask`: он не даёт исходу быть мягче `ask`, но не мешает ступени 2 ответить `deny` на тот же вызов;
 - `profile.mcp-allow` — MCP-вызов разрешён `mcp.allow` профиля (ступень 1, перед серверным allowlist);
 - `allowlist.mcp-readonly` — имя инструмента совпало с одним из read-only префиксов (`get_`/`list_`/`search_`/`read_`/`describe_`) при включённом `mcp.readonly_prefixes_allow`;
 - `profile.domain-trusted` — команда прошла все условия §5.2 спеки и разрешена как чтение с доверенного домена при `network.trusted_allows: true`.

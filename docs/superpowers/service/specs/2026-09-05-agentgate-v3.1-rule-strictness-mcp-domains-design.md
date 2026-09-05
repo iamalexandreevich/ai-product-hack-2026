@@ -119,6 +119,11 @@ outcome = STAGE1.evaluate(action, policy)
 | `profile.mcp-allow` | `client.ask` | то же: `allow` оператора не сильнее просьбы подтвердить | `ask` | 1 | `client.ask`, `model: null` |
 | `profile.domain-trusted` | `client.ask` | то же | `ask` | 1 | `client.ask`, `model: null` |
 | `allowlist.mcp-readonly` | `client.ask` | то же | `ask` | 1 | `client.ask`, `model: null` |
+| `profile.mcp-allow` | `profile.mcp-ask` | оператор просит подтвердить свой же `allow` на тот же инструмент | `ask` | 1 | `profile.mcp-ask`, `model: null` |
+| `allowlist.mcp-readonly` | `profile.mcp-ask` | то же, для read-only соглашения | `ask` | 1 | `profile.mcp-ask`, `model: null` |
+| нет вердикта | `profile.mcp-ask` | ступень 2 вызывается как обычно | по ступени 2 | 2 | от классификатора |
+| ступень 2 → `deny` | `profile.mcp-ask` | `deny` строже пола и побеждает — находка бенчмарка (`MCP_004`), закрытая этой правкой | `deny` | 2 | свой (классификатора) |
+| ступень 2 → `ask`/`allow` | `profile.mcp-ask` | пол ведёт себя как `client.ask` в строках выше | `ask` | 2 | `profile.mcp-ask` |
 | нет вердикта | нет | как сегодня | по ступени 2 | 2 | от классификатора |
 | ступень 2 → `deny` | `client.ask` | `deny` строже пола и побеждает | `deny` | 2 | свой (классификатора) |
 | ступень 2 → `ask` | `client.ask` | совпадает с полом; авторство пола важнее для отладки | `ask` | 2 | `client.ask` |
@@ -176,12 +181,16 @@ mcp:
 
 Новый класс `ProfileMcpRule` в `rules/profile_mcp.py`, `id = "profile.mcp"`, `hard = False`. Возвращает:
 
-- `deny`, `rule_id: profile.mcp-deny` — совпал `deny`-шаблон профиля;
-- `ask`, `rule_id: profile.mcp-ask` — совпал `ask`-шаблон;
+- `deny`, `rule_id: profile.mcp-deny` — совпал `deny`-шаблон профиля, обычный settling-вердикт;
+- `ask`, `rule_id: profile.mcp-ask` — совпал `ask`-шаблон, возвращается как пол (`Verdict.ask(..., floor=True)`), не как settling-вердикт;
 - `allow`, `rule_id: profile.mcp-allow` — совпал `allow`-шаблон;
 - `None` — не совпало ничего, действие идёт на ступень 2, как сегодня.
 
-`ProfileMcpRule` встаёт в `STAGE1` двумя экземплярами, зеркально `ClientRulesRule`. `ProfileMcpRule("refuse")` — **рядом с `ProfileDomainRule`, сразу после него**: это запрет оператора того же класса, что путевой и доменный, и он должен стоять до `ClientRulesRule("ask")`, чтобы `deny` профиля не смягчался полом. `ProfileMcpRule("allow")` — **сразу после `ClientRulesRule("allow")` и до `AllowlistRule`**, то есть ниже пола, а не рядом с `refuse`: `allow` выше позиции пола осел бы в цепочке раньше, чем пол успел бы зафиксироваться, поэтому `profile.mcp-allow`, как и серверный allowlist, оказывается ниже пола, и `ask` пользователя превращает его в `ask` на ступени 1 — без вызова модели. Так и задумано: `allow` оператора и серверный allowlist — обещание одного рода («это действие безопасно»), а просьба пользователя подтвердить сильнее любого такого обещания, но никогда не сильнее запрета — ни оператора, ни сервиса. Технически: `ProfileMcpRule` возвращает `allow` как обычный вердикт, а пол (§3.2, правило 1) заменяет любой `allow` ступени 1 на `ask` ступени 1, не только allowlist'овый.
+`ProfileMcpRule` встаёт в `STAGE1` двумя экземплярами, зеркально `ClientRulesRule`. `ProfileMcpRule("refuse")` — **рядом с `ProfileDomainRule`, сразу после него**: это запрет оператора того же класса, что путевой и доменный, и он должен стоять до `ClientRulesRule("ask")`. `deny` профиля здесь settling и не смягчается полом — он уже строже любого пола в цепочке. `ask` профиля — сам пол: находка бенчмарка (кейс `MCP_004`, `mcp.ask: ["notes-mcp.save_note"]`) показала, что до этой правки `ask`-шаблон оператора settling-вердиктом обгонял ступень 2 и превращал её `deny` в `ask` — тот же дефект, который v3.1 уже закрыла для `client.ask` (принцип: `ask` никогда не понижает потолок). Правка симметрична: `ProfileMcpRule("refuse")._refuse` возвращает `ask` с `floor=True`, `RuleChain.run` фиксирует его как пол и продолжает цепочку, а `ChainOutcome.settled()` поднимает более мягкий исход (ступени 1 или 2) до этого пола, но не трогает исход строже.
+
+`ProfileMcpRule("allow")` — **сразу после `ClientRulesRule("allow")` и до `AllowlistRule`**, то есть ниже пола, а не рядом с `refuse`: `allow` выше позиции пола осел бы в цепочке раньше, чем пол успел бы зафиксироваться, поэтому `profile.mcp-allow`, как и серверный allowlist, оказывается ниже пола, и `ask` пользователя (или теперь — оператора) превращает его в `ask` на ступени 1 — без вызова модели. Так и задумано: `allow` оператора и серверный allowlist — обещание одного рода («это действие безопасно»), а просьба подтвердить сильнее любого такого обещания, но никогда не сильнее запрета — ни оператора, ни сервиса. Технически: `ProfileMcpRule("allow")` возвращает `allow` как обычный вердикт, а пол (§3.2, правило 1) заменяет любой `allow` ступени 1 на `ask` ступени 1, не только allowlist'овый — это верно и для пола `client.ask`, и для пола `profile.mcp-ask`.
+
+**Ограничение, не меняется этой правкой.** `profile.domain` в режиме `network.mode: ask` остаётся settling-вердиктом, а не полом (см. §3.3, критерий 6, дальше в спеке) — поведение до v3.1, сознательно не тронуто.
 
 ### 4.4. `allowlist.mcp-readonly`
 
