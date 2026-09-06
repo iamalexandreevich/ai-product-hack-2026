@@ -12,6 +12,9 @@ const DICT = {
     rTag: 'policy', rTitle: 'What the gate stops by default.', rSub: 'Click a pattern or type your own command. The demo runs offline.',
     gDestructive: 'Destructive', gExfil: 'Exfiltration', gScope: 'Scope', gIrrev: 'Irreversible',
     placeholder: 'try a command…', idle: 'The verdict appears here.', unknown: 'This offline demo knows ~30 commands. The real gate evaluates anything.', tryThese: 'Try',
+    gTag: 'context', gTitle: 'Not just the command. What the agent reads, too.', gSub: 'Every tool result passes through the gate before it reaches the model context.',
+    gInjTag: 'injections', gInjTitle: 'Prompt-injection masking', gInjText: 'Instructions hidden in files, web pages and command output are cut out line by line. The model sees the data, not someone else\'s orders.', gInjMasked: '[masked · 3 lines]',
+    gSecTag: 'secrets', gSecTitle: 'Secret redaction', gSecText: 'Tokens, keys and passwords are hidden before the model sees them. The variable name stays, the value does not. Not in context, not in logs.',
     hTag: 'harnesses', hStrip: 'Supported harnesses', hTitle: 'Built for the tools you already use.', hSub: 'One command. No hook paths, no config to edit.',
     fLicense: 'MIT License', fTeam: 'Built by the AgentGate team', fYear: '2026' },
   ru: { github: 'GitHub', theme: 'Переключить тему', lang: 'Переключить язык',
@@ -24,6 +27,9 @@ const DICT = {
     rTag: 'политика', rTitle: 'Что гейт останавливает по умолчанию.', rSub: 'Нажмите на паттерн или введите свою команду. Демо работает офлайн.',
     gDestructive: 'Разрушительные', gExfil: 'Утечка данных', gScope: 'Выход за область', gIrrev: 'Необратимые',
     placeholder: 'попробуйте команду…', idle: 'Здесь появится вердикт.', unknown: 'Это офлайн-демо знает ~30 команд. Настоящий гейт оценивает любую.', tryThese: 'Попробуйте',
+    gTag: 'контекст', gTitle: 'Проверяется не только команда. Проверяется и то, что читает агент.', gSub: 'Результат каждого инструмента проходит через гейт до того, как попадёт в контекст модели.',
+    gInjTag: 'инъекции', gInjTitle: 'Маскирование промпт-инъекций', gInjText: 'Инструкции, спрятанные в файлах, страницах и выводе команд, вырезаются построчно. Модель видит данные, но не чужие приказы.', gInjMasked: '[masked · 3 lines]',
+    gSecTag: 'секреты', gSecTitle: 'Редакция секретов', gSecText: 'Токены, ключи и пароли скрываются до того, как модель их увидит. Имя переменной остаётся, значение — нет. Ни в контексте, ни в логах.',
     hTag: 'харнессы', hStrip: 'Поддерживаемые харнессы', hTitle: 'Разработали для привычных вам инструментов.', hSub: 'Одна команда. Никаких путей к хукам и правок конфигов.',
     fLicense: 'Лицензия MIT', fTeam: 'Сделано командой AgentGate', fYear: '2026' }
 };

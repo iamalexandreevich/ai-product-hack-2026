@@ -98,10 +98,40 @@
   </div>
 </section>
 
+<section class="section guard" id="guard">
+  <div class="section__inner guard__inner" data-appear>
+    <div class="section-head">
+      <span class="section-tag">04 — <span data-i18n="gTag">контекст</span></span>
+      <h2 class="section-title" data-i18n="gTitle">Проверяется не только команда. Проверяется и то, что читает агент.</h2>
+      <p class="section-sub section-sub--wide" data-i18n="gSub">Результат каждого инструмента проходит через гейт до того, как попадёт в контекст модели.</p>
+    </div>
+    <div class="guard__grid">
+      <article class="guard__card">
+        <span class="guard__kicker"><span class="kanji">遮断</span> <span data-i18n="gInjTag">инъекции</span></span>
+        <h3 class="guard__title" data-i18n="gInjTitle">Маскирование промпт-инъекций</h3>
+        <p class="guard__text" data-i18n="gInjText">Инструкции, спрятанные в файлах, страницах и выводе команд, вырезаются построчно. Модель видит данные, но не чужие приказы.</p>
+        <pre class="guard__sample"><code><span class="guard__line">README.md · 42 lines</span>
+<span class="guard__line">## Install</span>
+<span class="guard__line guard__line--masked" data-i18n="gInjMasked">[masked · 3 lines]</span>
+<span class="guard__line">npm install</span></code></pre>
+      </article>
+      <article class="guard__card">
+        <span class="guard__kicker"><span class="kanji">秘匿</span> <span data-i18n="gSecTag">секреты</span></span>
+        <h3 class="guard__title" data-i18n="gSecTitle">Редакция секретов</h3>
+        <p class="guard__text" data-i18n="gSecText">Токены, ключи и пароли скрываются до того, как модель их увидит. Имя переменной остаётся, значение — нет. Ни в контексте, ни в логах.</p>
+        <pre class="guard__sample"><code><span class="guard__line">$ printenv | grep API</span>
+<span class="guard__line">OPENAI_API_KEY=<span class="guard__redact">[redacted]</span></span>
+<span class="guard__line">DB_PASSWORD=<span class="guard__redact">[redacted]</span></span>
+<span class="guard__line">API_TIMEOUT=30</span></code></pre>
+      </article>
+    </div>
+  </div>
+</section>
+
 <section class="section harnesses" id="harnesses">
   <div class="section__inner harnesses__inner" data-appear>
     <div class="section-head">
-      <span class="section-tag">04 — <span data-i18n="hTag">харнессы</span></span>
+      <span class="section-tag">05 — <span data-i18n="hTag">харнессы</span></span>
       <h2 class="section-title" data-i18n="hTitle">Разработали для привычных вам инструментов.</h2>
       <p class="section-sub section-sub--wide" data-i18n="hSub">Одна команда. Никаких путей к хукам и правок конфигов.</p>
     </div>
