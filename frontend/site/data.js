@@ -7,8 +7,6 @@ const DICT = {
     sub: 'A policy gate between open-source coding agents and your machine. Every tool call is checked before it runs.',
     note: 'Detects Pi, Codex, Kilo Code, OpenCode and DeepSeek Harness automatically.', copy: 'Copy install command', copied: 'Copied',
     termTag: 'session', termTitle: 'A deny is not a dead end.', termSub: 'The gate blocks one call. The agent picks a safer route and finishes the job.', termPath: '~/work/api',
-    mTag: 'benchmark', mTitle: 'Every number comes with its method.', mAsr: 'catch rate on dangerous actions', mFp: 'false blocks on safe work', mP95: 'decision latency', mFr: 'prompts per session',
-    mNote: 'Method, sample size and run date: ', mLink: 'benchmark/', mPending: 'no run yet, numbers appear after the first benchmark.',
     rTag: 'policy', rTitle: 'What the gate stops by default.', rSub: 'Click a pattern or type your own command. The demo runs offline.',
     gDestructive: 'Destructive', gExfil: 'Exfiltration', gScope: 'Scope', gIrrev: 'Irreversible',
     placeholder: 'try a command…', idle: 'The verdict appears here.', unknown: 'This offline demo knows ~30 commands. The real gate evaluates anything.', tryThese: 'Try',
@@ -22,8 +20,6 @@ const DICT = {
     sub: 'Шлюз политик между открытыми кодинг-агентами и вашей машиной. Каждый вызов инструмента проверяется до выполнения.',
     note: 'Pi, Codex, Kilo Code, OpenCode и DeepSeek Harness определяются автоматически.', copy: 'Скопировать команду установки', copied: 'Скопировано',
     termTag: 'сессия', termTitle: 'Отказ не ломает сессию.', termSub: 'Гейт блокирует один вызов. Агент выбирает безопасный путь и доводит задачу до конца.', termPath: '~/work/api',
-    mTag: 'бенчмарк', mTitle: 'Каждая цифра с методикой.', mAsr: 'доля пойманных опасных действий', mFp: 'ложных блокировок на безопасной работе', mP95: 'задержка решения', mFr: 'вопросов за сессию',
-    mNote: 'Методика, размер выборки и дата прогона: ', mLink: 'benchmark/', mPending: 'прогона ещё нет, цифры появятся после первого бенчмарка.',
     rTag: 'политика', rTitle: 'Что гейт останавливает по умолчанию.', rSub: 'Нажмите на паттерн или введите свою команду. Демо работает офлайн.',
     gDestructive: 'Разрушительные', gExfil: 'Утечка данных', gScope: 'Выход за область', gIrrev: 'Необратимые',
     placeholder: 'попробуйте команду…', idle: 'Здесь появится вердикт.', unknown: 'Это офлайн-демо знает ~30 команд. Настоящий гейт оценивает любую.', tryThese: 'Попробуйте',
@@ -76,7 +72,6 @@ const LINES = [
   { k: 'done', text: 'Done. Moved 12 files to .trash/ — nothing deleted.', th: 0.78 }
 ];
 
-const METRICS = [{ key: 'ASR', l: 'mAsr', value: null, fmt: v => v.toFixed(1) + '%' }, { key: 'FP', l: 'mFp', value: null, fmt: v => v.toFixed(1) + '%' }, { key: 'p95', l: 'mP95', value: null, fmt: v => Math.round(v) + 'ms' }, { key: 'Friction', l: 'mFr', value: null, fmt: v => v.toFixed(1) }];
 
 const HARNESSES = [
   { name: 'Pi', mono: 'PI', url: 'https://pi.dev', logo: './logos/pi.svg' },
@@ -87,4 +82,4 @@ const HARNESSES = [
 ];
 
 const KANJI = { allow: '承認', deny: '否定', ask: '審議中' }; const RUKEY = { allow: 'vAllow', deny: 'vDeny', ask: 'vAsk' };
-export { DICT, RULES, LINES, METRICS, HARNESSES, KANJI, RUKEY };
+export { DICT, RULES, LINES, HARNESSES, KANJI, RUKEY };

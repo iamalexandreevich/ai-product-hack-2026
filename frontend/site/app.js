@@ -2,7 +2,7 @@
 // copy buttons and the offline policy probe. Strings and rules come from
 // data.js, links and flags from config.js. No framework, no build step.
 
-import { DICT, RULES, LINES, METRICS, HARNESSES, KANJI, RUKEY } from './data.js';
+import { DICT, RULES, LINES, HARNESSES, KANJI, RUKEY } from './data.js';
 import { CONFIG } from './config.js';
 
 const GROUPS = [['destructive', 'gDestructive'], ['exfiltration', 'gExfil'], ['scope', 'gScope'], ['irreversible', 'gIrrev']];
@@ -36,7 +36,6 @@ function applyLang(lang) {
   $$('[data-i18n-aria]').forEach(el => { el.setAttribute('aria-label', dict[el.dataset.i18nAria]); });
   $$('[data-i18n-placeholder]').forEach(el => { el.placeholder = dict[el.dataset.i18nPlaceholder]; });
   renderTerminal();
-  renderMetrics();
   renderRules();
   renderProbe();
   renderHarnesses();
@@ -46,11 +45,10 @@ function applyLang(lang) {
 // --- static links from config -------------------------------------------
 
 function applyLinks() {
-  const urls = { github: CONFIG.githubUrl, benchmark: CONFIG.benchmarkUrl };
+  const urls = { github: CONFIG.githubUrl };
   $$('[data-link]').forEach(a => { a.href = urls[a.dataset.link]; });
   $$('[data-cmd]').forEach(el => { el.textContent = CONFIG.installCommand; });
   $$('[data-copy]').forEach(button => { button.hidden = !CONFIG.installCommand; });
-  $('#metrics').hidden = !CONFIG.showMetrics;
 }
 
 // --- copy buttons ---------------------------------------------------------
@@ -142,36 +140,6 @@ function initTerminal() {
   io.observe(wrap);
 }
 
-// --- metrics --------------------------------------------------------------
-
-let metricProgress = 1;
-
-function renderMetrics() {
-  const dict = t();
-  $('#metrics-grid').innerHTML = METRICS.map(m => {
-    const value = CONFIG.metricValues[m.key];
-    const display = value == null ? '——' : m.fmt(value * metricProgress);
-    return `<div class="metric"><div class="metric__key">${m.key}</div><div class="metric__value">${display}</div><div class="metric__label">${esc(dict[m.l])}</div></div>`;
-  }).join('');
-}
-
-function initMetricCountUp() {
-  const hasValues = METRICS.some(m => CONFIG.metricValues[m.key] != null);
-  if (!hasValues || reduced || !CONFIG.showMetrics) return;
-  metricProgress = 0; renderMetrics();
-  const io = new IntersectionObserver(entries => {
-    if (!entries[0].isIntersecting) return;
-    io.disconnect();
-    const start = performance.now();
-    const step = () => {
-      const x = Math.min(1, (performance.now() - start) / 600);
-      metricProgress = 1 - Math.pow(1 - x, 3); renderMetrics();
-      if (x < 1) requestAnimationFrame(step);
-    };
-    step();
-  }, { threshold: 0.3 });
-  io.observe($('#metrics'));
-}
 
 // --- policy rules and the offline probe ----------------------------------
 
@@ -262,5 +230,4 @@ initCopy();
 initAppear();
 initHeader();
 initTerminal();
-initMetricCountUp();
 initProbe();

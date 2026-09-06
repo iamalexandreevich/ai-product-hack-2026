@@ -6,10 +6,6 @@ export const CONFIG = {
   // copy buttons until the real command is decided.
   installCommand: 'curl -fsSL https://openmagi.ru/install.sh | sh',
   githubUrl: 'https://github.com/agentgate',
-  benchmarkUrl: 'https://github.com/agentgate/agentgate/tree/main/benchmark',
-  // Benchmark numbers by metric key (ASR, FP, p95, Friction). null = no run yet.
-  metricValues: { ASR: null, FP: null, p95: null, Friction: null },
-  showMetrics: true,
   title: {
     ru: 'OPENMAGI — шлюз политик для кодинг-агентов',
     en: 'OPENMAGI — a policy gate for coding agents',

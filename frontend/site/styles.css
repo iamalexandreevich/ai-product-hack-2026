@@ -89,8 +89,8 @@ html[data-lang="en"] .lang-toggle__en, html[data-lang="ru"] .lang-toggle__ru { c
 .cmd.is-copied .cmd__icon--check { display: block; }
 
 /* Sections */
-.section { padding: var(--section-gap) var(--pad-x) 0; }
-.section__inner { max-width: 1120px; margin: 0 auto; display: flex; flex-direction: column; gap: 48px; }
+.section { position: relative; padding: var(--section-gap) var(--pad-x) 0; }
+.section__inner { position: relative; max-width: 1120px; margin: 0 auto; display: flex; flex-direction: column; gap: 48px; }
 .section-head { display: flex; flex-direction: column; gap: 12px; text-align: center; }
 .section-tag { font-family: var(--font-display); font-weight: 900; font-size: clamp(20px, 2vw, 26px); letter-spacing: .04em; text-transform: uppercase; color: var(--lime); }
 .section-title { margin: 0; font-family: var(--font-display); font-size: clamp(32px, 4vw, 56px); font-weight: 900; text-transform: uppercase; line-height: .92; letter-spacing: .01em; }
@@ -132,14 +132,6 @@ html[data-lang="en"] .lang-toggle__en, html[data-lang="ru"] .lang-toggle__ru { c
 .gate__meta { font-size: 10px; }
 
 /* Metrics */
-.metrics__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr)); gap: clamp(12px, 2vw, 24px); }
-.metric { display: flex; flex-direction: column; gap: 8px; padding: 28px 24px; border: 1px solid var(--line); background: var(--panel); }
-.metric__key { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--text-2); }
-.metric__value { font-size: clamp(40px, 4.5vw, 64px); font-weight: 500; letter-spacing: -.03em; line-height: 1; color: var(--text); }
-.metric__label { font-size: 13px; line-height: 1.5; color: var(--text-2); }
-.metrics__note { margin: 0; font-size: 13px; line-height: 1.5; color: var(--text-2); text-align: center; }
-.metrics__link { color: var(--text); text-decoration: underline; text-underline-offset: 3px; }
-.metrics[hidden] { display: none; }
 
 /* Policy: rules + probe */
 .policy__box { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr)); background: var(--panel); border: 1px solid var(--line); overflow: clip; }
@@ -204,8 +196,8 @@ html[data-lang="en"] .lang-toggle__en, html[data-lang="ru"] .lang-toggle__ru { c
 .harness__name { font-size: 11px; letter-spacing: .2em; text-transform: uppercase; color: var(--text-3); }
 
 /* Footer */
-.footer { padding: var(--section-gap) var(--pad-x) 48px; }
-.footer__inner { max-width: 1120px; margin: 0 auto; display: flex; flex-direction: column; align-items: center; gap: 40px; }
+.footer { position: relative; padding: var(--section-gap) var(--pad-x) 48px; overflow: hidden; }
+.footer__inner { position: relative; max-width: 1120px; margin: 0 auto; display: flex; flex-direction: column; align-items: center; gap: 40px; }
 .footer__row { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 24px; font-size: 13px; color: var(--text-2); border-top: 1px solid var(--line); padding-top: 24px; width: 100%; }
 .footer__row a { color: var(--text-2); }
 .footer__row a:hover { color: var(--text); }
@@ -237,3 +229,17 @@ html[data-lang="en"] .lang-toggle__en, html[data-lang="ru"] .lang-toggle__ru { c
 .strip__name { font-family: var(--font-display); font-weight: 900; font-size: 26px; line-height: 1; letter-spacing: .02em; text-transform: uppercase; white-space: nowrap; }
 @keyframes strip-scroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
 @media (prefers-reduced-motion: reduce) { .strip__track { animation: none; } }
+
+/* Evangelion figures on the background: ghosts, not illustrations. Greyscale
+   keeps the two-color rule, the low opacity keeps them behind the text. */
+.deco {
+  position: absolute; top: 50%; height: min(72vh, 620px); width: auto;
+  transform: translateY(-50%); opacity: .09; filter: grayscale(1) contrast(1.15);
+  pointer-events: none; user-select: none; z-index: 0;
+}
+.deco--low { top: 62%; }
+.deco--l { left: clamp(-140px, -6vw, -40px); }
+.deco--r { right: clamp(-140px, -6vw, -40px); }
+.deco--hero-l { left: clamp(-80px, -1vw, 0px); height: min(80vh, 700px); }
+.deco--hero-r { right: clamp(-80px, -1vw, 0px); height: min(80vh, 700px); }
+@media (max-width: 1100px) { .deco { display: none; } }
