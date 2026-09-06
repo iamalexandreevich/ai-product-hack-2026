@@ -88,8 +88,17 @@ echo "→ building as $PREFIX version $VERSION (release mode)"
 # Release mode drops sourcemaps and stamps BUILD_KIND=release, but it also makes
 # the upstream script publish a GitHub release at the end; `gh` is stubbed above
 # so that step succeeds locally without touching anything remote.
+#
+# Release mode ends by publishing: it archives each built platform and then runs
+# `gh release upload ./dist/*.zip ./dist/*.tar.gz`. On macOS only the .zip is
+# ever created, so bun fails expanding the .tar.gz glob -- before `gh` is
+# reached, which is why stubbing `gh` does not help. The binary is finished by
+# then; only the upload is not. So the step is allowed to fail and the check
+# below decides: no binary means a real failure, a binary means we have what we
+# came for.
 env "${PREFIX}_VERSION=$VERSION" "${PREFIX}_RELEASE=true" \
-  bun run script/build.ts --single
+  bun run script/build.ts --single \
+  || echo "  (upstream publish step failed; looking for the binary it built)"
 
 BIN="$(find dist -type f -name "$HARNESS" -o -type f -name "${HARNESS}-*" 2>/dev/null | grep -v '\.' | head -1)"
 [ -z "$BIN" ] && BIN="$(find dist -type f -perm -u+x | head -1)"
