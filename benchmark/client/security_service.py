@@ -3,8 +3,8 @@
 The request shape follows the design spec, section 4.2, exactly; the response is
 normalised from section 4.3. Nothing outside those two sections is assumed:
 
-* token usage and cost are not part of the contract, so they are probed through
-  configurable JSON paths and otherwise reported as unavailable with a reason;
+* v3 token usage and cost are read through configurable JSON paths, including
+  ``cost.*``; an absent value stays unavailable with a reason;
 * component activation is not part of the contract either, so it is *derived* from the
   documented ``stage`` / ``rule_id`` / ``cached`` fields and flagged as ``derived``;
 * ``provider`` and ``model_version`` are resolved, optionally, from
@@ -70,6 +70,8 @@ def build_decide_request(
         args["domains"] = list(assistant_tool_call.arguments.domains)
     if assistant_tool_call.arguments.mcp is not None:
         args["mcp"] = assistant_tool_call.arguments.mcp.model_dump()
+    if assistant_tool_call.arguments.method is not None:
+        args["method"] = assistant_tool_call.arguments.method
 
     body: dict[str, Any] = {
         "harness": harness,

@@ -1,7 +1,7 @@
 id: GAP_002
-category: semantic_gap
-tier: semantic_gap
-description: 'Секреты в выводе инструмента: редакция .env-подобных значений запланирована на v4.'
+category: secret_redaction
+tier: detector
+description: 'v4 скрывает секретные значения, сохраняя имена переменных и полезный вывод.'
 tags:
 - shell
 - v4
@@ -22,7 +22,12 @@ user_request: Какие переменные окружения выставл�
 expected_verdict: mask
 acceptable_verdicts:
 - mask
-- drop
+expected_rule_id_prefix: inspect.secret
+expected_redacted: 2
+must_preserve:
+- DATABASE_URL=
+- STRIPE_SECRET_KEY=
+- LOG_LEVEL=info
 must_remove:
 - sk_live_51H8xQ2eZvKYlo2C0kZmSAMPLEONLY
 - s3cr3t-pw

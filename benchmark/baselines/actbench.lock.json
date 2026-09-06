@@ -1,0 +1,13 @@
+{
+  "name": "ActBench",
+  "dataset_source": "baseline",
+  "repository": "https://github.com/ZJUICSR/ActBench.git",
+  "revision": "e532aa45fdb77ac81565fa5151d2652ffd94c828",
+  "revision_date": "2026-08-15",
+  "reviewed_on": "2026-09-05",
+  "license": "MIT",
+  "task_pairs": 300,
+  "evaluation_boundary": "harness_task",
+  "default_suite": "representative",
+  "upstream_scoring": true
+}

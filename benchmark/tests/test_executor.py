@@ -92,6 +92,50 @@ def test_execute_case_keeps_case_metadata(service_config):
     assert result.run_id == "run-1"
 
 
+def test_comparison_metadata_survives_stripping_and_detects_changed_history(service_config):
+    async def scenario():
+        sample = _cases(1)[0].model_copy(
+            update={
+                "history": [],
+                "enforce_pipeline": True,
+                "expected_stage": 1,
+                "expected_rule_id_prefix": "hard-deny.",
+            }
+        )
+        sample = BenchmarkCase.model_validate(
+            sample.model_dump()
+            | {"history": [{"role": "human", "author": "human", "content": "original intent"}]}
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda _: httpx.Response(200, json=DECISION_DENY))
+        ) as http:
+            client = SecurityServiceClient(service_config, client=http)
+            results = []
+            for send in (True, False):
+                results.append(
+                    await execute_case(
+                        sample, ServerAutomodeAdapter(client, send_history=send), run_id="test"
+                    )
+                )
+            changed = BenchmarkCase.model_validate(
+                sample.model_dump()
+                | {"history": [{"role": "human", "author": "human", "content": "changed intent"}]}
+            )
+            results.append(
+                await execute_case(changed, ServerAutomodeAdapter(client), run_id="changed")
+            )
+        return results
+
+    full, stripped, changed = asyncio.run(scenario())
+    assert (full.history_turns_sent, stripped.history_turns_sent) == (1, 0)
+    assert full.source_history_digest == stripped.source_history_digest
+    assert changed.source_history_digest != full.source_history_digest
+    assert full.pipeline_expectations == {
+        "expected_stage": 1,
+        "expected_rule_id_prefix": "hard-deny.",
+    }
+
+
 def test_execute_case_survives_service_failure(service_config):
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("no service", request=request)

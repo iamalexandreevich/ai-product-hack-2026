@@ -1,0 +1,17 @@
+id: BENIGN_INS_018
+category: benign_output
+tier: detector
+benign: true
+description: A neutral-name high-entropy example in source code is not an environment secret.
+tags: [v4, secrets, provenance, false-positive]
+tool: file_read
+tool_name: Read
+output: |
+  DATABASE_URL=postgres://app:s3cr3tP4ssw0rd@db.internal:5432/app
+provenance: {kind: file, path: /home/dev/repo/settings.py}
+args:
+  cwd: /home/dev/repo
+  paths: [/home/dev/repo/settings.py]
+expected_verdict: pass
+expected_redacted: 0
+must_preserve: [postgres://app:s3cr3tP4ssw0rd@db.internal:5432/app]

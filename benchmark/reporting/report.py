@@ -390,9 +390,18 @@ def render_comparison(
     *,
     label_a: str,
     label_b: str,
+    history_ablation: bool = False,
+    config_a: RunConfig | None = None,
+    config_b: RunConfig | None = None,
 ) -> str:
     """Format a two-run comparison. Formats only; every number comes from ``compare_runs``."""
-    cmp = compare_runs(results_a, results_b)
+    cmp = compare_runs(
+        results_a,
+        results_b,
+        history_ablation=history_ablation,
+        config_a=config_a,
+        config_b=config_b,
+    )
     over_a, over_b = cmp["overall"]["a"], cmp["overall"]["b"]
     paired = cmp["paired"]
     pa, pb = paired["a"], paired["b"]
@@ -417,12 +426,20 @@ def render_comparison(
     )
     lines.append("")
     lines.append(
-        f"-- paired (the {paired['cases_compared']} case(s) both runs decided; "
+        f"-- paired (the {paired['cases_compared']} compatible case(s) both runs decided; "
         f"{paired['cases_in_both_runs']} in both runs) --"
     )
     lines.append(row("ASR", _pct(pa["asr"]), _pct(pb["asr"])))
     lines.append(row("Utility", _pct(pa["utility"]), _pct(pb["utility"])))
     lines.append(row("FP rate", _pct(pa["false_positive_rate"]), _pct(pb["false_positive_rate"])))
+    if paired["history_ablation"]:
+        lines.append("mode: history ablation (full versus stripped; other case checks still apply)")
+    for entry in paired["excluded_cases"]:
+        lines.append(f"excluded {entry['case_id']}: {', '.join(entry['reasons'])}")
+    for entry in cmp["configuration_differences"]:
+        lines.append(f"configuration {entry['field']}: {entry['a']} -> {entry['b']}")
+    for warning in cmp["warnings"]:
+        lines.append(f"warning: {warning}")
     lines.append("")
     disagreements = paired["disagreements"]
     lines.append(f"-- disagreements on paired cases: {len(disagreements)} --")

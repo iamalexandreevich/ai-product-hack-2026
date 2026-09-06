@@ -13,7 +13,22 @@ pair to Claude Code's native auto-mode classifier through the Claude Agent SDK �
 the methodology guardrail benchmarks use (TraceSafe-style pre-action evaluation), not the
 environment-and-outcome methodology of AgentDojo/AgentHarm. The Claude Code adapter is opt-in
 (`--adapter claude-code`), needs a disposable network-isolated sandbox (a classifier allow executes
-the command), and today reproduces only `shell` cases; the rest return no decision with a reason.
+the command), and maps shell, file, network and MCP cases. Cases with dialogue history
+remain unsupported by that adapter and return no decision with a reason.
+
+The independent task-outcome baseline is `baselines/`: pinned ActBench, invoked through
+`tools/actbench.py` in Docker. It preserves native task pairs and graders, and never feeds
+whole-trajectory labels into the single-decision scorer. See `baselines/README.md`.
+`attacks/policy/` is a separate 12-case v3 regression table; use `--subset` and do not mix
+its ruled population with the 120-case suite. `tests/test_contracts.py` validates generated
+service schemas; `tools/check_service.py` checks settled stage-1 policy behavior.
+`tools/service_regressions.py` exercises the real Gate, Inspector and ASGI replay/auth
+with fake classifiers and storage. The local suite runs these tools when the sibling
+service environment exists. See `docs/service-upgrades.md` for coverage and limitations.
+`args.method` follows v3.2. Inspect v4 stores typed `spans` and `redacted`, validates
+coordinates against original output, and scores optional `expected_redacted`.
+`GAP_002` now belongs to secret_redaction, not semantic_gap. New inspect runs carry
+scoring_version=2 and dataset_digest; compare identical populations and profile modes.
 
 The benchmark-side package is `automode/`, never `adapters/`: repo-root `adapters/` is direction 1
 — the harness plugins (opencode / claude-code / codex / kilo) that call our service in production.
@@ -32,7 +47,7 @@ the service contract field for field, sent only when non-empty so a case without
 v1 request unchanged. It reaches **stage 2 only** — `Rule.evaluate(action, policy)` takes no
 dialogue — so a case whose action stage 1 settles by itself measures nothing, and every case in
 `multi_turn_trust_escalation` must be stage-2-ambiguous. `--no-history` strips the dialogue and
-changes nothing else; pairing that run with a normal one and running `cli.py compare` is how the
+changes nothing else; pairing that run with a normal one using `cli.py compare --history-ablation` is how the
 effect of history itself is measured, and the run records `history_mode` so the two can never be
 confused.
 
@@ -48,7 +63,7 @@ All commands run from `benchmark/`.
 ```bash
 uv sync                                                    # deps (pydantic, pyyaml, httpx; dev: pytest, ruff)
 
-uv run pytest                                              # 267 unit tests, no network
+uv run pytest                                              # local suite; no service/model calls
 uv run pytest tests/test_scorer.py::test_error_always_scores_zero   # one test
 uv run pytest -m live                                      # 2 more, needs a live service at SECURITY_SERVICE_URL
 
@@ -85,15 +100,15 @@ service nor a baseline: **never quote its numbers as results.**
 
 ## Architecture
 
-The separate v3 tool-result suite is composed by `runner/inspect_cli.py` (`cli.py inspect` and
+The separate tool-result suite is composed by `runner/inspect_cli.py` (`cli.py inspect` and
 `inspect-report`). `dataset/inspect_loader.py` and `inspect_validator.py` load recorded output;
 `client/inspect.py` sends it through the authenticated `SecurityServiceClient`;
 `runner/inspection.py` sequences optional decide, cache warmup, and measured inspect calls;
 `evaluator/inspection.py` owns delivered-text scoring and aggregates; `storage/inspection.py`
-uses separate SQLite tables. No recorded tool is executed. The 43 cases and their tier semantics
+uses separate SQLite tables. No recorded tool is executed. The 46 cases and their tier semantics
 are documented in `attacks/inspect/taxonomy.md`; usage and cache caveats are in the README.
 Use `uv run pytest tests/test_inspect.py` for the inspect boundary tests and
-`uv run python tools/calibrate_inspect.py` to check detector expectations against the sibling
+`uv run --with-editable ../service python tools/calibrate_inspect.py` to check detector expectations against the sibling
 service checkout without network or model calls. Completed measurements stream to JSONL; SQLite
 and the summary are finalized at the end. Never combine these scores with pre-action metrics.
 
@@ -130,8 +145,13 @@ their author attribution, and faking the on-disk transcript format would fabrica
 variable those attacks manipulate. Under `--no-history` the same cases are posed normally.
 
 **Comparing runs:** `cli.py compare RUN_A RUN_B` reads two stored runs and prints a paired,
-guardrail-vs-guardrail comparison — restricted to cases *both* runs decided, because a run that
-rendered no decision on a case never saw the action. Cost is intentionally absent from the
+guardrail-vs-guardrail comparison restricted to compatible cases *both* runs decided.
+Matching IDs with changed inputs, expectations, client policy or source dialogue are excluded
+with reasons. Duplicate IDs are rejected. The explicit `--history-ablation` flag permits
+full versus stripped history, retaining all other checks. New rows carry source_history_digest
+and pipeline_expectations; legacy missing metadata is reported as unverified, never reconstructed
+from the current case table. CLI comparisons load stored RunConfig to check execution/scoring/
+session modes and show profile/model/revision differences. Cost is intentionally absent from the
 comparison: the two adapters price on different bases (the server prices one decision; Claude Code's
 cost is whole-session, agent plus classifier). The numbers come from `evaluator/metrics.py::compare_runs`;
 `reporting/report.py::render_comparison` only formats them.

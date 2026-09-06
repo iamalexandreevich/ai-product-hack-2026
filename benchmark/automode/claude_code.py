@@ -174,6 +174,9 @@ def plan_for(tool_call: ToolCall) -> ToolPlan | None:
         )
 
     if tool is ToolName.NETWORK:
+        if args.method not in (None, "GET"):
+            # WebFetch cannot preserve an explicit HEAD or mutating HTTP method.
+            return None
         url = _first_url(tool_call)
         return ToolPlan(
             "WebFetch",

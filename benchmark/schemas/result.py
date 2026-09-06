@@ -225,6 +225,10 @@ class BenchmarkResult(BaseModel):
     # that carries none and for a stripped run, which is why the run records its
     # ``history_mode`` too; together they make a stored result self-describing.
     history_turns_sent: int = 0
+    # Hash the source dialogue even in stripped runs so ablations can prove they
+    # used the same case. None means the legacy result did not record it.
+    source_history_digest: str | None = None
+    pipeline_expectations: dict[str, Any] | None = None
     rules: dict[str, Any] | None = None
     rules_digest: str | None = None
     call_id: str | None = None

@@ -59,6 +59,7 @@ function gateMetadata(action: MappedAction, context: CallContext): Record<string
 export function buildDecideRequest(action: MappedAction, context: CallContext): DecideRequest {
   return {
     session_id: clampSessionId(context.sessionId),
+    call_id: context.callId,
     harness: clampHarness(context.harness.name),
     tool: action.tool,
     raw: clampRawBytes(action.raw ?? ""),
@@ -86,7 +87,8 @@ export function buildInspectRequest(
     tool: action.tool,
     tool_name: action.toolName,
     status: result.status,
-    output: clampRawBytes(result.output ?? ""),
+    output: result.output ?? "",
+    ...(context.history?.length ? { history: context.history, protocol: 1 } : {}),
     provenance: result.provenance ?? action.provenance,
     args: action.args,
     user_request: clampUserRequest(context.userRequest),

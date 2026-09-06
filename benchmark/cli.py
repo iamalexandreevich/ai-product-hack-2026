@@ -432,6 +432,8 @@ def _cmd_compare(args: argparse.Namespace) -> int:
     with BenchmarkStore(Path(args.db)) as store:
         results_a = store.load_results(run_a)
         results_b = store.load_results(run_b)
+        config_a = store.run_config(run_a)
+        config_b = store.run_config(run_b)
 
     missing = [rid for rid, res in ((run_a, results_a), (run_b, results_b)) if not res]
     if missing:
@@ -441,10 +443,32 @@ def _cmd_compare(args: argparse.Namespace) -> int:
     if args.json:
         from evaluator.metrics import compare_runs
 
-        print(json.dumps(compare_runs(results_a, results_b), ensure_ascii=False, indent=2))
+        print(
+            json.dumps(
+                compare_runs(
+                    results_a,
+                    results_b,
+                    history_ablation=args.history_ablation,
+                    config_a=config_a,
+                    config_b=config_b,
+                ),
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
         return 0
 
-    print(render_comparison(results_a, results_b, label_a=run_a[:16], label_b=run_b[:16]))
+    print(
+        render_comparison(
+            results_a,
+            results_b,
+            label_a=run_a[:16],
+            label_b=run_b[:16],
+            history_ablation=args.history_ablation,
+            config_a=config_a,
+            config_b=config_b,
+        )
+    )
     return 0
 
 
@@ -524,6 +548,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="two run ids to compare (baseline then candidate)",
     )
     compare.add_argument("--json", action="store_true")
+    compare.add_argument(
+        "--history-ablation",
+        action="store_true",
+        help="compare full versus stripped history; other compatibility checks remain",
+    )
 
     runs = sub.add_parser("runs", help="list stored runs")
     runs.add_argument("--db", default=DEFAULT_DB)

@@ -55,20 +55,10 @@ Provenance = Annotated[
 ]
 Verdict = Literal["pass", "mask", "drop"]
 
-# Where the case is meant to be settled. This axis replaces the main dataset's
-# easy..ultra_hard, which does not transfer: at this boundary the interesting question
-# is not how hard the text is to read but which layer of the cascade is answerable for
-# it — and stage 2 only ever runs on a line a detector already flagged.
-#
-#   detector       stage 1 alone must produce the verdict, deterministically and with
-#                  no model call. A regression here is a regression in the detectors.
-#   classifier     a detector fires, so stage 2 runs and has the last word — the cases
-#                  where the deterministic layer is knowingly too blunt on its own.
-#   semantic_gap   v3 cannot reach it: no detector fires, so nothing escalates and the
-#                  text reaches the model. `expected_verdict` states what a correct
-#                  guard would do, so these cases fail today **on purpose** — they are
-#                  the measured edge of v3 and are reported apart from the headline
-#                  rate, never mixed into it. This is `v1_limitation` for inspect.
+# Tiers describe fixed populations, not observed results. Detector cases require
+# deterministic containment; classifier cases need stage 2 enabled. Semantic gaps
+# are unflagged attacks, reported separately in every mode: off/on-flag cannot
+# reach them, while always may close them through model spans.
 Tier = Literal["detector", "classifier", "semantic_gap"]
 
 
@@ -94,6 +84,7 @@ class InspectCase(BaseModel):
     must_preserve: list[str] = Field(default_factory=list)
     must_remove: list[str] = Field(default_factory=list)
     expected_rule_id_prefix: str | None = None
+    expected_redacted: int | None = Field(default=None, ge=0)
     # Explicit malformed wire overrides belong only in the API refusal suite.
     request_overrides: dict[str, Any] = Field(default_factory=dict)
     api_refusal: bool = False
@@ -126,12 +117,12 @@ class InspectCase(BaseModel):
         ):
             raise ValueError("pre_action must match inspection tool and args")
         if self.tier == "semantic_gap":
-            # The point of the tier is that v3 lets the text through. A gap case that
+            # Without unconditional classification these cases pass through. A case that
             # accepts `pass` would pass today and stop marking the edge it exists to mark.
             if "pass" in self.acceptable_verdicts:
                 raise ValueError("a semantic_gap case must not accept pass; it states the gap")
             if self.benign:
-                raise ValueError("semantic_gap describes an attack v3 misses, never a benign case")
+                raise ValueError("semantic_gap describes an unflagged attack, never a benign case")
         if self.api_refusal and self.tier != "detector":
             raise ValueError("API refusals are settled before any detector runs")
         if self.benign and self.expected_verdict == "drop":
@@ -144,11 +135,27 @@ class InspectCase(BaseModel):
 
         Benign controls do (they are the preservation and intervention rates). Two
         kinds do not: an API refusal measures fail-closed plumbing rather than
-        detection, and a `semantic_gap` case is a known v3 edge that would drag the
-        containment rate down for a reason already documented. Both are counted and
+        detection, and a `semantic_gap` case belongs to the separate unflagged population
+        in every classifier mode, regardless of its observed verdict. Both are counted and
         reported on their own.
         """
         return not self.api_refusal and self.tier != "semantic_gap"
+
+
+class InspectSpan(BaseModel):
+    """Inclusive, zero-based coordinates in the original request output."""
+
+    line_start: int = Field(ge=0)
+    line_end: int = Field(ge=0)
+    kind: Literal["instruction", "pipe-exec", "encoded", "invisible", "secret"]
+    source: Literal["detector", "model"]
+    confidence: float | None = Field(default=None, ge=0, le=1)
+
+    @model_validator(mode="after")
+    def check_range(self) -> Self:
+        if self.line_end < self.line_start:
+            raise ValueError("span end precedes start")
+        return self
 
 
 class InspectResponse(BaseModel):
@@ -165,6 +172,9 @@ class InspectResponse(BaseModel):
     cached: bool
     decision_id: str = Field(min_length=1)
     protocol: Literal[1]
+    # None preserves the difference between a legacy response and a reported zero.
+    spans: list[InspectSpan] | None = None
+    redacted: int | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
     def check_response(self) -> Self:
@@ -196,6 +206,7 @@ class InspectResult(BaseModel):
     components: list[str] = Field(default_factory=list)
     score: int = Field(default=0, ge=0, le=1)
     text_checks_passed: bool | None = None
+    metadata_checks_passed: bool | None = None
     error: str | None = None
     cache_valid: bool = True
     # API refusals and invalid measurements never count as security detections.

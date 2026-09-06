@@ -81,10 +81,22 @@ def execute(handler, sample=None, **options):
     return asyncio.run(run())
 
 
+def test_summary_latency_percentiles_use_fractional_quantiles():
+    results = []
+    for latency in range(100, 0, -1):
+        result = scored(latency_ms={"total": latency, "stage1": latency})
+        result.execution_time_ms = latency * 2
+        results.append(result)
+
+    summary = summarize_inspections(results, {})
+    assert summary["service_latency_ms"] == {"count": 100, "p50": 50, "p95": 95}
+    assert summary["client_latency_ms"] == {"count": 100, "p50": 100, "p95": 190}
+
+
 def test_full_corpus_validates():
     report = validate_inspect_dataset(CORPUS)
     assert report.ok, report.errors
-    assert len(report.cases) == 43
+    assert len(report.cases) == 46
 
 
 def test_single_case_cli_dry_run(capsys):

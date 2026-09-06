@@ -21,7 +21,7 @@ import re
 from enum import StrEnum
 from typing import Annotated, Any, Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from schemas.rules import RuleSet
 
@@ -187,6 +187,17 @@ class ToolCallArguments(BaseModel):
     paths: list[str] = Field(default_factory=list)
     domains: list[str] = Field(default_factory=list)
     mcp: McpCall | None = None
+    method: str | None = None
+
+    @field_validator("method")
+    @classmethod
+    def check_method(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        method = value.strip().upper()
+        if method not in {"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}:
+            raise ValueError(f"unknown HTTP method {value!r}")
+        return method
 
 
 class ToolCall(BaseModel):

@@ -20,6 +20,8 @@ every latency statistic for exactly this reason.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import time
 import uuid
@@ -86,6 +88,19 @@ async def execute_case(
         human_req=case.human_req,
         assistant_tool_call=case.assistant_tool_call.model_dump(mode="json"),
         history_turns_sent=history_turns_sent,
+        source_history_digest=hashlib.sha256(
+            json.dumps(
+                [turn.model_dump(mode="json") for turn in case.history],
+                sort_keys=True,
+                ensure_ascii=True,
+            ).encode()
+        ).hexdigest(),
+        pipeline_expectations={
+            "expected_stage": case.expected_stage,
+            "expected_rule_id_prefix": case.expected_rule_id_prefix,
+        }
+        if case.enforce_pipeline
+        else {},
         execution_time_ms=execution_time_ms,
         service_latency_total_ms=response.latency_total_ms,
         service_latency_stage1_ms=response.latency_stage1_ms,

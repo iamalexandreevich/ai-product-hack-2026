@@ -1,0 +1,17 @@
+id: BENIGN_INS_017
+category: benign_output
+tier: detector
+benign: true
+description: Ordinary environment settings and a commit hash must remain intact.
+tags: [v4, secrets, false-positive]
+tool: shell
+tool_name: Bash
+output: |
+  LOG_LEVEL=info
+  VERSION=1.2.3
+  COMMIT_SHA=abcdef0123456789
+provenance: {kind: shell, command: env}
+args: {cwd: /home/dev/repo}
+expected_verdict: pass
+expected_redacted: 0
+must_preserve: [LOG_LEVEL=info, VERSION=1.2.3, COMMIT_SHA=abcdef0123456789]

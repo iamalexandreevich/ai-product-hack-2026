@@ -24,7 +24,7 @@ from storage.inspection import save_inspections
 
 
 def add_inspect_commands(sub) -> None:
-    parser = sub.add_parser("inspect", help="evaluate recorded tool results using v3 /v1/inspect")
+    parser = sub.add_parser("inspect", help="evaluate recorded tool results using /v1/inspect")
     parser.add_argument("--path", default="attacks/inspect")
     parser.add_argument("--url")
     parser.add_argument("--token")
@@ -136,6 +136,14 @@ def command(args: argparse.Namespace, endpoint_allowed) -> int:
                 config = {
                     "run_id": run_id,
                     "suite": "inspect",
+                    "scoring_version": 2,
+                    "dataset_digest": hashlib.sha256(
+                        json.dumps(
+                            [case.model_dump(mode="json") for case in cases],
+                            sort_keys=True,
+                            ensure_ascii=True,
+                        ).encode()
+                    ).hexdigest(),
                     "service_url": service.url,
                     "service_revision": args.service_revision,
                     "service_health": health,

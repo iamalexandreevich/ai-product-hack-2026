@@ -37,7 +37,11 @@ from collections import Counter
 from collections.abc import Callable, Iterable
 from typing import Any
 
-from schemas.result import BenchmarkResult, CostSource, ExecutionMode, ServiceResultType
+from pydantic import ValidationError
+
+from schemas.case import ToolCall
+from schemas.result import BenchmarkResult, CostSource, ExecutionMode, RunConfig, ServiceResultType
+from schemas.rules import RuleSet
 
 GroupKey = Callable[[BenchmarkResult], str]
 
@@ -390,27 +394,82 @@ def _distribution(values: list[float]) -> dict[str, float | None]:
 def compare_runs(
     results_a: Iterable[BenchmarkResult],
     results_b: Iterable[BenchmarkResult],
+    *,
+    history_ablation: bool = False,
+    config_a: RunConfig | None = None,
+    config_b: RunConfig | None = None,
 ) -> dict[str, Any]:
     """Compare two runs, guardrail-vs-guardrail.
 
     Two numbers are produced for each run: an **overall** view (ASR / Utility / FP /
     no-decision over that run's whole population) and a **paired** view restricted to the
-    cases *both* runs actually decided. The paired view is the honest comparison: a run
+    compatible cases *both* runs actually decided. The paired view excludes changed
+    inputs, expectations and effective client rules and reports every exclusion. A run
     that renders no decision on a case (a transport error for the server, an
     un-hijackable no-tool-call for Claude Code) never saw the action, so counting it
     against either adapter would compare different populations. Disagreements list the
     cases the two guardrails ruled differently, so the paired rates can be inspected.
 
-    Reads :class:`BenchmarkResult` properties only, like every other metric here, so a
-    comparison recomputes identically from ``results-<run_id>.jsonl`` or from SQLite.
+    Explicit history ablation permits a full-versus-stripped pair with the same source
+    dialogue. Legacy rows without dialogue hashes remain readable with a warning.
+    Optional run configs add checks on scoring/execution/session modes and expose
+    profile/model/revision differences; rates still derive only from stored results.
     """
     a = list(results_a)
     b = list(results_b)
-    a_by_id = {r.case_id: r for r in a}
-    b_by_id = {r.case_id: r for r in b}
+    a_by_id = _unique_results(a, "a")
+    b_by_id = _unique_results(b, "b")
 
     common = sorted(set(a_by_id) & set(b_by_id))
-    both_decided = [c for c in common if a_by_id[c].has_decision and b_by_id[c].has_decision]
+    differences = []
+    warnings = []
+    if config_a is not None and config_b is not None:
+        for field in (
+            "execution_mode",
+            "history_mode",
+            "strict_scoring",
+            "session_mode",
+            "profile_id",
+            "profile_snapshot_digest",
+            "model",
+            "service_revision",
+            "rules_digest",
+        ):
+            left, right = getattr(config_a, field), getattr(config_b, field)
+            if left != right:
+                differences.append({"field": field, "a": left, "b": right})
+        if differences:
+            warnings.append("Run configurations differ; interpret results with the listed changes.")
+    else:
+        warnings.append(
+            "Run configuration unavailable; profile and execution-mode equality unverified."
+        )
+    incompatible_run = [
+        d["field"]
+        for d in differences
+        if d["field"] in {"execution_mode", "strict_scoring", "session_mode"}
+        or (d["field"] == "history_mode" and not history_ablation)
+    ]
+    excluded = []
+    both_decided = []
+    for case_id in common:
+        left, right = a_by_id[case_id], b_by_id[case_id]
+        reasons = list(incompatible_run)
+        reasons.extend(_case_differences(left, right, history_ablation=history_ablation))
+        if not left.has_decision or not right.has_decision:
+            reasons.append("missing_decision")
+        if reasons:
+            excluded.append({"case_id": case_id, "reasons": sorted(set(reasons))})
+            continue
+        both_decided.append(case_id)
+        if (left.history_turns_sent or right.history_turns_sent) and (
+            left.source_history_digest is None or right.source_history_digest is None
+        ):
+            warnings.append(f"{case_id}: legacy history content unavailable; equality unverified.")
+        if left.pipeline_expectations is None or right.pipeline_expectations is None:
+            warnings.append(
+                f"{case_id}: legacy pipeline expectations unavailable; equality unverified."
+            )
     paired_a = [a_by_id[c] for c in both_decided]
     paired_b = [b_by_id[c] for c in both_decided]
 
@@ -426,15 +485,91 @@ def compare_runs(
     ]
 
     return {
+        "configuration_differences": differences,
+        "warnings": warnings,
         "overall": {"a": _run_overview(a), "b": _run_overview(b)},
         "paired": {
             "cases_in_both_runs": len(common),
             "cases_compared": len(both_decided),
+            "history_ablation": history_ablation,
+            "excluded_cases": excluded,
             "a": _paired_rates(paired_a),
             "b": _paired_rates(paired_b),
             "disagreements": disagreements,
         },
     }
+
+
+def _unique_results(results: list[BenchmarkResult], label: str) -> dict[str, BenchmarkResult]:
+    indexed = {}
+    for result in results:
+        if result.case_id in indexed:
+            raise ValueError(f"run {label}: duplicate case_id {result.case_id!r}")
+        indexed[result.case_id] = result
+    return indexed
+
+
+def _case_differences(
+    left: BenchmarkResult,
+    right: BenchmarkResult,
+    *,
+    history_ablation: bool,
+) -> list[str]:
+    fields = (
+        "human_req",
+        "is_benign",
+        "attack_category",
+        "difficulty",
+        "dataset_source",
+        "expected_result_type",
+        "expected_detection",
+    )
+    differences = [field for field in fields if getattr(left, field) != getattr(right, field)]
+    if _normalized_action(left.assistant_tool_call) != _normalized_action(
+        right.assistant_tool_call
+    ):
+        differences.append("assistant_tool_call")
+    if set(left.acceptable_result_types) != set(right.acceptable_result_types):
+        differences.append("acceptable_result_types")
+    if _normalized_rules(left.rules) != _normalized_rules(right.rules):
+        differences.append("rules")
+    elif (left.rules is None or right.rules is None) and left.rules_digest != right.rules_digest:
+        differences.append("rules_digest")
+    if (left.pipeline_expectations or right.pipeline_expectations) and (
+        left.pipeline_expectations != right.pipeline_expectations
+    ):
+        differences.append("pipeline_expectations")
+    if (
+        left.source_history_digest is not None
+        and right.source_history_digest is not None
+        and left.source_history_digest != right.source_history_digest
+    ):
+        differences.append("source_history_digest")
+    if left.history_turns_sent != right.history_turns_sent and not (
+        history_ablation and min(left.history_turns_sent, right.history_turns_sent) == 0
+    ):
+        differences.append("history_turns_sent")
+    return differences
+
+
+def _normalized_action(action: dict[str, Any]) -> dict[str, Any]:
+    try:
+        return ToolCall.model_validate(action).model_dump(mode="json")
+    except ValidationError:
+        # Legacy or future fields must not be discarded to manufacture equality.
+        return action
+
+
+def _normalized_rules(rules: dict[str, Any] | None) -> dict[str, Any] | None:
+    if rules is None:
+        return None
+    try:
+        normalized = RuleSet.model_validate(rules).model_dump(mode="json")
+    except ValidationError:
+        return rules
+    for decision in ("allow", "ask", "deny"):
+        normalized[decision] = sorted(set(normalized[decision]))
+    return normalized
 
 
 def _run_overview(results: list[BenchmarkResult]) -> dict[str, Any]:

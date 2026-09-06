@@ -88,6 +88,10 @@ async def execute_inspection(
     )
     if response.stage >= 1 and response.verdict == "mask":
         result.components.append("inspect_mask")
+    if not response.cached and response.redacted:
+        result.components.append("inspect_secrets")
+    if not response.cached and any(s.source == "model" for s in response.spans or []):
+        result.components.append("inspect_semantic")
     if billed_stage == 2:
         result.components.append("inspect_stage2_llm")
     score_inspection(result)

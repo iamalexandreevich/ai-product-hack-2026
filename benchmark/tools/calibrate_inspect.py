@@ -1,31 +1,13 @@
-"""Проверка ожиданий набора inspect по реальной ступени 1 сервиса.
+"""Калибровка полного набора находок ступени 1 текущего сервиса.
 
-Ожидаемый вердикт кейса — это утверждение о поведении сервиса, и писать его на глаз
-нельзя: детекторы устроены сложнее, чем кажется по названиям (у `inspect.invisible`
-действие `clean`, а не `mask`, и он не считается в порог `drop`; у `inspect.encoded`
-порог — 513 символов **одного** пробега `[A-Za-z0-9+/=]`; ступень 2 вообще не
-запускается, если все находки невидимые).
+Секреты (с учётом провенанса, secrets=on) -> детекторы -> apply. Вывод и
+число redacted проверяются для detector-кейсов. Semantic gap обязан оставаться
+непойманным ступенью 1. Для classifier-кейсов проверяется только достижимость
+модели в выбранном режиме --classifier, по умолчанию on-flag; модель не вызывается.
 
-Поэтому ожидания калибруются: скрипт импортирует `agentgate.inspect` из соседнего
-`service/` **в своём процессе**, прогоняет `scan` + `apply` на `output` каждого кейса и
-сверяет с тем, что кейс объявил. Ни сети, ни поднятого сервиса, ни базы не нужно.
-
-    uv run python tools/calibrate_inspect.py                 # сверить весь набор
-    uv run python tools/calibrate_inspect.py --show INJ_DIRECT_001   # что даёт ступень 1
-    uv run python tools/calibrate_inspect.py --path attacks/inspect
-
-Код возврата 1, если хоть один кейс разошёлся с реализацией.
-
-Границы применимости, чтобы на скрипт не полагались сверх меры:
-
-* сверяется **только ступень 1**. Кейсы `tier: classifier` ждут вердикта от ступени 2,
-  которой здесь нет, — для них скрипт печатает, что нашла ступень 1, и не считает
-  расхождение ошибкой;
-* `api_refusal` отвергается плоскостью протокола до детекторов — такие кейсы
-  пропускаются целиком;
-* `tier: semantic_gap` обязан расходиться: кейс объявляет, что сделал бы правильный
-  гейт, а v3 его пропускает. Скрипт проверяет ровно это — что ступень 1 **не** ловит
-  текст. Если поймала, щель закрылась, и кейс пора переводить в его настоящий tier.
+Запуск из benchmark с зависимостями сервиса:
+    uv run --with-editable ../service python tools/calibrate_inspect.py
+    uv run --with-editable ../service python tools/calibrate_inspect.py --show GAP_002
 """
 
 from __future__ import annotations
@@ -55,23 +37,45 @@ def _load_stage1():
     return INSPECT_STAGE1, scan, apply
 
 
-def stage1(output: str) -> dict[str, Any]:
-    """Что реальная ступень 1 сервиса делает с этим текстом."""
+def stage1(case) -> dict[str, Any]:
+    """Run the service's detectors and provenance-aware secret scan, secrets enabled."""
     detectors, scan, apply = _load_stage1()
-    findings = scan(output, detectors)
-    outcome = apply(output, findings)
+    from agentgate.api.schemas import InspectRequest
+    from agentgate.inspect.secrets import entropy_candidates_allowed, scan_secrets
+    from agentgate.profiles.loader import detect_workspace
+
+    from client.inspect import build_inspect_request
+    from client.security_service import SecurityServiceClient
+    from config import ServiceConfig
+
+    request = InspectRequest.model_validate(
+        build_inspect_request(
+            case, SecurityServiceClient(ServiceConfig()), session_id="calibrate", call_id=case.id
+        )
+    )
+    candidates = entropy_candidates_allowed(request.provenance, detect_workspace(request.args.cwd))
+    findings = scan_secrets(case.output, entropy_candidates=candidates)
+    findings.extend(scan(case.output, detectors))
+    outcome = apply(case.output, findings)
     return {
         "verdict": outcome.verdict.value,
         "rule_id": outcome.rule_id,
         "reason": outcome.reason,
         "replacement": outcome.replacement,
+        "redacted": outcome.redacted,
+        "spans": [s.model_dump(mode="json") for s in outcome.spans],
+        "classifier_eligible": any(
+            f.rule_id != "inspect.invisible"
+            and (f.rule_id != "inspect.secret" or f.candidate_key is not None)
+            for f in findings
+        ),
         "findings": [
             {"line": f.line, "rule_id": f.rule_id, "action": f.action.value} for f in findings
         ],
     }
 
 
-def check(case, actual: dict[str, Any]) -> list[str]:
+def check(case, actual: dict[str, Any], *, classifier: str = "on-flag") -> list[str]:
     """Расхождения между тем, что объявил кейс, и тем, что делает ступень 1."""
     problems: list[str] = []
 
@@ -86,15 +90,24 @@ def check(case, actual: dict[str, Any]) -> list[str]:
 
     if case.tier == "classifier":
         # Последнее слово за ступенью 2; проверяем только предпосылку этого tier.
-        if not any(f["rule_id"] != "inspect.invisible" for f in actual["findings"]):
+        eligible = actual.get(
+            "classifier_eligible",
+            any(
+                f["rule_id"] not in {"inspect.invisible", "inspect.secret"}
+                for f in actual["findings"]
+            ),
+        )
+        if classifier == "off" or (classifier == "on-flag" and not eligible):
             problems.append(
-                "tier classifier, но ни один детектор не сработал: ступень 2 не запустится, "
-                "и вердикт будет pass со ступени 1"
+                f"tier classifier недостижим при classifier={classifier}: "
+                "модель отключена или отсутствует находка, которую она может пересмотреть"
             )
         return problems
 
     if actual["verdict"] != case.expected_verdict:
         problems.append(f"ожидался {case.expected_verdict}, ступень 1 даёт {actual['verdict']}")
+    if case.expected_redacted is not None and actual.get("redacted") != case.expected_redacted:
+        problems.append("expected_redacted не совпал с числом скрытых значений")
     if case.expected_rule_id_prefix and not (actual["rule_id"] or "").startswith(
         case.expected_rule_id_prefix
     ):
@@ -126,6 +139,12 @@ def main(argv: list[str] | None = None) -> int:
             stream.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--path", default="attacks/inspect")
+    parser.add_argument(
+        "--classifier",
+        choices=("off", "on-flag", "always"),
+        default="on-flag",
+        help="profile mode used to check classifier-tier reachability",
+    )
     parser.add_argument("--show", help="напечатать разбор ступени 1 для одного кейса по id")
     args = parser.parse_args(argv)
 
@@ -141,7 +160,7 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         import json
 
-        print(json.dumps(stage1(selected[0].output), ensure_ascii=False, indent=2))
+        print(json.dumps(stage1(selected[0]), ensure_ascii=False, indent=2))
         return 0
 
     failures = 0
@@ -150,7 +169,7 @@ def main(argv: list[str] | None = None) -> int:
         if case.api_refusal:
             skipped += 1
             continue
-        problems = check(case, stage1(case.output))
+        problems = check(case, stage1(case), classifier=args.classifier)
         if problems:
             failures += 1
             print(f"[РАСХОЖДЕНИЕ] {case.id} ({case.category}, tier={case.tier})")

@@ -49,6 +49,7 @@ export type RulePayload = {
 
 export type DecideRequest = {
   session_id?: string | null
+  call_id?: string | null
   harness: string
   tool: Tool
   /** Required and non-blank for tool=shell: stage 1 parses it. */
@@ -104,6 +105,8 @@ export type InspectVerdict = "pass" | "mask" | "drop"
 /** PROVISIONAL — shaped after DecideRequest until the service defines its own. */
 export type InspectRequest = {
   session_id?: string | null
+  history?: Turn[]
+  protocol?: number
   harness: string
   /** Ties this result back to the /v1/decide call for the same tool invocation. */
   call_id: string
