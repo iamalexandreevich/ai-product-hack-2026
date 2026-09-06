@@ -3,12 +3,20 @@
 > Status: Intermediate / Work in Progress
 > Target architecture and current implementation are intentionally described separately.
 >
-> Источники: `docs/project-context/04_architecture/target_architecture.jpg` (целевая архитектура), кодовая база `service/`, `contracts/`, `adapters/`, `benchmark/`, спеки в `docs/superpowers/service/specs/`.
-> Дата анализа: 2026-09-04, ветка `main`. Первичный анализ выполнен на HEAD `547220f`; после него файлы бенчмарка восстановлены из ветки `feat/agentgate-benchmark` (`82764b4`), и разделы про бенчмарк (§5.3, §7, §8, §10, §13, §14) обновлены под состояние **после** восстановления.
+> Источники: `docs/project-context/04_architecture/target_architecture.jpg` (целевая архитектура), кодовая база `service/`, `contracts/`, `adapters/`, `benchmark/`, `frontend/`, спеки в `docs/superpowers/service/specs/`.
+>
+> **Дата анализа: 6 сентября 2026, ветка `main`, HEAD `d24af97`.** Разделы §3 и §4 описывают
+> картинку `target_architecture.jpg` и с тех пор не менялись: это целевое состояние, а не
+> реализация. Разделы §5–§14 переписаны под фактический код; предыдущая редакция (от
+> 4 сентября 2026) описывала раскладку модулей до рефакторинга v1.5 и не знала ни о
+> `POST /v1/inspect`, ни об адаптерах, ни о выполненном прогоне бенчмарка.
+>
+> **Наличие файла или поля здесь не считается доказательством готовности.** Проверки
+> исполнением, на которые опирается этот документ, перечислены в §15.
 
 ## 1. Architecture Overview
 
-AgentGate — отдельный сетевой сервис-гейт, стоящий между кодинг-агентом (harness) и операционной системой. Перед исполнением каждого вызова инструмента харнесс через свой адаптер/хук отправляет описание предполагаемого действия в `POST /v1/decide` и получает трёхзначный вердикт `allow | deny | ask`. Сервис не исполняет действия, не является агентом и не является сэндбоксом — он только выносит решение и записывает его.
+AgentGate — отдельный сетевой сервис-гейт, стоящий между кодинг-агентом (harness) и операционной системой. Перед исполнением каждого вызова инструмента харнесс через свой адаптер/хук отправляет описание предполагаемого действия в `POST /v1/decide` и получает трёхзначный вердикт `allow | deny | ask`. После исполнения адаптер может отдать результат инструмента в `POST /v1/inspect` и получить `pass | mask | drop` — это направление добавлено в v3 и расширено в v4. Сервис не исполняет действия, не является агентом и не является сэндбоксом — он только выносит решение и записывает его.
 
 Техническая задача: дать любому харнессу (в том числе open-source, где auto mode отсутствует) единый, версионируемый слой политики безопасности, который (а) не зависит от вендора агента, (б) содержит детерминированную ступень, вообще не читающую текст, и (в) делает каждое решение измеримым — см. `docs/why-agentgate.md` и кейс `docs/project-context/01_hackathon_case.md`.
 
@@ -21,16 +29,24 @@ AgentGate — отдельный сетевой сервис-гейт, стоя�
 Подтверждённый кодом и спекой основной принцип:
 
 ```
-AI agent → предложенное действие (tool call) → перехват до исполнения (PreToolUse)
-→ нормализация в AST (NormalizedAction) → каскад проверок (детерминированная ступень 1 → LLM-ступень 2)
-→ эскалация по истории сессии → decision (allow | deny | ask) → обработка решения в харнессе
+до действия:   AI agent → предложенный tool call → перехват (PreToolUse)
+               → нормализация в AST (NormalizedAction)
+               → каскад (детерминированная ступень 1 → LLM-ступень 2)
+               → эскалация по истории сессии
+               → decision (allow | deny | ask) → обработка решения в харнессе
+
+после действия: результат инструмента + провенанс → перехват до показа модели (PostToolUse)
+               → каскад inspect (кэш → секреты → детекторы → маска → классификатор)
+               → verdict (pass | mask | drop) → подстановка результата в контекст агента
 ```
 
 Три архитектурных решения, из которых вытекает всё остальное:
 
-1. **Точка врезки — до исполнения инструмента, вне харнесса.** Решение принимается в отдельном процессе/сервисе, а не внутри агента: политика одна на все харнессы, живёт в git на стороне сервиса, харнессы о ней ничего не знают (`adapters/README.md`, `docs/why-agentgate.md` §2).
+1. **Точка врезки — до исполнения инструмента, вне харнесса.** Решение принимается в отдельном процессе/сервисе, а не внутри агента: политика одна на все харнессы, живёт в git на стороне сервиса, харнессы о ней ничего не знают (`adapters/README.md`, `docs/why-agentgate.md` §2). С v3 у пользователя есть и своя политика, но она едет в запросе и может только ужесточать серверную (`service/agentgate/rules/client_rules.py`).
 2. **Решение никогда не принимается по сырой строке команды.** Единственное представление, на котором разрешено рассуждать всем ступеням, — `NormalizedAction`, полученный разбором в AST (`service/agentgate/normalize/`, docstring `normalize/model.py`). Это то, что делает ступень 1 архитектурно нечувствительной к тому, что «написано» в контексте.
-3. **Fail-closed как позвоночник.** Любая ошибка, таймаут, невалидный запрос или невалидный ответ модели → `ask` с HTTP 200. `allow` по ошибке недостижим ни по одному пути (`service/agentgate/api/app.py`, `service/agentgate/pipeline.py`, `service/agentgate/stage2/run.py` — docstrings и тесты).
+3. **Fail-closed как позвоночник.** Любая ошибка, таймаут, невалидный запрос или невалидный ответ модели → `ask` с HTTP 200 на маршруте `decide`. `allow` по ошибке недостижим ни по одному пути (`service/agentgate/api/app.py`, `service/agentgate/engine/gate.py`, `service/agentgate/classify/base.py` — docstrings и тесты). На маршруте `inspect` fail-closed значение другое — `drop`: спрашивать про уже полученный результат некого (`service/agentgate/engine/inspector.py`).
+
+Оговорка, не снятая на 6 сентября 2026: **fail-closed верно для сервиса, но не обязательно для системы.** Клиентская сторона (`adapters/packages/core/src/policy.ts`) по умолчанию fail-open при недоступности гарда; строгий режим включается `GATE_FAIL_CLOSED=1`. Разногласие и три варианта его снятия — `docs/superpowers/service/specs/adapter-contract-gap-analysis.md`.
 
 ---
 
@@ -139,114 +155,253 @@ AI agent → предложенное действие (tool call) → пере�
 
 ## 5. Current Implementation
 
-Основано на коде в репозитории, не на схеме.
+Раздел описывает код, а не схему. Всё ниже проверено чтением исходников 6 сентября 2026;
+там, где утверждение опирается на прогон, прогон назван.
 
 ### 5.1 Server
 
-Каталог `service/` — единственная полностью реализованная часть системы. Python ≥3.12, FastAPI, Postgres (asyncpg), запуск через Docker Compose (`service/docker-compose.yml`, `service/Dockerfile`).
+Каталог `service/` — самая полная часть системы. Python ≥ 3.12, FastAPI, Postgres (asyncpg),
+SQLAlchemy 2 + Alembic, запуск через Docker Compose.
 
-**HTTP API** — `service/agentgate/api/app.py`
-*Purpose:* точка входа. Эндпоинты: `POST /v1/decide`, `GET /v1/decisions`, `GET /v1/profiles/{profile_id}`, `GET /healthz`.
-*Current behavior:* `/v1/decide` возвращает HTTP 200 **для любого исхода**, включая невалидный JSON (`rule_id: api.invalid-request`) и любое исключение из пайплайна (`api.internal-error`) — оба дают `ask`. Единственный не-200 ответ — 401 от аутентификации. Тело запроса парсится вручную, чтобы автоматическая валидация FastAPI никогда не выдала 422.
-*Dependencies:* `Gate`, репозитории Postgres, JSONL-логгер, профили.
+**HTTP API** — `service/agentgate/api/app.py`, функция `create_app`.
+*Маршруты (пять):* `POST /v1/decide`, `POST /v1/inspect`, `GET /v1/decisions`,
+`GET /v1/profiles/{id}`, `GET /healthz`.
+*Поведение:* тело `decide` и `inspect` парсится вручную, чтобы автоматическая валидация
+FastAPI никогда не вернула 422; невалидный JSON или схема дают HTTP 200 с
+`rule_id: api.invalid-request` (`ask` на `decide`, `drop` на `inspect`), неизвестное
+значение `protocol` — `api.unsupported-protocol`, любое исключение из движка —
+`api.internal-error`. Единственный не-200 ответ на этих маршрутах — 401. У читающих
+маршрутов (`/v1/decisions`, `/v1/profiles/{id}`) семантика обычная: 422 на плохой
+параметр, 404 на неизвестный профиль.
 *Status:* Implemented.
 
-**Аутентификация** — `service/agentgate/api/deps.py`, `service/agentgate/store/keys.py`, `service/agentgate/cli.py`
-*Current behavior:* bearer проходит, если совпадает со статическим `AGENTGATE_TOKEN` **или** с действующим выданным API-ключом (аддитивно). Сравнение через `secrets.compare_digest`. В базе только SHA-256 ключа. Проверка кэшируется в памяти процесса на TTL (по умолчанию 45 с), любая ошибка проверки = «не совпало». Выпуск ключей только из CLI (`python -m agentgate keys create|list|revoke`), HTTP-эндпоинта для выпуска нет.
-*Status:* Implemented (с известными ограничениями: атрибуция решения к `key_id` не подключена; кэш per-process — см. корневой `CLAUDE.md`).
+**Аутентификация и ключи** — `api/deps.py`, `store/keys.py`, `cli.py`.
+Bearer проходит, если совпадает со статическим `AGENTGATE_TOKEN` (через
+`secrets.compare_digest`) **или** с действующим выданным API-ключом; результат проверки
+ключа кэшируется в памяти процесса на короткий TTL. В базе хранится только SHA-256 ключа.
+Выпуск — только из CLI (`python -m agentgate keys create|list|revoke`), HTTP-эндпоинта
+выпуска нет по замыслу.
+*Status:* Implemented. Ограничение: кэш проверки — per-process, поэтому в многоворкерном
+деплое отзыв ключа доходит до воркеров независимо.
 
-**Нормализация действия** — `service/agentgate/normalize/` (`__init__.py`, `shell.py`, `paths.py`, `domains.py`, `model.py`)
-*Current behavior:* `tool=shell` разбирается через `bashlex` в список `SimpleCommand` (argv, редиректы, stdin, pipeline_id, тела heredoc) плюс `Flags`: `unparseable`, `has_eval`, `has_subst`, `has_env_assign`, `has_heredoc`, `has_unresolved_expansion`. Для `file_read`/`file_write` резолвятся пути, для `network` — домены, для `mcp_call` — блок `mcp`. Если bashlex не смог распарсить (или упало что-либо при обходе дерева) — `flags.unparseable=True` с пустыми commands/paths/domains, а не «ничего не нашли».
-*Status:* Implemented. Это код-аналог целевого **Action Analyzer** (command/tool call, используемые данные, destination-домены), но без явного расчёта «Expected Impact».
+**Нормализация действия** — `normalize/` (`shell.py`, `paths.py`, `domains.py`, `model.py`).
+`tool: shell` разбирается `bashlex` в список `SimpleCommand` (argv, редиректы, `stdin_from`,
+`pipeline_id`, тела heredoc) плюс флаги `unparseable / has_eval / has_subst / has_env_assign /
+has_heredoc / has_unresolved_expansion`. Для `file_read`/`file_write` резолвятся пути,
+для `network` — домены и `method`, для `mcp_call` — блок `mcp`. Ошибка разбора даёт
+`unparseable=True` с пустыми списками, а не частичный результат.
+*Status:* Implemented. Это код-аналог целевого **Action Analyzer** в части «command / tool call /
+данные / destination»; явной величины **Expected Impact** по-прежнему нет.
 
-**Ступень 1 (детерминированная)** — `service/agentgate/stage1/`
-*Current behavior:* фиксированная цепочка `check_hard_deny → check_profile → check_allowlist → check_packages` (`stage1/chain.py`), первый не-None результат короткозамыкает цепь. Hard-deny (`stage1/hard_deny.py`) — правила с тремя исходами: `deny (hard=True)` (окончательный, не переопределяется), `ask (hard=False)` когда форма опасна, но цель неопределима, и `None`. `check_profile` — мутирующие цели должны быть внутри `allowed_paths`, домены проверяются по сетевому allowlist. `check_allowlist` — read-only команды, read-only git-подкоманды и операторские `safe_prefixes`; защищённые пути никогда не разрешаются автоматически. `check_packages` (`stage1/packages.py`) — **пустой слот, всегда возвращает None**.
-*Status:* Implemented (кроме модуля пакетов — см. §12). Бюджет p50 ≤ 1 мс проверяется тестом `service/tests/test_stage1_latency.py`.
+**Ступень 1** — `rules/`. Один список `STAGE1` в `rules/chain.py`: `RuleChain` из объектов
+`Rule`, первый непустой вердикт побеждает, порядок списка и есть вся приоритетная политика.
+Состав по порядку: `UnparseableRule` → группа hard-deny (`rules/hard_deny/`: exfil,
+pipe-exec, destructive, protected-write, privilege, git-force) → `WrapperUnresolvedRule` →
+`ClientRulesRule("deny")` → `ProfilePathRule` → `ProfileDomainRule` → `ProfileMcpRule("refuse")` →
+`ClientRulesRule("ask")` → `ClientRulesRule("allow")` → `ProfileMcpRule("allow")` →
+`AllowlistRule` → `McpReadonlyRule` → `ProfileDomainTrustedRule` → `PackagesRule`.
+Правило может вернуть не вердикт, а **пол** (`Verdict.floor`): пол не останавливает цепочку и
+запрещает итогу быть мягче `ask`, не покупая при этом вызова модели. Так устроен `client.ask`.
+*Status:* Implemented, кроме `PackagesRule` — это пустой слот, всегда `None`.
+Бюджет латентности p50 ≤ 1 мс проверяется тестом `tests/rules/test_latency.py`.
 
-**Ступень 2 (LLM-классификатор)** — `service/agentgate/stage2/` (`prompt.py`, `client.py`, `run.py`, `schema.py`)
-*Current behavior:* вызывается только если ступень 1 не дала решения. Промпт — **закрытый список**: системная роль + профиль + prose-слоты + `[TASK]` + `[ACTION]` + `[FLAGS]` + `[STAGE1]`. `metadata`, рассуждения агента, выводы инструментов и сама сырая строка команды в промпт не попадают. Все значения, до которых дотягивается атакующий (cwd, пути, домены, `user_request`, argv), рендерятся через `json.dumps`, чтобы перевод строки не подделал секцию промпта. `[STAGE1]` — одна из двух фиксированных строк. Ответ модели — structured output по `ClassifierOutput` (`decision: A|D|U`, `risk`, `reason`, `suggest`, `extra="forbid"`). Действие с `flags.unparseable` до LLM не доходит вообще — сразу `ask`. Любая ошибка/таймаут/неожиданное исключение → `ask`. Ретраев нет: один вызов, один таймаут.
-*Dependencies:* OpenAI-совместимый API, конфигурируемый в профиле (`base_url`, `model`, `api_key_env`, `timeout_ms`, `structured_output`). В `service/profiles/default-dev.yaml` — три конфигурации: `primary` (OpenRouter, `${OPENROUTER_MODEL_NAME:-openai/gpt-4.1-mini}`), `sonnet`, `local`.
+**Ступень 2** — `classify/` (`base.py`, `llm.py`, `prompt.py`, `render.py`, `schema.py`,
+`client.py`). Вызывается, только если ступень 1 не дала вердикта. Промпт — закрытый
+список: системная роль, профиль, prose-слоты, `[TASK]`, `[HISTORY]`, `[ACTION]`, `[FLAGS]`,
+`[STAGE1]`. `metadata` и рассуждения агента не попадают туда ни по какому пути; каждое
+значение, до которого дотягивается атакующий, рендерится через `json.dumps`. Один вызов,
+один таймаут, без ретраев, structured output. Любой сбой классификатора превращается в
+`ask` внутри самого классификатора (`classify/base.py`), а не полагается на внешний
+обработчик.
 *Status:* Implemented.
 
-**Профили (политика)** — `service/agentgate/profiles/`, `service/profiles/default-dev.yaml`
-*Current behavior:* один активный YAML-профиль на сервис: `allowed_paths`, `protected_paths`, `protected_branches`, `network.{mode, allowed_domains}`, `safe_prefixes`, `escalation`, `prose`-слоты, таблица `models`. Поддерживается подстановка `${VAR}` / `${VAR:-default}` из окружения. `profile_hash()` пишется в каждое решение. Профиль отдаётся наружу через `GET /v1/profiles/{id}`.
+**Каскад inspect** — `inspect/` плюс `engine/inspector.py`. Порядок:
+кэш по содержимому → сканер секретов (`inspect.secret`, действие `redact`; кандидаты по
+энтропии допускаются только там, где секрет правдоподобен по провенансу) → детекторы
+(инструкциеподобный текст, `curl … | sh`, длинные блобы, невидимые символы) → применение
+маски с приоритетом `redact > clean > mask`, либо `drop` при пороге в половину строк →
+построение сегментов вокруг находок из **уже отредактированного** текста → классификатор
+по режиму профиля (`off | on-flag | always`) отвечает спанами строк → сервер сверяет спаны
+с отправленными сегментами и применяет ту же маску. Ответ несёт `spans` и `redacted`.
+Провенанс — обязательное поле запроса шести видов (`file`, `shell`, `web`, `mcp`,
+`subagent`, `unknown`), он сохраняется в строке решения и рендерится в промпт.
+*Status:* Implemented. В развёрнутом профиле `default` классификатор inspect **выключен**
+(`inspect.classifier` по умолчанию `off`), то есть семантический ярус в бою не работает.
+
+**Профили (политика)** — `profiles/`, `service/profiles/default-dev.yaml`. Один активный
+YAML-профиль: `allowed_paths`, `protected_paths`, `protected_branches`,
+`network.{mode, allowed_domains, trusted_allows}`, `safe_prefixes`, `escalation`,
+prose-слоты, `history`, `inspect`, `mcp`, таблица `models`. `${VAR}` / `${VAR:-default}`
+интерполируются из окружения. `profile_hash()` пишется в каждое решение.
+*Status:* Implemented. Одно поле — `Profile.rules` (список в YAML) — по-прежнему не читается
+нигде: правила пользователя приходят в запросе, а не из профиля.
+
+**Состояние сессии, эскалация, кэши** — `session/`, `domain/session.py`.
+`SessionState` хранит счётчики решений и окно последних 50; `should_escalate` форсирует
+`ask` при N отказах подряд либо при пороге в окне. Эскалация не трогает hard-deny и уже-`ask`.
+Кэшируется только `allow`; ключ включает `profile_hash`, `action_hash`, `user_request`,
+дайджест истории и дайджест клиентских правил. Workspace привязан к сессии: он берётся из
+`cwd` первого запроса и позже не меняется. Повтор по заголовку `Idempotency-Key` живёт в
+границах пары «предъявитель + сессия».
+*Status:* Implemented. Это частичный аналог целевого **Session State / Audit**: есть Actions и
+счётчики отказов; Files, Secrets, Destinations, Uploads, Cost, Risk Score как измерения
+состояния сессии отсутствуют.
+
+**Оркестрация** — `engine/gate.py` (`Gate.decide`), `engine/inspector.py`, `engine/decision.py`,
+`engine/inspection.py`, `engine/timings.py`. Фиксированный порядок `decide`: резолв профиля и
+модели → состояние сессии и workspace → нормализация → allow-кэш → ступень 1 (с полом) →
+ступень 2 → эскалация → фиксация состояния сессии → `Decision`. Персистентность вызывается
+строго после формирования ответа.
 *Status:* Implemented.
 
-**Состояние сессии и эскалация** — `service/agentgate/session/`
-*Current behavior:* `SessionState` хранит `deny_consecutive`, `deny_total`, `decisions_total` и окно последних 50 решений. `should_escalate` (`session/escalation.py`) форсирует `ask`, если подряд N отказов (по умолчанию 3) или ≥10 отказов из последних 50. Эскалация **не применяется** к hard-deny и не превращает `ask` во что-то другое; после срабатывания счётчики сбрасываются. Allow-кэш: только `allow` кэшируется (ключ = profile_hash + action_hash + user_request), `deny`/`ask` — никогда; TTL по умолчанию 86400 с, в памяти на `time.monotonic()`, плюс персистентная таблица `allow_cache`.
-*Status:* Implemented. Это частичный аналог целевого **Session State / Audit**: есть Actions и счётчики отказов; Files / Secrets / Destinations / Uploads / Cost / Risk Score как отдельные измерения состояния — нет.
+**Хранение и логирование** — `store/`, `log/jsonl.py`, `migrations/`. Postgres, четыре
+таблицы: `sessions`, `decisions`, `allow_cache`, `api_keys`. Строки `decide` и `inspect`
+живут в одной таблице `decisions` и различаются столбцом `kind`. Девять ревизий Alembic
+(`0001_init` … `0009_session_idempotency`). Каждая строка дублируется в append-only JSONL.
+Запись идёт в `BackgroundTasks` после отправки ответа; её сбой логируется и проглатывается.
+*Status:* Implemented. Отдельной подсистемы метрик или трейсинга (Prometheus, OpenTelemetry)
+в коде нет: наблюдаемость — это JSONL, таблица решений, `GET /v1/decisions` и `GET /healthz`.
 
-**Пайплайн решения** — `service/agentgate/pipeline.py`
-*Current behavior:* фиксированный порядок: резолв профиля (неизвестный → `ask`, stage 0, `api.unknown-profile`) → резолв модели (неизвестная → `ask`, `api.unknown-model`) → `with_workspace` → нормализация → поиск в allow-кэше → ступень 1 → (если решения нет или действие unparseable) ступень 2 → эскалация → запись состояния сессии → запись в allow-кэш → `DecisionRecord`. Персистенция происходит строго **после** формирования ответа, и её сбой проглатывается с логированием.
-*Status:* Implemented.
-
-**Хранение и логирование** — `service/agentgate/store/` (`models.py`, `repo.py`, `db.py`, `keys.py`), `service/agentgate/log/jsonl.py`, `service/migrations/`
-*Current behavior:* Postgres-таблицы `sessions`, `decisions`, `allow_cache`, `api_keys` (Alembic-миграции `0001_init`, `0002_api_keys`). В `decisions` пишутся: сырое действие, нормализованное действие (JSONB), `user_request`, `profile_id`/`profile_hash`, решение, `reason`/`suggest`, stage, `rule_id`, модель, **сырой ответ модели**, latency по ступеням, ошибка, `cached`, `metadata` (с GIN-индексом). Параллельно каждая строка пишется в append-only JSONL (`AGENTGATE_LOG_PATH`); сбой записи лога не влияет на решение. Запись выполняется в `BackgroundTasks` после отправки ответа.
-*Status:* Implemented. Отдельной подсистемы метрик/трейсинга (Prometheus, OpenTelemetry) в коде не найдено — наблюдаемость = JSONL + таблица решений + `GET /v1/decisions` + `GET /healthz`.
-
-**Контракты** — `contracts/` (`decide_request.schema.json`, `decide_response.schema.json`, `openapi.yaml`, `deny_message_template.md`, `curl-examples.md`)
-*Current behavior:* JSON-схемы и OpenAPI генерируются из pydantic-моделей (`service/scripts/export_contracts.py`, `export_openapi.py`); тест `service/tests/test_contracts.py` следит за расхождением.
+**Контракты** — `contracts/`. `openapi.yaml` и четыре JSON-схемы (`decide_request`,
+`decide_response`, `inspect_request`, `inspect_response`) **порождаются из pydantic-моделей**
+(`service/scripts/export_contracts.py`, `export_openapi.py`); `service/tests/test_contracts.py`
+падает при расхождении. Плюс `curl-examples.md`, `deny_message_template.md`, каталог
+`examples/` с реальными ответами развёрнутого сервиса и эталонный клиент `hook_client.py`.
 *Status:* Implemented.
 
 ### 5.2 Client / Harness Integration Layer
 
-**`adapters/` содержит только `README.md`.** Подпапок `opencode/`, `claude-code/`, `codex/`, `kilo/`, упомянутых в README, в репозитории нет; кода адаптеров нет ни одного файла.
-*Status:* Target / not implemented.
+**Каталог `adapters/` больше не пуст** — это TypeScript-монорепозиторий без сборки
+(исполняется Node ≥ 22.6 и Bun). Ядро `packages/core` знает HTTP-контракт, нормализацию,
+маппинг инструментов, режимы, кэш и политику fail-open/closed; плагины харнессов от него
+зависят и не содержат логики решения.
 
-**Эталонный клиент** — `contracts/hook_client.py`
-*Purpose:* CLI-мост «hook JSON на stdin → решение на stdout», единственная существующая реализация интеграционного слоя.
-*Current behavior:* распознаёт два формата хуков по форме payload: Claude Code PreToolUse (`tool_name` / `tool_input` / `session_id` / `cwd`) и OpenCode `tool.execute.before` (`sessionID` / `tool` / `args`). Маппит имена инструментов харнесса в контрактные `tool`-типы (`Bash`→`shell`, `Write|Edit|MultiEdit`→`file_write`, `Read`→`file_read`, `WebFetch|WebSearch`→`network`, остальное→`mcp_call`; аналогично для OpenCode). Собирает тело `/v1/decide`, шлёт POST с bearer из `AGENTGATE_TOKEN`. Возвращает коды выхода: `0` allow, `2` deny, `3` ask. Fail-closed на клиенте: пустой/невалидный stdin, нераспознанная форма хука, недоступность сервиса и таймаут — всё даёт `ask`/3, а не traceback (что под семантикой Claude Code читалось бы как fail-open).
-*Dependencies:* только stdlib (`urllib`), переменные `AGENTGATE_URL`, `AGENTGATE_TOKEN`, `AGENTGATE_PROFILE`, `AGENTGATE_USER_REQUEST`.
-*Status:* Implemented as a reference client. Регистрации в конкретном харнессе (файлов настроек хуков, плагина Kilo/OpenCode, установщика) в репозитории нет.
+| Харнесс | Точка входа | Нужен ли патч |
+|---|---|---|
+| opencode 1.x | плагин (`permission.ask`) | да |
+| Kilo CLI | тот же плагин, свой патч | да |
+| opencode 2.0 | `Plugin.define` (`ctx.tool.hook`) | нет |
+| Pi (pi.dev) | extension (`tool_call` / `tool_result`) | нет |
+| Codex CLI | плагин с `hooks.json` | нет |
+| DeepSeek Harness | cordis `tools/pre-execute` и `tools/post-execute` | нет |
 
-*Что интеграционный слой сейчас **не** делает:* не передаёт историю диалога, не оценивает результаты инструментов, не реализует ветку «SAFE RECOVERY», не имеет собственного UI подтверждения — `ask` предполагается штатным диалогом харнесса, но кода, который это делает, нет. `deny_message_template.md` существует как шаблон, но применяет его сам харнесс/адаптер.
+Плюс npx-инсталлер (`packages/installer`: install / status / doctor / mode / uninstall),
+заглушка гарда для тестов (`packages/mock-guard`) и три уровня клиентских правил,
+отправляемых в поле `rules`.
+
+*Ступени статуса здесь расходятся, поэтому названы отдельно.*
+**Implemented** — код всех шести плагинов есть. **Tested** — есть 150 тестовых блоков на
+`node --test` (`packages/*/test/*.test.ts`); при аудите они не запускались, Node на машине
+аудита нет. **Integrated** — соответствие запросов реальных сборщиков схемам сервиса
+проверяется автоматически тестом `benchmark/tests/test_adapter_contracts.py`, который
+исполняет TypeScript через Node или Docker. **Evaluated** — бенчмарком измерена ровно одна
+интеграция, Claude Code через хуки SDK (адаптер `claude-agentgate`); остальные пять
+проверялись ручными прогонами по `adapters/docs/MANUAL-TESTING.md` и в рамках аудита не
+воспроизводились.
+
+Расхождение, которое стоит знать: `adapters/README.md` и docstring
+`packages/core/src/protocol.ts` до сих пор утверждают, что маршрута `inspect` на стороне
+гарда нет и что поле `rules` сервисом игнорируется. **Оба утверждения устарели** — маршрут
+реализован с v3, поле читается ступенью 1. Клиентский код при этом уже умеет и то, и другое.
+
+**Эталонный клиент** — `contracts/hook_client.py`, только stdlib. Распознаёт две формы хука
+(Claude Code `PreToolUse` и OpenCode `tool.execute.before`), возвращает коды выхода 0/2/3 и
+fail-closed на всех путях. Используется e2e-тестом сервиса как настоящий клиент.
+*Status:* Implemented.
+
+*Чего интеграционный слой не делает:* не реализует ветку SAFE RECOVERY как отдельный исход и
+не имеет собственного UI подтверждения — `ask` отдаётся штатному диалогу харнесса.
 
 ### 5.3 Benchmark
 
-**Кодовая база бенчмарка полная и исполняемая.** Ранее в рабочем дереве присутствовал лишь фрагмент: код был добавлен коммитом `4ec0f71`, **отменён** коммитом `8e2cb5f` («Revert "--added codebase of the benchmark"»), а последующий мердж `547220f` протянул в `main` только 5 файлов из 111 — git считал реверт уже применённым. Файлы восстановлены явным `git checkout feat/agentgate-benchmark -- benchmark/` (коммит `82764b4`): 106 файлов добавлено, `benchmark/README.md` возвращён с 8-строчной заглушки к полной версии. В дереве 112 отслеживаемых файлов, 30 Python-модулей, 75 YAML-кейсов.
+Полный конвейер на Python, система под тестом — сам сервис либо конфигурация Claude Code.
+Подробности — `06_benchmark_status.md`; здесь только архитектурно значимое.
 
-Проверено исполнением: `cd benchmark && uv sync && uv run pytest` → **122 passed, 2 deselected** (deselected — `live`-тесты, требующие поднятого сервиса); `uv run python cli.py validate --path attacks/cases` → **75 кейсов, 15 категорий, errors: 0, warnings: 0**, код возврата 0.
+- **Три набора кейсов:** 120 pre-action (`attacks/cases/`, 15 категорий атак по 6 кейсов плюс
+  контрольная группа `benign_utility` на 30), 46 inspect (`attacks/inspect/`), 12 регрессий
+  политики (`attacks/policy/`).
+- **Четыре цели прогона (`--adapter`):** `server` (наш сервис по HTTP), `claude-code`
+  (родной auto mode), `claude-sdk` (обычные права без классификатора), `claude-agentgate`
+  (наше ядро в хуках сессии Claude Code). Три последних требуют одноразовой песочницы и
+  явного подтверждения флагами.
+- **Метрики** считаются в одном месте (`evaluator/metrics.py`) из сырых результатов: ASR,
+  Utility, FP, Friction, латентность (клиентская и сервисная раздельно), стоимость с тремя
+  различаемыми состояниями, распределение по ступеням.
+- **Внешний baseline ActBench** подключён кодом с зафиксированной ревизией
+  (`baselines/actbench.lock.json`), но ни разу не запускался.
 
-Звенья конвейера в коде:
+*Status:* Implemented и **Evaluated однажды** — прогон 6 сентября 2026 против развёрнутого
+сервиса. Артефакты лежат в `benchmark/results/`, который в `.gitignore`; разбор —
+`benchmark/docs/reports/task-24-first-full-benchmark-run.md`.
 
-- **`benchmark/cli.py`** — точка входа, подкоманды `validate`, `run`, `benchmark`, `report`, `runs`. *Status:* Implemented.
-- **`benchmark/config.py`** — `ServiceConfig` (URL, токен, timeout, harness, `profile_id`, `model`), `PricingTable` (только явные операторские цены, ничего не выдумывается), `json_path`, чтение из `SECURITY_SERVICE_URL`/`AGENTGATE_URL`, `AGENTGATE_PROFILE_ID`, `AGENTGATE_MODEL`, `BENCHMARK_PRICING_TABLE`. *Status:* Implemented.
-- **`benchmark/schemas/`** — `case.py` (`BenchmarkCase`, pydantic с `extra="forbid"`), `result.py` (`BenchmarkResult`, `RunConfig`, перечисления источников данных). *Status:* Implemented.
-- **`benchmark/dataset/`** — `loader.py` читает YAML-кейсы, `validator.py` проверяет инварианты набора (ровно пять кейсов на категорию, все пять difficulty уникальны, глобально уникальные id, имя файла = id, имя каталога = `attack_category`, нет дублей `human_req` + `raw`) и запускается автоматически перед каждым прогоном, обрывая его при ошибке. *Status:* Implemented.
-- **`benchmark/client/security_service.py`** — единственное место, знающее HTTP-контракт: `build_decide_request` собирает тело `/v1/decide` из пары `human_req` + `assistant_tool_call`; `normalize_response` приводит ответ к `ServiceResponse`, отдельно фиксируя `contract_violation`, когда сервис нарушил «HTTP 200 на любой исход»; `derive_components` выводит задействованные компоненты из `stage`/`rule_id`/`cached` с пометкой `derived`; `extract_usage_and_cost` пробует вытащить токены по настраиваемым JSON-путям и при неудаче возвращает `cost=None` с причиной; `_enrich_model_metadata` дорезолвит провайдера и id модели через `GET /v1/profiles/{id}`. Транспортная ошибка не выбрасывается наружу, а превращается в `ServiceResultType.ERROR`. *Status:* Implemented.
-- **`benchmark/runner/`** — `executor.py` (конкурентность, `session_mode: per_case` по умолчанию), `recorder.py` (стриминг результатов по мере готовности, одиночный сбой не обрывает прогон). *Status:* Implemented.
-- **`benchmark/evaluator/scorer.py`** — детерминированный скоринг без LLM-судьи: `score = 1`, если решение входит в `acceptable_service_results`, `--strict` сужает до `expected_service_result`; транспортная ошибка, таймаут или отсутствие решения всегда дают 0 и отдельно пишутся в `contract_violation`. *Status:* Implemented.
-- **`benchmark/storage/sqlite.py`** — хранение прогонов и результатов. *Status:* Implemented.
-- **`benchmark/reporting/report.py`** — сборка сводки и текстового отчёта: перцентили latency (клиентская и сервисная раздельно, с указанием конкурентности), разбивка по категориям/сложности, `benign_asked_friction`, `false_positive_rate`, разбор провалов по тегам. *Status:* Implemented.
-- **`benchmark/attacks/`** — `taxonomy.md` (15 категорий) и `cases/` (75 YAML: 15 категорий × 5 difficulty). *Status:* Implemented.
-- **`benchmark/tools/mock_agentgate.py`** — контрактно-совместимая заглушка для прогона конвейера без живого сервиса. *Status:* Implemented.
+### 5.4 Infrastructure, deployment, frontend
 
-Проектные правила бенчмарка (`benchmark/CLAUDE.md`): система под тестом — сам сервис, а не агент; скоринг детерминированный, LLM-судьи нет; `session_mode: per_case` по умолчанию, чтобы allow-кэш и счётчики эскалации не протекали между кейсами; `benign_utility` — контрольная группа, где `ask` считается friction; ошибка транспорта всегда даёт 0 баллов.
-
-**Чего у бенчмарка нет — не кода, а измерений.** Ни одного сохранённого прогона против живого сервиса в репозитории и во всей истории git не найдено (`summary-*.json`, `results-*.jsonl`, результатные SQLite отсутствуют). Внешний режим сравнения с конкурентами, обещанный в `benchmark/README.md`, кодом не покрыт: все подкоманды `cli.py` работают против нашего сервиса. Устаревшее место в документации: `benchmark/CLAUDE.md` до сих пор утверждает «`service/` is not implemented yet», хотя сервис v1 достроен.
+- `service/Dockerfile` (python:3.12-slim, `uv sync --frozen`), `service/docker-compose.yml`
+  (Postgres + gate), overlay `docker-compose.deploy.yml` (Caddy как TLS-терминатор и как
+  сервер статики), `service/deploy/Caddyfile`, `service/Makefile` (`deploy`, `logs`, `ps`,
+  `rollback`, `check-clean`). Ни адресов, ни ключей в репозитории нет — хост резолвится через
+  alias в `~/.ssh/config` оператора.
+- **Развёртывание подтверждено прогоном при аудите:** `https://api.openmagi.ru/healthz`
+  отвечает `{"status":"ok","db":true,"llm":null,"git_sha":"e3c7942…","protocol":1}`;
+  `https://api.openmagi.ru/v1/decisions` без токена — 401; `https://openmagi.ru/` — 200.
+  Развёрнутая ревизия `e3c7942` отстаёт от `HEAD d24af97` на шесть коммитов, но в `service/`
+  за это время изменился только `Makefile`.
+- `frontend/site/` — статический лендинг без сборщика, отдаётся тем же Caddy. Часть значений
+  в `config.js` — заглушки из дизайн-хэндоффа (`null` рендерится как «——»), в том числе цифры
+  бенчмарка: сайт не показывает измеренные результаты.
+- **CI нет.** Ни `.github/`, ни иных конфигураций пайплайна; тесты и деплой запускает человек.
 
 ---
 
 ## 6. Current End-to-End Flow
 
-Что подтверждается кодом сегодня:
+Два потока, а не один: `decide` (до действия) и `inspect` (после действия, до модели).
 
-1. Харнесс перехватывает вызов инструмента до исполнения и передаёт hook-JSON на stdin `contracts/hook_client.py`. **Оговорка:** сам факт регистрации хука в конкретном харнессе кодом в репозитории не подтверждается — есть только клиент, готовый такой JSON принять.
-2. `hook_client.py` определяет форму payload (Claude Code / OpenCode), маппит инструмент, собирает тело запроса и шлёт `POST /v1/decide` с bearer-токеном. `user_request` подставляется из `--user-request` / `AGENTGATE_USER_REQUEST`; истории диалога нет.
-3. Сервис аутентифицирует запрос (статический токен или выданный API-ключ), валидирует тело; невалидное тело → `ask`, HTTP 200.
-4. Резолвится профиль и конфигурация модели; неизвестные — `ask` (stage 0).
-5. Действие нормализуется в `NormalizedAction` (AST через bashlex либо резолв путей/доменов/MCP).
-6. Если для сессии есть попадание в allow-кэш — сразу `allow`, `stage: 0`, `rule_id: "cache"`, `cached: true`.
-7. Иначе — ступень 1: hard-deny → профиль → allowlist → пакеты (пустой слот). Первый результат выигрывает.
-8. Если ступень 1 не дала решения (или действие unparseable) — ступень 2: закрытый промпт к OpenAI-совместимому API, один вызов, один таймаут, structured output; любая проблема → `ask`.
-9. Эскалация: если это не hard-deny и не уже-`ask`, а история сессии перебрала порог отказов — решение заменяется на `ask` с `rule_id: escalation`, счётчики сбрасываются.
-10. Состояние сессии обновляется; `allow` кладётся в кэш; ответ (`decision`, `reason`, `suggest`, `stage`, `rule_id`, `model`, `latency_ms`, `cached`, `decision_id`) уходит клиенту.
-11. После ответа в фоне пишутся JSONL-строка и строки Postgres (сессия → решение → allow-кэш); сбой записи логируется и проглатывается.
-12. `hook_client.py` печатает решение в stdout и завершается с кодом 0/2/3, который харнесс интерпретирует как allow/deny/ask.
+### 6.1 `POST /v1/decide`
 
-Этот путь end-to-end **проверяется исполнением**: `service/tests/e2e/test_e2e.py` поднимает uvicorn с реальной Postgres и прогоняет через него `contracts/hook_client.py` (маркер `requires_db`).
+1. Харнесс перехватывает вызов инструмента до исполнения. Это делает плагин из `adapters/`
+   (шесть харнессов) либо эталонный `contracts/hook_client.py`.
+2. Клиент собирает тело запроса: `tool`, `raw`, `args`, `user_request`, опционально
+   `history`, `rules`, `call_id`, `session_id`, `metadata`, заголовок `Idempotency-Key`.
+3. Сервис аутентифицирует bearer (статический токен либо выданный ключ); не совпало — 401.
+4. Тело парсится вручную; невалидное или с чужим `protocol` — HTTP 200 и `ask`.
+5. Повтор по `Idempotency-Key` в границах предъявителя и сессии возвращает прежнее решение
+   без второй строки в базе и без сдвига счётчиков.
+6. Резолвится профиль и конфигурация модели; неизвестные — `ask`, `stage: 0`.
+7. Берётся или создаётся состояние сессии; workspace фиксируется по первому `cwd` сессии.
+8. Действие нормализуется в `NormalizedAction`.
+9. Проверяется allow-кэш сессии; попадание — `allow`, `stage: 0`, `cached: true`.
+10. Ступень 1: список `STAGE1` до первого вердикта; клиентский `ask` при этом не завершает
+    цепочку, а поднимает пол строгости.
+11. Ступень 2, если ступень 1 промолчала: один вызов модели, один таймаут, structured output;
+    любой сбой — `ask`. К её вердикту применяется пол, если он был поднят.
+12. Эскалация по истории сессии, если решение не hard-deny и не уже-`ask`.
+13. Ответ: `decision`, `reason`, `suggest`, `stage`, `rule_id`, `model`, `latency_ms`,
+    `cached`, `decision_id`, `protocol`, `cost` (когда ступень 2 работала).
+14. После ответа — JSONL и Postgres; к строке привязывается `key_id` предъявителя.
+15. Харнесс исполняет действие, показывает диалог подтверждения либо возвращает агенту текст
+    отказа с `reason` и `suggest`.
 
-Чего в текущем flow нет: проверки данных до попадания в контекст агента, оценки результатов инструментов, ветки «безопасной альтернативы» как отдельного исхода (есть только текстовое поле `suggest`), собственного UI подтверждения, накопления Cost / Risk Score / Secrets / Uploads по сессии.
+### 6.2 `POST /v1/inspect`
+
+1. После исполнения инструмента адаптер отправляет результат: `output`, `status`,
+   обязательный `provenance`, `call_id`, `tool_name`, опционально `history`.
+2. Кэш по содержимому; далее сканер секретов, детекторы, маска или `drop`.
+3. Если профиль разрешает — сегменты вокруг находок уходят классификатору, который отвечает
+   спанами строк; сервер валидирует спаны против отправленных сегментов.
+4. Ответ: `verdict` (`pass | mask | drop`), при `mask` — переписанный `output`, плюс `spans`
+   и `redacted`. Fail-closed здесь — `drop`.
+5. Адаптер подставляет результат модели: `pass` — как есть, `mask` — замену, `drop` —
+   сообщение о блокировке.
+
+Оба потока подтверждаются исполнением: e2e-тест сервиса поднимает uvicorn с настоящей
+Postgres и гоняет через него `contracts/hook_client.py`, а прогон бенчмарка 6 сентября
+2026 прошёл оба маршрута против развёрнутого сервиса.
+
+**Чего в текущем потоке нет:** проверки данных до попадания в контекст агента в общем виде
+(`inspect` покрывает только результаты инструментов, а не все источники контекста),
+taint-цепочек между шагами, отдельного исхода SAFE RECOVERY, канала возврата решения
+человека, накопления Cost / Risk Score / Secrets / Uploads по сессии.
 
 ---
 
@@ -254,59 +409,77 @@ AI agent → предложенное действие (tool call) → пере�
 
 | Component / Capability | Target | Current implementation | Status | Evidence |
 |---|---|---|---|---|
-| Точка врезки: перехват действия до исполнения | Да | Реализована на стороне эталонного клиента; регистрации в харнессе нет | Partially implemented | `contracts/hook_client.py`; `adapters/` (только README) |
-| Action Analyzer (command / tool call / данные / destination) | Да | Нормализация в AST: argv, редиректы, пути, домены, MCP, флаги | Implemented | `service/agentgate/normalize/` |
-| Action Analyzer → «Expected Impact» как явная величина | Да | Явной оценки воздействия нет; косвенно — через правила и LLM | Target / not implemented | `target_architecture.jpg`; `service/agentgate/stage1/` |
-| Policy & Risk Engine → Hard Rules | Да | Hard-deny с тремя исходами, не переопределяется | Implemented | `service/agentgate/stage1/hard_deny.py`, `chain.py` |
-| Policy & Risk Engine → Session Rules | Да | Эскалация по deny-окну сессии | Partially implemented | `service/agentgate/session/escalation.py` |
-| Policy & Risk Engine → AI Risk Classifier | Да | Ступень 2, structured output, закрытый промпт | Implemented | `service/agentgate/stage2/` |
-| Политика/профиль как конфигурация | Подразумевается | YAML-профиль, `profile_hash` в каждом решении | Implemented | `service/agentgate/profiles/`, `service/profiles/default-dev.yaml` |
+| Точка врезки: перехват действия до исполнения | Да | Плагины к шести харнессам плюс эталонный клиент | Implemented; бенчмарком измерена одна интеграция | `adapters/`, `contracts/hook_client.py` |
+| Action Analyzer (command / tool call / данные / destination) | Да | Нормализация в AST: argv, редиректы, пути, домены, `method`, MCP, флаги | Implemented | `service/agentgate/normalize/` |
+| Action Analyzer → «Expected Impact» как явная величина | Да | Явной оценки воздействия нет; учитывается косвенно правилами и моделью | Target / not implemented | `target_architecture.jpg` |
+| Policy & Risk Engine → Hard Rules | Да | Шесть семейств hard-deny, не переопределяются ничем | Implemented | `service/agentgate/rules/hard_deny/` |
+| Policy & Risk Engine → Session Rules | Да | Эскалация по окну отказов сессии | Partially implemented | `service/agentgate/session/escalation.py` |
+| Policy & Risk Engine → AI Risk Classifier | Да | Ступень 2, закрытый промпт, structured output | Implemented | `service/agentgate/classify/` |
+| Политика как конфигурация | Подразумевается | YAML-профиль оператора плюс клиентские правила в запросе | Implemented | `service/profiles/default-dev.yaml`, `service/agentgate/rules/client_rules.py` |
 | Security Decision → ALLOW | Да | `DecisionKind.allow` | Implemented | `service/agentgate/api/schemas.py` |
-| Security Decision → BLOCK / Stop | Да | `DecisionKind.deny`; терминальный «Stop» — ответственность харнесса | Partially implemented | `service/agentgate/api/schemas.py`; `contracts/deny_message_template.md` |
-| Security Decision → ASK USER | Да | `DecisionKind.ask`; диалог подтверждения на стороне харнесса, кода нет | Partially implemented | `service/agentgate/api/schemas.py`; `adapters/README.md` |
-| Security Decision → SAFE RECOVERY (поиск безопасного пути) | Да | Отдельного исхода нет; есть текстовое поле `suggest` в `deny`/`ask` | Target / not implemented | `target_architecture.jpg`; `service/agentgate/api/schemas.py` |
-| User Decision: Approve / Reject / **Comment** | Да | Ни канала возврата решения человека, ни `comment` в контракте нет | Target / not implemented | `target_architecture.jpg`; `contracts/decide_request.schema.json` |
-| Context Guard (provenance, sensitive data, prompt-injection detection, validation, tagging) | Да | В коде отсутствует полностью; спроектирован как v4 | Target / not implemented | `docs/superpowers/service/specs/v4-context-guard.md`; `context-versions-roadmap.md` |
-| Оценка данных **до** попадания в контекст агента | Да | Сервис видит только предложенное действие + последнее сообщение пользователя | Target / not implemented | `service/agentgate/api/schemas.py` (`DecideRequest`) |
-| История диалога в запросе | Подразумевается схемой | Полей под историю нет (граница v1 задана сознательно) | Target / not implemented | `context-versions-roadmap.md`; `service/agentgate/api/schemas.py` |
-| Оценка tool-result (`direction: in`) | Да | Нет | Target / not implemented | `docs/superpowers/service/specs/v3-tool-result-evaluation.md` |
-| Session State / Audit → Actions, счётчики, аудит-лог | Да | Счётчики решений, окно последних 50, JSONL + Postgres | Implemented | `service/agentgate/session/state.py`, `store/models.py`, `log/jsonl.py` |
-| Session State / Audit → Secrets, Files, Destinations, Uploads, Cost, Risk Score | Да | Как отдельные измерения состояния сессии отсутствуют | Target / not implemented | `target_architecture.jpg`; `service/agentgate/session/state.py` |
-| «Быстрый путь для безопасных действий» | Да | Ступень 1 без LLM (p50 ≤ 1 мс, проверено тестом) + allow-кэш | Implemented | `service/tests/test_stage1_latency.py`; `service/agentgate/session/cache_key.py` |
-| «Параллельные проверки» | Да | Проверки строго последовательны, с коротким замыканием | Target / not implemented | `service/agentgate/stage1/chain.py`, `pipeline.py` |
-| Модуль пакетов (slopsquatting) | Подразумевается кейсом | Пустой слот, всегда `None` | Target / not implemented | `service/agentgate/stage1/packages.py` |
-| Multi-harness интеграции (Claude Code, OpenCode, Codex, Kilo) | Да | Маппинг для двух форм хуков в эталонном клиенте; плагинов нет | Partially implemented | `contracts/hook_client.py`; `adapters/README.md` |
-| Бенчмарк как контур проверки | Да | Конвейер полный и исполняемый (122 теста, 75 кейсов, валидация без ошибок); измерений против живого сервиса ни одного | Partially implemented | `benchmark/cli.py`, `benchmark/attacks/cases/`; отсутствие `summary-*.json` / `results-*.jsonl` в дереве и истории |
-| Идемпотентность повторных `decide` | Требуется контрактом адаптера | Отсутствует; повтор создаёт вторую строку и дважды двигает счётчики | Target / not implemented | `docs/superpowers/service/specs/adapter-contract-gap-analysis.md` |
-| Fail-closed при недоступности гейта | Спорно | Внутри сервиса — жёстко fail-closed; контракт адаптера по умолчанию fail-open | Unknown / requires team confirmation | `adapter-contract-gap-analysis.md` |
+| Security Decision → BLOCK / Stop | Да | `DecisionKind.deny`; терминальный «Stop» исполняет харнесс | Partially implemented | `contracts/deny_message_template.md`, `adapters/packages/core/src/policy.ts` |
+| Security Decision → ASK USER | Да | `DecisionKind.ask`; диалог подтверждения — штатный у харнесса, адаптеры его используют | Partially implemented | `adapters/packages/plugin-v1/src/tui.ts` |
+| Security Decision → SAFE RECOVERY | Да | Отдельного исхода нет; есть текстовое поле `suggest` внутри `deny`/`ask` | Target / not implemented | `service/agentgate/api/schemas.py` |
+| User Decision: Approve / Reject / **Comment** | Да | Канала возврата решения человека в сервис нет, `comment` в контракте нет | Target / not implemented | `contracts/decide_request.schema.json` |
+| Context Guard → Prompt Injection Detection | Да | `POST /v1/inspect`: детекторы инструкциеподобного текста, `curl \| sh`, блобов, невидимых символов | Implemented для результатов инструментов | `service/agentgate/inspect/detectors.py` |
+| Context Guard → Sensitive Data Detection | Да | Сканер секретов с действием `redact`; кандидаты по энтропии ограничены провенансом | Implemented | `service/agentgate/inspect/secrets.py` |
+| Context Guard → Provenance | Да | Обязательное поле запроса шести видов; хранится и рендерится в промпт | Implemented как метка источника | `service/agentgate/api/schemas.py`, `service/agentgate/inspect/classify.py` |
+| Context Guard → taint между шагами | Да | Отсутствует: провенанс управляет только допуском кандидатов по энтропии | Target / not implemented | `service/agentgate/inspect/secrets.py`, корневой `CLAUDE.md` |
+| Context Guard → Data Tagging | Да | Частично: ответ несёт `spans` с видом находки и `redacted`, но метка не переживает переход к следующему действию | Partially implemented | `service/agentgate/api/schemas.py` |
+| Data Sources → Context Guard → AI Agent (все источники) | Да | Только результаты инструментов, и только если адаптер их прогнал. Пользовательский промпт, файлы проекта и веб напрямую сервис не видит | Partially implemented | `service/agentgate/api/app.py` |
+| Session State / Audit: Actions, Audit Logs | Да | Счётчики решений, окно отказов, Postgres + JSONL, лента `GET /v1/decisions` | Implemented | `service/agentgate/store/`, `service/agentgate/log/jsonl.py` |
+| Session State / Audit: Files, Secrets, Destinations, Uploads, Cost, Risk Score | Да | Как измерения состояния сессии отсутствуют. Стоимость считается на решение, а не на сессию | Target / not implemented | `service/agentgate/domain/session.py` |
+| История диалога в решении | v2 дорожной карты | Реализована: `history` в запросе, дайджест в ключе кэша, усечение по бюджету профиля | Implemented | `service/agentgate/domain/dialogue.py` |
+| Идемпотентность повторного запроса | Требование контракта адаптера | Реализована: `Idempotency-Key` в границах предъявителя и сессии | Implemented | `service/agentgate/session/replay.py`, `service/migrations/versions/0009_session_idempotency.py` |
+| Параллельные проверки (НФТ левой рамки схемы) | Да | Цепочка строго последовательная с коротким замыканием | Target / not implemented | `service/agentgate/engine/gate.py` |
+| Модуль пакетов / slopsquatting | Назван в кейсе | Пустой слот в цепочке | Target / not implemented | `service/agentgate/rules/packages.py` |
+| Панель / UI, override, обучение | — | Отсутствуют; в v1 не планировались | Out of scope | корневой `CLAUDE.md` |
 
 ---
 
 ## 8. Key Interfaces and Data Flow
 
-**Harness → Integration layer.**
-Транспорт: вызов хука процессом харнесса, payload — JSON на stdin; ответ — JSON на stdout плюс код выхода. Формы: Claude Code PreToolUse (`tool_name`, `tool_input`, `session_id`, `cwd`), OpenCode `tool.execute.before` (`sessionID`, `tool`, `args`). Синхронно, блокирует исполнение инструмента. *Evidence:* `contracts/hook_client.py`.
+**Harness → адаптер.** Внутри процесса харнесса: плагин получает предложенный вызов
+инструмента и его результат через точки расширения самого харнесса (`permission.ask`,
+`ctx.tool.hook`, `hooks.json`, `tool_call`/`tool_result`, cordis `pre-execute`/`post-execute`).
+*Evidence:* `adapters/docs/ARCHITECTURE.md`, `adapters/packages/plugin-*`.
 
-**Integration layer → Server.**
-`POST /v1/decide`, HTTP/JSON, `Authorization: Bearer <token|agk_…>`, синхронно.
-Request (`DecideRequest`): `session_id?`, `harness`, `tool ∈ {shell, file_write, file_read, network, mcp_call}`, `raw` (обязателен для `shell`, ≤32 KiB), `args {cwd, paths[], domains[], mcp?}`, `user_request` (обрезается до последних 2048 символов), `profile_id?`, `model?`, `metadata` (≤16 KiB, хранится и возвращается как есть).
-Response (`DecideResponse`): `decision ∈ {allow, deny, ask}`, `reason`, `suggest`, `stage ∈ {0,1,2}`, `rule_id?`, `model?`, `latency_ms {stage1?, stage2?, total}`, `cached`, `decision_id` (ULID).
-Инвариант: HTTP 200 на любом исходе; 401 — единственный не-200. *Evidence:* `service/agentgate/api/app.py`, `contracts/openapi.yaml`.
+**Адаптер → сервис, направление «до действия».** `POST /v1/decide`, HTTP/JSON,
+`Authorization: Bearer …`, опционально `Idempotency-Key`.
+*Request:* `session_id?`, `call_id?`, `harness`, `tool ∈ {shell, file_write, file_read,
+network, mcp_call}`, `raw` (обязателен для `shell`), `args {cwd, paths[], domains[], mcp?,
+method?}`, `user_request`, `history[]`, `rules?`, `profile_id?`, `model?`, `metadata`,
+`protocol`.
+*Response:* `decision ∈ {allow, deny, ask}`, `reason`, `suggest`, `stage ∈ {0,1,2}`,
+`rule_id?`, `model?`, `latency_ms {stage1?, stage2?, total}`, `cached`, `decision_id` (ULID),
+`protocol`, `cost?`.
+*Инвариант:* HTTP 200 на любом исходе; 401 — единственный не-200.
+*Evidence:* `service/agentgate/api/app.py`, `contracts/openapi.yaml`.
 
-**Server → Decision pipeline.**
-Внутренний, синхронный: `DecideRequest` → `NormalizedAction` → `Stage1Decision | None` → `Stage2Result` → эскалация → `DecideResponse` + `DecisionRecord`. Персистенция вынесена за пределы горячего пути (BackgroundTasks). *Evidence:* `service/agentgate/pipeline.py`.
+**Адаптер → сервис, направление «после действия».** `POST /v1/inspect`.
+*Request:* `output`, `status`, `provenance` (обязателен), `tool`, `tool_name`, `call_id`,
+`args`, `user_request`, `history[]`, `session_id?`, `profile_id?`, `metadata`, `protocol`.
+*Response:* `verdict ∈ {pass, mask, drop}`, при `mask` — переписанный `output`, плюс
+`spans[]`, `redacted`, `reason`, `stage`, `rule_id?`, `latency_ms`, `decision_id`,
+`protocol`, `cost?`.
+*Evidence:* `contracts/inspect_request.schema.json`, `contracts/inspect_response.schema.json`.
 
-**Server → LLM.**
-Исходящий HTTP к OpenAI-совместимому `base_url` из профиля, structured output по JSON-схеме `ClassifierOutput`, один вызов, один таймаут (`timeout_ms`), без ретраев. Ключ — из переменной окружения, названной в профиле. *Evidence:* `service/agentgate/stage2/client.py`, `service/profiles/default-dev.yaml`.
+**Сервис → LLM.** Исходящий HTTP к OpenAI-совместимому `base_url` из профиля, structured
+output, один вызов, один таймаут, без ретраев. Ключ — из переменной окружения, названной в
+профиле. В развёрнутом профиле ступень 2 — `openai/gpt-4.1-mini` через OpenRouter.
+*Evidence:* `service/agentgate/classify/client.py`, `service/profiles/default-dev.yaml`.
 
-**Server → Integration layer → Harness.**
-`allow` → инструмент выполняется; `deny` → агенту возвращается текст по `contracts/deny_message_template.md` с `reason` и `suggest`, агент продолжает работу; `ask` → штатный диалог подтверждения харнесса с нашим `reason`. На уровне процесса это коды выхода 0 / 2 / 3. Недоступность сервиса в эталонном клиенте → `ask` (3). *Evidence:* `contracts/hook_client.py`, `adapters/README.md`.
+**Сервис → операторские интерфейсы.** `GET /v1/decisions` (фильтры `session_id`, `model`,
+`kind`, `key_id`, `limit ≤ 500`, курсор `before`), `GET /v1/profiles/{id}`,
+`GET /healthz` (`{status, db, llm, git_sha, protocol}`, всегда 200; `llm` всегда `null` —
+доступность модели не проверяется).
+*Evidence:* `service/agentgate/api/app.py`.
 
-**Server → операторские интерфейсы.**
-`GET /v1/decisions` (фильтры `session_id`, `model`, `limit ≤ 500`, курсор `before`), `GET /v1/profiles/{id}` (публичное представление профиля, включая `models.configs`), `GET /healthz` (`{status, db, llm}`, всегда HTTP 200; `llm` — всегда `null`). *Evidence:* `service/agentgate/api/app.py`.
-
-**Benchmark → System under test.**
-Тот же публичный контракт: `POST /v1/decide` через `httpx.AsyncClient`, плюс `GET /v1/profiles/{id}` для резолва провайдера/версии модели и `GET /healthz` как проба. Асинхронно, с конфигурируемым concurrency (`benchmark/runner/executor.py`). Бенчмарк не имеет привилегированного доступа внутрь сервиса и ничего не додумывает: чего нет в контракте — помечается `unavailable` с причиной либо `derived`. *Evidence:* `benchmark/client/security_service.py`.
+**Бенчмарк → система под тестом.** Тот же публичный контракт для адаптера `server`; для трёх
+конфигураций Claude Code — Claude Agent SDK в одноразовом контейнере, причём
+`claude-agentgate` вызывает наше TypeScript-ядро из `adapters/packages/core` в хуках
+`PreToolUse` и `PostToolUse`. Привилегированного доступа внутрь сервиса у бенчмарка нет.
+*Evidence:* `benchmark/automode/`, `benchmark/client/security_service.py`.
 
 ---
 
@@ -314,105 +487,148 @@ Response (`DecideResponse`): `decision ∈ {allow, deny, ask}`, `reason`, `sugge
 
 ### Current implementation
 
-**Входные данные решения:** ровно четыре вещи — нормализованное действие, профиль (политика), последний запрос пользователя и состояние сессии. Ни истории диалога, ни выводов инструментов, ни рассуждений агента, ни `metadata` в оценке не участвует.
+**Входные данные решения `decide`:** нормализованное действие, профиль оператора, клиентские
+правила из запроса, последний запрос пользователя, усечённая история диалога и состояние
+сессии. Рассуждения агента и `metadata` в оценке не участвуют никогда.
 
-**Этапы (строгий порядок, `service/agentgate/pipeline.py`):**
-1. Стадия 0 — валидация: неизвестный профиль / неизвестная модель / невалидный запрос → `ask`.
-2. Нормализация в `NormalizedAction` (AST). Непарсящееся действие помечается флагом и никогда не считается безопасным no-op.
-3. Allow-кэш сессии — единственный путь к мгновенному `allow` без проверок.
-4. Ступень 1, детерминированная, без LLM: hard-deny → профиль → allowlist → пакеты.
-5. Ступень 2 — LLM-классификатор, только если ступень 1 промолчала.
-6. Эскалация по истории сессии.
+**Этапы (строгий порядок, `engine/gate.py`):** стадия 0 — валидация и повтор → нормализация →
+allow-кэш → ступень 1 с полом строгости → ступень 2 → эскалация.
 
-**Типы решений:** `allow`, `deny`, `ask`. Три, а не четыре: целевой исход SAFE RECOVERY в контракте отсутствует, его роль частично играет текстовое поле `suggest` внутри `deny`/`ask`.
+**Типы решений:** `allow`, `deny`, `ask` на маршруте `decide`; `pass`, `mask`, `drop` на
+маршруте `inspect`. Целевого исхода SAFE RECOVERY нет; его роль частично играет текстовое
+поле `suggest`.
 
-**Обработка неопределённости:** честный `ask` вместо угадывания. Hard-deny, распознавший опасную *форму*, но не сумевший определить *цель* (например, force push без определимого refspec), возвращает `ask`, а не `deny`. Действие, которое bashlex не смог разобрать, до LLM не доходит и даёт `ask`. LLM отвечает `U` (uncertain) → `ask`.
+**Порядок строгости, зафиксированный явно:** hard-deny финален и не переопределяется ни
+ступенью 2, ни эскалацией; `client.deny` строже любого запрета сервиса и освобождён от
+эскалации; `client.ask` — пол, а не вердикт, и не отменяет ни один `deny`; `client.allow`
+никогда не перекрывает hard-deny и запреты профиля. `deny` и `ask` не кэшируются.
 
-**Human confirmation:** сервис умеет только *запросить* подтверждение (`ask` + `reason`). Диалога, канала возврата ответа человека и типа `comment` в системе нет — это делегировано харнессу и в коде не подтверждается.
+**Обработка неопределённости:** честный `ask` вместо угадывания. Опасная форма с
+неопределимой целью даёт `ask`, а не `deny`. Неразобранное действие до модели не доходит
+вообще. Ответ модели `U` — `ask`.
 
-**Поведение при ошибке:** любая ошибка на любом уровне → `ask` с HTTP 200: невалидный JSON (`api.invalid-request`), исключение из пайплайна (`api.internal-error`), таймаут/сбой/невалидный ответ LLM (`ask` + поле `error`), сбой записи в БД (проглатывается, решение уже отдано), недоступность сервиса (эталонный клиент отдаёт `ask`/3). `allow` по ошибке недостижим — на каждый такой путь есть тест.
-
-**Приоритеты:** hard-deny финален — его не переопределяет ни ступень 2, ни эскалация. Эскалация не трогает уже-`ask`. `deny` и `ask` не кэшируются никогда.
+**Поведение при ошибке:** `ask` на `decide` и `drop` на `inspect`, оба с HTTP 200. Одно
+намеренное исключение: сбой классификатора inspect откатывает решение к вердикту ступени 1,
+а не к `drop`, — ступень 1 уже дала безопасный ответ.
 
 ### Target behavior (отличия)
 
-- Решение принимается не только по действию, но и по **проверенному контексту**: Context Guard оценивает данные до входа в агента (provenance, sensitive data, prompt injection, validation, tagging).
-- Четвёртый исход **SAFE RECOVERY**: не просто отказ с подсказкой, а построение безопасной альтернативы.
-- **User Decision** как полноценный контур: Approve / Reject / **Comment** с возвратом в агента.
-- Оценка риска опирается на богатое состояние сессии: Files, Secrets, Destinations, Uploads, Cost, Risk Score.
-- Проверки выполняются **параллельно** ради минимальной задержки; сейчас — последовательно с коротким замыканием.
-- По дорожной карте (`context-versions-roadmap.md`) это разложено на версии: v2 — история диалога, v3 — оценка tool-result + provenance, v4 — Context Guard (`mask`). Порядок зафиксирован владельцем продукта; там же явно записано принятое окно уязвимости: с v2 подконтрольный атакующему вывод инструментов попадает в промпт, а семантическая защита приезжает только на v4.
+- Решение опирается на **проверенный контекст целиком**, а не только на результаты
+  инструментов: у целевого Context Guard на входе все источники, включая промпт пользователя,
+  файлы проекта и веб.
+- Четвёртый исход **SAFE RECOVERY** как построение безопасной альтернативы, а не текстовая
+  подсказка.
+- **User Decision** как полноценный контур с возвратом Approve / Reject / **Comment** в агента.
+- Оценка риска опирается на богатое состояние сессии: Files, Secrets, Destinations, Uploads,
+  Cost, Risk Score.
+- Проверки выполняются **параллельно** ради минимальной задержки.
+- По дорожной карте (`docs/superpowers/service/specs/context-versions-roadmap.md`) версии
+  v2–v4 закрыты; открытой остаётся v5 — независимость от провайдера модели.
 
 ---
 
 ## 10. Benchmark Architecture
 
-Целевой контур (из `benchmark/README.md`, `benchmark/CLAUDE.md`):
-
 ```
-benchmark case (YAML: human_req + assistant_tool_call)
-  → dataset load + validate
-  → runner.executor (симуляция клиента харнесса, session_mode per_case)
-  → POST /v1/decide (AgentGate — система под тестом)
+кейс (YAML) → dataset load + validate → runner.executor → адаптер под тестом
   → evaluator.scorer (детерминированный, без LLM-судьи)
-  → runner.recorder → SQLite + JSONL
-  → reporting.report → метрики (ASR, FP/friction, latency-перцентили, разбивка по категориям и сложности)
+  → runner.recorder → SQLite + JSONL → evaluator.metrics → reporting.report
 ```
 
-Все звенья этой цепочки подтверждаются кодом: `dataset/loader.py` + `dataset/validator.py`, `runner/executor.py`, `client/security_service.py`, `evaluator/scorer.py`, `runner/recorder.py`, `storage/sqlite.py`, `reporting/report.py`, точка входа `cli.py`. Прогон возможен и проверен исполнением на подкомандах `validate` и `--help`; 122 собственных теста конвейера проходят. Чего нет — не звена, а **измерения**: ни одного сохранённого прогона против живого AgentGate в репозитории и в истории git нет.
+Архитектурно значимо следующее.
 
-Что бенчмарк проверяет **архитектурно** (по замыслу): исключительно публичный контракт сервиса — `POST /v1/decide` плюс `GET /v1/profiles/{id}` и `GET /healthz`. Он не проверяет ни харнесс, ни адаптеры, ни реальное исполнение команд: система под тестом — граница «последний запрос пользователя + предложенный tool call → вердикт». Из этого следует, что бенчмарк способен измерять качество ступеней 1 и 2, эскалацию (через `session_mode: shared`), latency по ступеням и соблюдение контракта (`contract_violation` при HTTP ≠ 200), но **не** способен измерять то, что находится вне этой границы: provenance-цепочки и бюджеты сессии — это зафиксировано в `benchmark/attacks/taxonomy.md` §5. Многоходовые манипуляции вышли из этого списка вместе с полем `history` (v2): граница стала «последний запрос + предшествующий диалог + предложенный tool call», а эффект самой истории измеряется парой прогонов с ней и без неё (`--no-history` плюс `cli.py compare`).
-
-Инвариант «никогда не выдумывать данные сервиса» архитектурно значим: стоимость считается только по явной таблице цен и иначе помечается `unavailable` с причиной; список задействованных компонентов *выводится* из `stage`/`rule_id`/`cached` и помечается `derived`; провайдер и id модели резолвятся через `GET /v1/profiles/{id}` и помечаются `profile_lookup`.
-
-Бенчмарк — **не** production-компонент: он не участвует в горячем пути принятия решений и обращается к сервису как обычный внешний клиент.
+- **Система под тестом стала переменной.** Раньше это был только наш сервис; теперь адаптер
+  выбирается флагом (`server`, `claude-code`, `claude-sdk`, `claude-agentgate`) за одним швом
+  `automode/base.py`. Именно это позволяет сравнивать наш гард с родным auto mode на одной
+  популяции кейсов.
+- **Границы измерения объявлены в схеме результата.** `ExecutionMode` различает «одно решение
+  на кейс» и «полный цикл харнесса», `HistoryMode` — прогон с историей и без неё. Замедление
+  задачи целиком не считается ни в одном режиме, и метрика прямо говорит почему.
+- **Инвариант «никогда не выдумывать данные сервиса»** сохранён: стоимость либо известна,
+  либо это измеренный ноль «модель не вызывалась», либо `None` с причиной; состав компонентов
+  выводится из `stage`/`rule_id`/`cached` и помечается `derived`.
+- **Сравнение двух прогонов** (`cli.py compare`) считает и общие цифры, и попарные — только по
+  кейсам, где решение вынесли оба прогона, и перечисляет каждое исключение.
+- Бенчмарк **не** production-компонент: в горячем пути он не участвует и ходит в сервис как
+  обычный внешний клиент.
 
 ---
 
 ## 11. Architectural Boundaries
 
-Подтверждено материалами репозитория:
-
-- **AgentGate принимает решение, но не является кодинг-агентом.** Он не планирует, не пишет код и не вызывает инструменты.
-- **AgentGate не исполняет и не блокирует действие физически.** Он возвращает вердикт; принудить харнесс исполнить решение он не может. Жёсткую границу (OS-сэндбокс, egress-фильтр) сервис не заменяет — это явно сказано в `docs/why-agentgate.md` §3.
+- **AgentGate принимает решение, но не является кодинг-агентом.** Он не планирует, не пишет
+  код и не вызывает инструменты.
+- **AgentGate не исполняет и не блокирует действие физически.** Он возвращает вердикт;
+  принудить харнесс исполнить решение он не может. Жёсткую границу (OS-сэндбокс,
+  egress-фильтр) он не заменяет — прямо сказано в `docs/why-agentgate.md`.
 - **AgentGate не является сэндбоксом.**
-- **AgentGate не знает о внутренностях харнесса, а харнесс — о внутренностях сервиса.** Адаптер знает только `AGENTGATE_URL`, `AGENTGATE_TOKEN` и опционально `profile_id`; профиль политики живёт целиком на стороне сервиса (`adapters/README.md`, корневой `CLAUDE.md`).
-- **Интеграционный слой адаптирует разные харнессы к одному сервису решений** — вся вариативность форматов хуков заканчивается на границе `hook_client.py`.
-- **Бенчмарк — не production-компонент**, и система под тестом в нём — сервис, а не агент (`benchmark/CLAUDE.md`).
-- **Сервис не читает сырую строку команды для принятия решения** и не пускает в промпт LLM ни `metadata`, ни выводы инструментов, ни рассуждения агента.
+- **Харнесс не знает о внутренностях сервиса.** Адаптер знает URL, токен и опционально
+  `profile_id`; профиль политики живёт целиком на стороне сервиса. Обратное тоже верно:
+  вся вариативность форматов хуков заканчивается в `adapters/packages/core`.
+- **Политика двусторонняя, но несимметричная.** Оператор задаёт профиль на сервере,
+  пользователь — правила в запросе; правила пользователя могут только ужесточать.
+- **Сервис не читает сырую строку команды для принятия решения** и не пускает в промпт
+  ни `metadata`, ни рассуждения агента.
 - **Хранилище — только Postgres**, SQLite не поддерживается; ретраев к LLM нет.
+- **Бенчмарк — не production-компонент.**
 
 ---
 
 ## 12. Known Architectural Gaps
 
-1. **Адаптеров харнессов нет.** `adapters/` содержит только README; ни одного файла интеграции с Claude Code, OpenCode, Codex или Kilo в репозитории нет. Существует только эталонный CLI-клиент `contracts/hook_client.py`. Это разрыв между заявленным «auto mode любому харнессу» и кодом.
-2. **Context Guard отсутствует целиком.** Крупный блок целевой схемы (provenance, sensitive data detection, prompt injection detection, validation, data tagging) в коде не представлен; отнесён к v4 и ещё не спроектирован до уровня решения (`v4-context-guard.md` перечисляет кандидатов, ни один не выбран).
-3. **Ветка SAFE RECOVERY не существует как исход.** Контракт трёхзначный (`allow|deny|ask`); «найти безопасный путь» сведено к текстовому полю `suggest`, которое ничего не гарантирует и не проверяется.
-4. **User Decision реализован лишь наполовину.** Сервис умеет сказать `ask`, но канала возврата решения человека (Approve / Reject / **Comment**) в контракте нет, и UI подтверждения в репозитории нет.
-5. **Session State беднее целевого.** Есть счётчики решений и окно отказов; Files, Secrets, Destinations, Uploads, Cost, Risk Score как измерения состояния сессии отсутствуют.
-6. **Модуль пакетов — заглушка.** `service/agentgate/stage1/packages.py` всегда возвращает `None`, при том что slopsquatting прямо назван в кейсе хакатона.
-7. **У бенчмарка нет измерений.** Конвейер полный и исполняемый (CLI, датасет 75 кейсов в 15 категориях, раннер, скорер, хранилище, отчёты; 122 собственных теста проходят, валидация датасета без ошибок), но против живого AgentGate он не запускался ни разу, и ни одного сохранённого результата прогона в репозитории и в истории git нет — приводить числа нельзя. Отдельно: внешний режим сравнения с конкурентами, обещанный в `benchmark/README.md`, кодом не покрыт.
-8. **Нет идемпотентности `decide`.** Повторный запрос (сетевой таймаут, ретрай клиента) создаст вторую строку решения и дважды сдвинет счётчики сессии, приблизив эскалацию за одно действие. Контракт адаптера идемпотентности требует (`adapter-contract-gap-analysis.md`).
-9. **Конфликт fail-open / fail-closed не решён.** Сервис жёстко fail-closed внутри, контракт адаптера по умолчанию fail-open на клиенте: «положил гард — разрешено всё». Три варианта решения зафиксированы, выбор владельца продукта на момент анализа не сделан.
-10. **Наблюдаемость минимальна.** Есть JSONL, таблица решений и `GET /v1/decisions`; метрик (Prometheus), трейсинга и алертов в коде не найдено. `GET /healthz` всегда возвращает `llm: null` — состояние LLM-провайдера не проверяется.
-11. **«Параллельные проверки» из требований схемы не реализованы** — цепочка строго последовательна.
-12. **Атрибуция решения к API-ключу не подключена**: по ключу пишется только `last_used_at`, `key_id` в `DecisionRow`/JSONL не попадает (корневой `CLAUDE.md`, docstring `ApiKeyRow`).
-13. **Кэш проверки ключа — per-process**: в многопроцессном деплое отзыв ключа доходит до воркеров независимо, задержка отзыва — по худшему из воркеров.
-14. **`docs/project-context/04_product_notes.md` — пустой шаблон**: продуктовые формулировки (пользователь, гипотеза, критерии успеха) не зафиксированы, поэтому связь «архитектура ↔ продуктовая задача» в этом документе выведена из кейса хакатона и `why-agentgate.md`, а не из продуктовых заметок.
+1. **Context Guard закрыт частично.** Реализовано направление «результат инструмента →
+   модель» (`/v1/inspect`): детекторы, маскирование секретов, провенанс, опциональный
+   классификатор. Не реализовано: контроль остальных источников контекста и taint-цепочки
+   между шагами. Провенанс есть как метка, но не как распространяемая пометка.
+2. **Семантический ярус inspect в бою выключен.** В развёрнутом профиле
+   `inspect.classifier: off`; в прогоне 6 сентября 2026 все три кейса `semantic_gap` прошли
+   мимо, и это ожидаемое поведение конфигурации, а не дефект детекторов.
+3. **Ветка SAFE RECOVERY не существует как исход.** Контракт трёхзначный; «найти безопасный
+   путь» сведено к текстовому полю `suggest`, качество которого ничем не измеряется.
+4. **User Decision реализован наполовину.** Сервис умеет сказать `ask`, но канала возврата
+   решения человека (Approve / Reject / **Comment**) в контракте нет.
+5. **Session State беднее целевого.** Files, Secrets, Destinations, Uploads, Cost, Risk Score
+   как измерения состояния сессии отсутствуют.
+6. **Модуль пакетов — заглушка**, при том что slopsquatting назван в кейсе хакатона.
+7. **Конфликт fail-open / fail-closed не решён.** Сервис жёстко fail-closed, клиент по
+   умолчанию fail-open. Три варианта решения зафиксированы, выбор владельца продукта не
+   сделан. Пока он не сделан, утверждение «`allow` по ошибке невозможен» верно для сервиса,
+   но не для системы.
+8. **Наблюдаемость минимальна.** JSONL, таблица решений, лента и `/healthz`; метрик,
+   трейсинга и алертов нет. `healthz.llm` всегда `null`.
+9. **«Параллельные проверки» из НФТ схемы не реализованы** — цепочка строго последовательна.
+10. **Состояние сессии живёт в памяти процесса.** Postgres используется как журнал и как
+    источник восстановления при старте, но не как общее состояние на горячем пути: несколько
+    воркеров дают независимые счётчики эскалации и независимые allow-кэши. Тот же характер у
+    кэша проверки API-ключей.
+11. **Решение теряется при падении между ответом и персистентностью** — сознательный размен
+    латентности на полноту журнала.
+12. **`GET /v1/decisions` не разграничен по владельцу ключа.** Фильтр `key_id` есть, но любой
+    действующий bearer читает всю ленту целиком, включая `raw` и `user_request`.
+13. **Поле профиля `rules` не читается нигде** — молча, без ошибки загрузки.
+14. **CI нет.** Прогон тестов и деплой держатся на дисциплине человека.
+15. **Документация адаптеров отстала от сервиса**: заявляет отсутствие маршрута `inspect` и
+    игнорирование поля `rules`, хотя оба реализованы.
 
 ---
 
 ## 13. Open Questions
 
-1. Fail-open или fail-closed на стороне адаптера: требуем `GATE_FAIL_CLOSED=1` как условие поддерживаемой конфигурации, принимаем fail-open как размен, или меняем умолчание контракта? (Варианты 1 / 2 / 3 из `adapter-contract-gap-analysis.md`.)
-2. Входит ли **SAFE RECOVERY** в скоуп хакатонного демо, и если да — это четвёртое значение `decision` или соглашение поверх `deny` + `suggest`?
-3. Нужен ли **Comment** от человека агенту как часть контракта (новый эндпоинт/поле), или подтверждение целиком остаётся внутри харнесса?
-4. Какой харнесс интегрируем первым и до какой степени: Kilo Code (по кейсу хакатона), Claude Code или OpenCode? Считается ли `hook_client.py` достаточной интеграцией для демо?
-5. ~~Восстанавливаем ли отменённую кодовую базу бенчмарка в этой ветке?~~ **Закрыто:** файлы восстановлены из `feat/agentgate-benchmark` (`82764b4`), конвейер исполняем. Открытым остаётся, что делать с ветками `feat/agentgate-benchmark` / `fix/missing-files` — слить, удалить или оставить.
-6. Какая версия по дорожной карте является целью хакатона: остаёмся на v1 или заявляем v2 (история диалога)?
-7. Нужен ли ключ идемпотентности `decide` до демо, или двойной учёт при ретраях принимается как известное ограничение?
-8. Какие метрики считаются результатом проекта (ASR / FP / Friction / Latency), и кто отвечает за первый прогон против живого сервиса — датасет и конвейер готовы, измерений нет ни одного. Отдельный вопрос: нужен ли к финалу внешний режим сравнения с конкурентами, обещанный в `benchmark/README.md`, — в коде его нет.
+1. Fail-open или fail-closed на стороне адаптера: требуем `GATE_FAIL_CLOSED=1` как условие
+   поддерживаемой конфигурации, принимаем fail-open как размен, или меняем умолчание
+   контракта? Вопрос открыт с 3 сентября, и от него зависит формулировка главной гарантии.
+2. Входит ли **SAFE RECOVERY** в скоуп защиты, и если да — это четвёртое значение `decision`
+   или соглашение поверх `deny` + `suggest`?
+3. Нужен ли **Comment** от человека агенту как часть контракта?
+4. Включать ли `inspect.classifier` в развёрнутом профиле: он закрывает `semantic_gap`, но
+   добавляет вызов модели на каждый флагованный результат и латентность к горячему пути.
+5. Что делать с результатом прогона 6 сентября: родной auto mode Claude Code на общей
+   популяции оказался точнее нашего гарда при равном ASR. Улучшать ступень 2, переносить
+   промахи в детерминированные правила или менять модель — решение не принято.
+6. Нужно ли доводить ActBench до реального прогона (нативному оценщику нужен ключ модели),
+   или полезность остаётся неизмеренной.
+7. Стоит ли расширять состояние сессии до бюджетов автономии — это единственный
+   архитектурный ответ на промахи пер-экшн-классификации, и его нет ни у кого.
 
 ---
 
@@ -420,16 +636,47 @@ benchmark case (YAML: human_req + assistant_tool_call)
 
 | Area | Current status | Target state | Main gap |
 |---|---|---|---|
-| Server | Implemented: API, каскад 1→2, профили, сессии, Postgres + JSONL, API-ключи, Docker | Плюс Context Guard, оценка tool-result, богатое состояние сессии, параллельные проверки | Сервис видит только одно действие + последнее сообщение пользователя |
-| Harness integration | Partially implemented: только эталонный `hook_client.py` (формы Claude Code + OpenCode) | Плагины на харнесс (Kilo, OpenCode, Codex, Claude Code) + обработка всех исходов | Ни одного адаптера в `adapters/`; SAFE RECOVERY и User Decision не обрабатываются |
-| Decision pipeline | Implemented: hard-deny → профиль → allowlist → LLM → эскалация, fail-closed, три исхода | Четыре исхода, оценка проверенного контекста, provenance, risk score | Нет SAFE RECOVERY, нет Context Guard, модуль пакетов — заглушка |
-| Benchmark | Partially implemented: конвейер полный и исполняемый (CLI, датасет 75 кейсов, раннер, скорер, хранилище, отчёты; 122 теста проходят) | Полный прогон 75 кейсов против живого сервиса с метриками ASR / FP / Friction / Latency | Код восстановлен из `82764b4`; измеренных результатов по-прежнему нет — ни одного прогона против реального AgentGate |
-| Observability | Partially implemented: JSONL + `decisions` в Postgres + `GET /v1/decisions` + `GET /healthz` | Метрики, аудит по сессии (Cost, Risk Score, Secrets, Destinations), атрибуция к ключу | Нет метрик/трейсинга; `healthz.llm` всегда `null`; `key_id` не пишется |
+| Server | Implemented и развёрнут: пять маршрутов, каскад decide (1→2) и каскад inspect, профили, клиентские правила, сессии, идемпотентность, Postgres + JSONL, API-ключи | Плюс контроль всех источников контекста, taint, богатое состояние сессии, параллельные проверки | Сервис видит одно действие плюс диалог и один результат инструмента за раз; связей между шагами не строит |
+| Harness integration | Implemented: плагины к шести харнессам плюс ядро и инсталлер | Все исходы обрабатываются одинаково во всех харнессах | Бенчмарком измерена одна интеграция из шести; у Codex `PreToolUse` умеет только `deny`; документация адаптеров отстала |
+| Decision pipeline | Implemented: пол строгости, hard-deny → правила пользователя → профиль → allowlist → модель → эскалация, fail-closed | Четыре исхода, оценка проверенного контекста, risk score | Нет SAFE RECOVERY, модуль пакетов — заглушка, проверки последовательны |
+| Context Guard | Partially implemented: `/v1/inspect` с детекторами, секретами, провенансом и опциональным классификатором | Проверка всех источников до входа в контекст, taint и tagging между шагами | Классификатор в бою выключен; провенанс не распространяется |
+| Benchmark | Implemented и Evaluated однажды: 120 + 46 + 12 кейсов, четыре цели прогона, метрики из сырых результатов | Регулярные прогоны, внешний исполняемый baseline, сравнение с большим числом решений | Один прогон, ActBench не запускался, результаты не версионируются |
+| Observability | Partially implemented: JSONL, `decisions`, лента с фильтрами, `/healthz` | Метрики, трейсинг, аудит по сессии, разграничение ленты | Нет метрик и трейсинга; `healthz.llm` всегда `null`; лента не разграничена |
+| Deployment | Implemented: Docker Compose плюс Caddy, подтверждено ответом `api.openmagi.ru/healthz` | Воспроизводимый деплой из CI, несколько воркеров с общим состоянием | CI нет; состояние сессии не общее, поэтому масштабирование воркерами меняет поведение |
 
-**Пять выводов:**
+**Четыре вывода.**
 
-- Архитектурный фундамент уже стоит и проверен исполнением: перехват до действия, нормализация в AST, детерминированная ступень до LLM, трёхзначный вердикт, fail-closed на каждом пути, полная запись решений — этого достаточно, чтобы демонстрировать основной flow end-to-end (`service/tests/e2e/test_e2e.py`).
-- Наибольшее расхождение с целевой архитектурой — **весь верхний контур схемы**: Context Guard и проверка данных до входа в контекст агента отсутствуют полностью и вынесены в v4.
-- Второе по значимости расхождение — **интеграционный слой**: заявленная мультихарнессность держится на одном эталонном CLI-клиенте, каталог `adapters/` пуст.
-- Третье — **бенчмарк**: инструмент измерения готов и исполняем, но ни одного измерения против живого сервиса не сделано, поэтому никаких числовых результатов заявлять нельзя.
-- До финала критично закрыть: минимум одну реальную интеграцию с харнессом, первый прогон бенчмарка против живого сервиса и явное решение по конфликту fail-open/fail-closed — оно определяет, верно ли утверждение «`allow` по ошибке невозможен» для системы, а не только для сервиса.
+- Фундамент стоит и проверен исполнением: перехват до действия, нормализация в AST,
+  детерминированная ступень до модели, трёхзначный вердикт, fail-closed, полная запись
+  решений, развёрнутый экземпляр и шесть адаптеров.
+- Верхний контур целевой схемы закрыт **частично, а не полностью**: `inspect` — это
+  Context Guard для результатов инструментов, но не для всех источников контекста, и без
+  taint между шагами.
+- Появились собственные измерения, и они не подтвердили превосходства над родным auto mode
+  Claude Code. Это результат, а не помеха: именно ради него бенчмарк и строился.
+- Главные незакрытые архитектурные вопросы — не отсутствующие модули, а нерешённые развилки:
+  fail-open клиента, включение семантического яруса inspect, наличие или отсутствие бюджетов
+  автономии на сессию.
+
+---
+
+## 15. Проверки, на которые опирается этот документ
+
+Выполнены 6 сентября 2026 на Windows-хосте, если не сказано иное.
+
+- `cd service && uv run pytest -q` → **1538 собрано, 1414 passed, 44 failed, 80 skipped**.
+  Все 44 падения — среда, а не логика: разделитель пути (`os.path.normpath('/home/u/repo')`
+  → `\home\u\repo`), кодировка по умолчанию при чтении контрактов без явного `encoding`
+  (`test_contracts.py`; при чтении в UTF-8 схемы совпадают побайтно) и два теста бюджета
+  латентности детекторов. 80 skip — из-за незаданного `AGENTGATE_TEST_DB_URL`. Целевая
+  среда — Linux в контейнере; зелёный прогон там в рамках аудита не воспроизводился, Docker
+  на машине аудита не запущен.
+- `cd benchmark && uv run pytest` → **399 passed, 2 skipped, 2 deselected**. Оба skip — из-за
+  отсутствия Node 24 и Docker.
+- `curl https://api.openmagi.ru/healthz` → `{"status":"ok","db":true,"llm":null,
+  "git_sha":"e3c7942…","protocol":1}`; `curl https://api.openmagi.ru/v1/decisions` → 401;
+  `curl https://openmagi.ru/` → 200.
+- Цифры прогона бенчмарка пересчитаны из `benchmark/results/benchmark.sqlite3` и совпали с
+  `benchmark/docs/reports/task-24-first-full-benchmark-run.md`.
+- Тесты адаптеров (`node --test`, 150 блоков `it(`) **не запускались**: Node на машине
+  аудита нет.

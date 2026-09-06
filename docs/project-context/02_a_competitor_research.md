@@ -1,10 +1,12 @@
 # Auto mode и автоматическое одобрение действий в кодинг-агентах — обзор индустрии
 
-*Исходный материал: инженерное исследование, полученное 3 сентября 2026. Этот документ — редакция отчёта для репозитория: структура и факты сохранены, добавлены только ссылки на наши документы. Выводы «что берём в AgentGate» вынесены в отдельный файл [best-practices.md](best-practices.md), чтобы обзор оставался обзором.*
+*Исходный материал: инженерное исследование, полученное 3 сентября 2026. Этот документ — редакция отчёта для репозитория: структура и факты сохранены, добавлены только ссылки на наши документы. Выводы «что берём в AgentGate» вынесены в отдельный файл [best-practices.md](../best-practices.md), чтобы обзор оставался обзором.*
+
+*Файл — посимвольная копия [docs/auto-mode-industry-review-2026.md](../auto-mode-industry-review-2026.md) (сверено 6 сентября 2026). Правки следует вносить в оба файла либо ни в один; здесь исправлены только относительные ссылки, которые из каталога `project-context/` не разрешались.*
 
 **Статус фактов.** Всё ниже — компиляция публичных материалов вендоров, независимых red-team-отчётов и академических работ. Числа вендоров независимо не верифицированы; ограничения перечислены в §7. Использовать как справочник при проектировании, не как измеренную истину.
 
-Связанные документы: [why-agentgate.md](why-agentgate.md) (позиционирование), [artifacts/coding-agent-security-market-2026.html](artifacts/coding-agent-security-market-2026.html) (обзор рынка), [superpowers/specs/2026-09-03-agentgate-v1-design.md](superpowers/specs/2026-09-03-agentgate-v1-design.md) (спека v1).
+Связанные документы: [why-agentgate.md](../why-agentgate.md) (позиционирование), [artifacts/coding-agent-security-market-2026.html](../artifacts/coding-agent-security-market-2026.html) (обзор рынка), [superpowers/service/specs/2026-09-03-agentgate-v1-design.md](../superpowers/service/specs/2026-09-03-agentgate-v1-design.md) (спека v1; путь `superpowers/specs/…` в исходном отчёте не существует).
 
 ---
 
@@ -170,7 +172,7 @@ FNR 17 % на реальных overeager назван «the honest number»: в 
 - **Progent: Securing AI Agents with Privilege Control** (arXiv 2504.11703v3; UC Berkeley, UCSB, NUS). Символьные правила над именами инструментов и аргументами; детерминированная проверка каждого вызова; LLM генерирует начальную политику и обновляет её пошагово; SMT-проверка «расширение против сужения» даёт monotonic confinement — эффективное пространство действий может только сужаться без явного одобрения. Снижает ASR с 39,9 % до 1,0 % на AgentDojo и с 70,3 % до 3,9 % на ASB (в абстракте заявлено доведение до 0 % на ряде бенчмарков). Образец для capability-профиля.
 - **CaMeL** (Debenedetti и др., DeepMind 2025). Привилегированный LLM генерирует код в песочном DSL, полный анализ потоков данных и taint-трекинг недоверенных данных через весь процесс. Улучшенный Dual-LLM. Известен обход через манипуляцию аргументами (arXiv 2601.11893).
 - **Design Patterns for Securing LLM Agents against Prompt Injections** (Beurer-Kellner и др., arXiv 2506.08837, июнь 2025). Шесть паттернов: Action-Selector, Plan-Then-Execute, LLM Map-Reduce, Dual LLM, Code-Then-Execute (CaMeL), Context-Minimization. Разбор — Simon Willison, 13 июня 2025.
-- **AgentDoG/ATBench, SABER** — guard-модели для траекторий; см. [artifacts/agent-gate-artifacts.md](artifacts/agent-gate-artifacts.md).
+- **AgentDoG/ATBench, SABER** — guard-модели для траекторий; см. [artifacts/agent-gate-artifacts.md](../artifacts/agent-gate-artifacts.md).
 
 ---
 
@@ -205,7 +207,8 @@ FNR 17 % на реальных overeager назван «the honest number»: в 
 6. **Monotonic confinement (Progent) в проде** — SMT-проверку сужения привилегий не применяет ни один харнесс.
 7. **Единый провенанс между границей sandbox и классификатором.** Codex ревьюит только на границе sandbox и не видит внутреннего; Claude reasoning-blind; комбинации «детерминированный sandbox плюс taint-aware классификатор с общим состоянием» нет.
 
-Что из этого мы реально закрываем и в каком порядке — [best-practices.md](best-practices.md) §5 и §6.
+Что из этого мы реально закрываем и в каком порядке — [best-practices.md](../best-practices.md) §5 и §6.
+Фактическое (а не намеченное) состояние наших возможностей на 6 сентября 2026 — [05_current_state.md](05_current_state.md); утверждать по этому §5, что «мы это закрыли», нельзя без сверки с ним. Кратко о трёх пунктах, где наша сторона с 3 сентября изменилась: **harness-agnostic политика** — реализованы плагины к шести харнессам поверх одного сервиса (`adapters/`), но независимого подтверждения, что это шире, чем у Adversa или Arcade, нет; **входной слой против инъекций** — реализован как `POST /v1/inspect` (детекторы, маскирование секретов, опциональный классификатор), это аналог PI-probe, а не провенанс/taint; **провенанс и taint между шагами** остаются незакрытыми и у нас тоже.
 
 ---
 

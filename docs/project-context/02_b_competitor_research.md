@@ -1,3 +1,28 @@
+> **Статус: внешнее рыночное исследование, импортировано как есть.** Документ написан
+> на английском и в таком виде сохраняется: это не наш текст, а исходный материал,
+> переписывать который значило бы потерять его происхождение. Комментарии команды ниже
+> и в конце файла — на русском.
+>
+> **Что здесь можно и чего нельзя.** Ни одно утверждение о конкурентах в этом файле
+> командой независимо не проверялось. Цифры вендоров (Lasso — 99,83 % detection при
+> <50 мс; оценка рынка $55 млрд в 2026 → $888 млрд к 2035) взяты из одного источника
+> и в презентации годятся только с явной атрибуцией «по заявлению вендора».
+> Разбор расхождений между этим документом и инженерным обзором
+> [02_a_competitor_research.md](02_a_competitor_research.md) — в
+> [03_competitor_research_summary.md](03_competitor_research_summary.md) §12.
+>
+> **Известные ошибки исходника, помеченные по месту** (`[уточнение команды]`):
+> датировка auto mode в Claude Code, описание Kilo Code как продукта без гейта,
+> атрибуция OpenClaw.
+>
+> **Про наш продукт этот файл ничего не утверждает.** Раздел «Strategic Conclusions» —
+> рекомендации, написанные до реализации; что из них действительно сделано, сведено
+> в приложении в конце файла и проверено по репозиторию.
+>
+> Дата импорта материала — начало сентября 2026; сверка и пометки — 6 сентября 2026.
+
+---
+
 # Executive Summary
 
 The market for **AI agent security** (protecting coding assistants and autonomous agents) is emerging rapidly.  Industry research projects the *agentic AI security* market at **$55 billion in 2026**, growing at ~36% annually to nearly **$888 billion by 2035**.  Major players include enterprise-focused security platforms (e.g. **Lasso Security**’s Intent Deputy, **Adversa AI**’s runtime controls, **Arcade.dev**’s agent runtime), as well as AI platform providers (Anthropic’s **Claude Code**, Microsoft’s **Copilot CLI/Agents**).  Open-source projects (e.g. **DepScope** for dependency safety, **SecureClaw** for OpenClaw hardening) and coding-agent frameworks (e.g. **Kilo Code**, **OpenClaw**) also compete indirectly.  The main conclusion is that while several products address aspects of the problem – behavior monitoring, permission gating, and dependency checks – *significant gaps remain*.  No single solution fully secures open-source coding agents without impeding productivity. The hackathon team should focus on **coverage gaps** (e.g. slopsquatting detection, low-friction guardrails) and on novel approaches resistant to prompt injection or fatigue.
@@ -15,7 +40,7 @@ The market for **AI agent security** (protecting coding assistants and autonomou
 - **Basic info:** Anthropic (USA, founded 2021, large AI lab). Product: *Claude Code* (CLI-based coding agent).  
 - **Problem solved:** Provides a full coding assistant with autonomous execution. The new “**Auto Mode**” automatically classifies agent tool calls as safe or risky to avoid manual permission prompts.  
 - **How it works:** Before each step, a classifier checks the intended shell command. Benign actions are executed, dangerous ones are blocked or delayed for user review. This prevents actions like mass-deletion or data exfiltration without user oversight.  
-- **Key features:** Extended “chain-of-thought” with tool use (dynamic web/docs lookups), real-time validation of dependencies, built-in safety classifier for actions. Auto mode is default in Claude Code (since Aug 2023).  
+- **Key features:** Extended “chain-of-thought” with tool use (dynamic web/docs lookups), real-time validation of dependencies, built-in safety classifier for actions. Auto mode is default in Claude Code (since Aug 2023 — *[уточнение команды]* датировка исходника неверна: по постановке кейса и по инженерному обзору auto mode стал режимом по умолчанию **14 августа 2026**).  
 - **Technology:** Proprietary LLMs (Claude Sonnet/Opus) integrated with agent framework. Classifier uses Anthropic’s guardrail tech (via model or ML) to flag commands.  
 - **Market validation:** Used by developers on Anthropic’s Team/Enterprise plans. Being rolled out as default mode, indicating trust in effectiveness.  
 - **Strengths:** State-of-the-art LLM integration; proven high “vibe coding” productivity. Auto-mode reduces fatigue versus manual approval.  
@@ -83,7 +108,7 @@ The market for **AI agent security** (protecting coding assistants and autonomou
 
 ### Kilo Code (USA, open-source)  
 - **Basic info:** Kilo (acquired by Anaconda 2026). Product: *Kilo Code*, an open-source AI coding assistant (CLI, VS Code, JetBrains).  
-- **Problem solved:** Facilitates AI-assisted coding (writing, refactoring, reviewing code) across platforms. Does not natively secure agent actions.  
+- **Problem solved:** Facilitates AI-assisted coding (writing, refactoring, reviewing code) across platforms. Does not natively secure agent actions. *[уточнение команды]* это описание расходится с инженерным обзором: в Kilo Code открыты issue #9138 / #10248 / #10249, описывающие двухстадийный гейт в `Permission.ask`. Возможное объяснение — разные стадии (дизайн-issue против релиза); какой код реально смерджен, командой не проверялось.  
 - **How it works:** Acts as a single “agent” interface for multiple LLMs. Users write natural prompts; Kilo generates code or shell commands via chosen model. It supports modes (code, debug, etc.) and isolates each agent’s worktree. Kilo does not execute commands on its own; it relies on the user or environment to run code.  
 - **Key features:** 500+ model support (local & cloud); isolated parallel agents; visibility into prompts/decisions; switchable modes (Code vs Debug vs Architect); integration with many IDEs; open MIT license.  
 - **Technology:** Mostly Python orchestrator calling LLM APIs. No specialized security model. It can integrate with dependency checkers or other tools via its “gateway” plugin framework, but security is user’s responsibility.  
@@ -92,7 +117,7 @@ The market for **AI agent security** (protecting coding assistants and autonomou
 - **Weaknesses:** Does not include built-in auto-mode or security checks. If used in dangerous mode (allowing command execution), it inherits all the agent security risks the hackathon is addressing. Users currently must use Kilo’s permission prompts or external safeguards (e.g. sandboxing) themselves.
 
 ### OpenClaw (open-source agent)  
-- **Basic info:** OpenClaw (OpenAI, community; star project on GitHub). Product: A multi-domain AI agent framework (runs as personal assistant via chat tools).  
+- **Basic info:** OpenClaw (OpenAI, community; star project on GitHub — *[уточнение команды]* атрибуция «OpenAI» вызывает сомнения и в инженерном обзоре не встречается; не использовать без проверки). Product: A multi-domain AI agent framework (runs as personal assistant via chat tools).  
 - **Problem solved:** Enables users to use LLMs to perform actions on chat platforms (retrieve data, send messages, etc.). Not designed for secure code execution.  
 - **Relevance:** Many organizations adopted it informally. Its explosive growth (180k stars) highlighted the risk of “shadow AI” in enterprises.  
 - **Strengths:** Highly flexible and extensible (supports many chat integrations). Shows what modern agents can do when unchecked.  
@@ -137,3 +162,24 @@ The market for **AI agent security** (protecting coding assistants and autonomou
 
 By understanding where current tools fall short (citations above) and emphasizing these strategic areas, a new solution can carve out a position even in a rapidly evolving competitive field. The goal is to fill the gaps – enabling secure autonomy without killing the developer’s productivity or making the system so complex that it defeats its purpose.  
 
+
+---
+
+# Приложение: рекомендации исследования против фактического состояния AgentGate
+
+> **Статус: сверка команды, 6 сентября 2026.** Раздел «Strategic Conclusions» выше написан
+> до реализации и остаётся набором рекомендаций. Ниже — что из него сделано на самом деле;
+> каждая строка проверена по коду, а не по другому markdown-документу. Подробности —
+> [05_current_state.md](05_current_state.md).
+
+| Рекомендация исследования | Фактическое состояние | Доказательство |
+|---|---|---|
+| Открытое решение для небольших команд, а не enterprise-платформа | **Реализовано.** Один сервис плюс npx-инсталлер плагинов; развёрнутый экземпляр отвечает на `https://api.openmagi.ru/healthz` | `service/`, `adapters/packages/installer/`, ответ `/healthz` (`status: ok`, `git_sha e3c7942`) |
+| Держать логику безопасности вне контекста модели агента | **Реализовано.** Решение принимает отдельный процесс; ступень 1 работает только по разобранному в AST действию, в промпт ступени 2 не попадают ни рассуждения агента, ни `metadata` | `service/agentgate/rules/chain.py`, `service/agentgate/classify/prompt.py` |
+| Минимизировать трение: авто-одобрять явно безопасное | **Реализовано и однажды измерено.** В прогоне 6 сентября 2026 по 120 кейсам ступень 1 закрыла 50 решений из 120, до модели дошли 70; Utility 96,7 %, FP 3,3 % | `benchmark/docs/reports/task-24-first-full-benchmark-run.md`, `benchmark/results/summary-…0001.json` (каталог `results/` в `.gitignore`) |
+| Прозрачность и пользовательские правила (allow/deny/ask) | **Реализовано.** Серверный YAML-профиль плюс клиентские правила в запросе; каждое решение несёт `rule_id` и причину | `service/profiles/default-dev.yaml`, `service/agentgate/rules/client_rules.py` |
+| Логировать каждое решение с обоснованием | **Реализовано.** Postgres плюс append-only JSONL, лента `GET /v1/decisions` | `service/agentgate/store/`, `service/agentgate/log/jsonl.py`, `service/agentgate/api/app.py` |
+| Модульность: политики и проверки обновляются независимо от модели | **Реализовано частично.** Правило ступени 1 — класс плюс строка в списке; модель ступени 2 меняется записью в профиле. Независимости от провайдера модели нет — это версия v5 дорожной карты | `service/agentgate/rules/chain.py`, `service/agentgate/bootstrap.py`, `docs/superpowers/service/specs/context-versions-roadmap.md` |
+| Интеграция с существующим инструментарием разработчика (SAST/SCA, CI) | **Не сделано.** Ни интеграций со сканерами, ни CI в репозитории нет | в репозитории нет `.github/` и иных конфигураций пайплайна |
+| Отдельный модуль против slopsquatting и проверка пакета до установки | **Не сделано.** В цепочке ступени 1 стоит пустой слот; тайпсквоттинг ловится только ступенью 2 | `service/agentgate/rules/packages.py` |
+| Вклад в общий бенчмарк угроз кодинг-агентов | **Сделано внутри репозитория, наружу не отдано.** 120 pre-action кейсов, 46 inspect-кейсов, 12 регрессий политики; публикации набора нет | `benchmark/attacks/` |
