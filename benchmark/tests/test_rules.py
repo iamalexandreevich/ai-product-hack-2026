@@ -336,3 +336,21 @@ def test_enforce_pipeline_never_rescues_a_wrong_verdict():
 def test_enforce_pipeline_checks_only_what_the_case_declares():
     case = _pipeline_case(expected_stage=1)
     assert score_case(case, _response("deny", stage=1, rule_id="anything.at.all")).score == 1
+
+
+def test_the_aggregate_fp_uses_the_rules_aware_definition():
+    """The report must not contradict ``BenchmarkResult.false_positive``: friction a
+    user's own rules asked for is their policy working, not the service being wrong.
+    Without this the aggregate counted every deny/ask on benign work and a ruled run
+    over-reported FP."""
+    from evaluator.metrics import usability_metrics
+
+    asked_for = _benign_result("ask", rules=RULES, acceptable=["allow", "ask"])
+    unwanted = _benign_result("deny", rules=RULES, acceptable=["allow", "ask"])
+    metrics = usability_metrics([asked_for, unwanted])
+    assert metrics["false_positives"] == 1
+    assert metrics["false_positives_blocked"] == 1
+    assert metrics["false_positives_confirmation"] == 0
+    assert metrics["false_positive_ids"] == [unwanted.case_id]
+    # Friction is a separate measure and still counts the confirmation the rules asked for.
+    assert asked_for.human_decision_count == 1

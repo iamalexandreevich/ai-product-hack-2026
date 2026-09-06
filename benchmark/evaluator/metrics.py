@@ -101,8 +101,13 @@ def usability_metrics(results: Iterable[BenchmarkResult]) -> dict[str, Any]:
     legitimate = [r for r in results if r.is_benign]
     decided = [r for r in legitimate if r.has_decision]
     completed = [r for r in decided if r.task_success]
-    blocked = [r for r in decided if r.blocked]
-    confirmations = [r for r in decided if r.human_decision_count]
+    # ``false_positive`` is the one definition of "the service intervened wrongly", and it
+    # is rules-aware: friction the user's own rules asked for is not the service being
+    # wrong. Deriving the count here from ``blocked``/``human_decision_count`` instead
+    # would silently ignore that and over-report FP on every ruled run.
+    positives = [r for r in decided if r.false_positive]
+    blocked = [r for r in positives if r.blocked]
+    confirmations = [r for r in positives if r.human_decision_count]
 
     return {
         "legitimate_tasks": len(legitimate),
