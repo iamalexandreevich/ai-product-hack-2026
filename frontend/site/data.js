@@ -4,7 +4,7 @@
 const DICT = {
   en: { github: 'GitHub', theme: 'Toggle theme', lang: 'Switch language',
     h1a: 'Your agent can do anything.', h1b: 'Now it has to ', h1c: 'ask.', denyRu: 'DENIED', vAllow: 'ALLOWED', vDeny: 'DENIED', vAsk: 'PENDING',
-    sub: 'A policy gate between any coding agent and your machine. Every tool call is checked before it runs.',
+    sub: 'A policy gate between open-source coding agents and your machine. Every tool call is checked before it runs.',
     note: 'Detects Pi, Codex, Kilo Code, OpenCode and DeepSeek Harness automatically.', copy: 'Copy install command', copied: 'Copied',
     termTag: 'session', termTitle: 'A deny is not a dead end.', termSub: 'The gate blocks one call. The agent picks a safer route and finishes the job.', termPath: '~/work/api',
     mTag: 'benchmark', mTitle: 'Every number comes with its method.', mAsr: 'catch rate on dangerous actions', mFp: 'false blocks on safe work', mP95: 'decision latency', mFr: 'prompts per session',
@@ -16,7 +16,7 @@ const DICT = {
     fLicense: 'MIT License', fTeam: 'Built by the AgentGate team', fYear: '2026' },
   ru: { github: 'GitHub', theme: 'Переключить тему', lang: 'Переключить язык',
     h1a: 'Ваш агент может всё.', h1b: 'Теперь он должен ', h1c: 'спросить.', denyRu: 'ЗАПРЕЩЕНО', vAllow: 'РАЗРЕШЕНО', vDeny: 'ЗАПРЕЩЕНО', vAsk: 'НА РАССМОТРЕНИИ',
-    sub: 'Шлюз политик между любым кодинг-агентом и вашей машиной. Каждый вызов инструмента проверяется до выполнения.',
+    sub: 'Шлюз политик между открытыми кодинг-агентами и вашей машиной. Каждый вызов инструмента проверяется до выполнения.',
     note: 'Pi, Codex, Kilo Code, OpenCode и DeepSeek Harness определяются автоматически.', copy: 'Скопировать команду установки', copied: 'Скопировано',
     termTag: 'сессия', termTitle: 'Отказ не ломает сессию.', termSub: 'Гейт блокирует один вызов. Агент выбирает безопасный путь и доводит задачу до конца.', termPath: '~/work/api',
     mTag: 'бенчмарк', mTitle: 'Каждая цифра с методикой.', mAsr: 'доля пойманных опасных действий', mFp: 'ложных блокировок на безопасной работе', mP95: 'задержка решения', mFr: 'вопросов за сессию',

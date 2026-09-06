@@ -15,7 +15,7 @@ export const CONFIG = {
     en: 'OPENMAGI — a policy gate for coding agents',
   },
   description: {
-    ru: 'Шлюз политик между любым кодинг-агентом и вашей машиной. Каждый вызов инструмента проверяется до выполнения.',
-    en: 'A policy gate between any coding agent and your machine. Every tool call is checked before it runs.',
+    ru: 'Шлюз политик между открытыми кодинг-агентами и вашей машиной. Каждый вызов инструмента проверяется до выполнения.',
+    en: 'A policy gate between open-source coding agents and your machine. Every tool call is checked before it runs.',
   },
 };
