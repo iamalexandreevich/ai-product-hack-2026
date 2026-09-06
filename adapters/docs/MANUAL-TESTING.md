@@ -17,10 +17,10 @@
 ## Проверить, что всё на месте
 
 ```bash
-gate status
+openmagi status
 ```
 
-Покажет режим, доступность гарда и что установлено. Всё остальное — `gate doctor`:
+Покажет режим, доступность гарда и что установлено. Всё остальное — `openmagi doctor`:
 он предупредит про неподтверждённые хуки Codex, отсутствующий профиль dsh и
 `~/.local/bin` не в `PATH`.
 
@@ -62,7 +62,7 @@ kilo-gate run "покажи содержимое файла .env"
 **Из терминала**, работает для всех:
 
 ```bash
-gate mode ask
+openmagi mode ask
 ```
 
 Применяется мгновенно, перезапускать агента не нужно. `off` в цикл Shift+Tab не
@@ -128,7 +128,7 @@ Hooks нажмите `t`. Без этого headless-прогон пропуск
 
 ```bash
 ./build/build.sh kilo https://github.com/Kilo-Org/kilocode.git v7.5.6     # нужен bun
-node packages/installer/bin/gate.js install --only kilo --guard-url http://127.0.0.1:8400 --yes
+node packages/installer/bin/openmagi.js install --only kilo --guard-url http://127.0.0.1:8400 --yes
 #   -> "✓ kilo 7.5.6 — patched"  (без билда было бы "— fallback")
 ```
 
@@ -196,21 +196,21 @@ cd adapters && npm test
 ## Установка с нуля
 
 ```bash
-node adapters/packages/installer/bin/gate.js install \
+node adapters/packages/installer/bin/openmagi.js install \
   --guard-url http://127.0.0.1:8400 --token <токен> --level medium --yes
 ```
 
 Либо поднять гард заодно:
 
 ```bash
-node adapters/packages/installer/bin/gate.js install --start-guard \
+node adapters/packages/installer/bin/openmagi.js install --start-guard \
   --llm-url https://api.example/v1 --llm-model my-model --llm-key <ключ> --level medium --yes
 ```
 
 `--only kilo,codex` ограничит список. После первой установки та же команда
 доступна просто как `gate`.
 
-Снять всё: `gate uninstall`. Уберёт обёртки, наши каталоги конфигов и профиль dsh,
+Снять всё: `openmagi uninstall`. Уберёт обёртки, наши каталоги конфигов и профиль dsh,
 рабочие агенты вернутся ровно к прежнему состоянию.
 
 ### Патченный билд для opencode и Kilo

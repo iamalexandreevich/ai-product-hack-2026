@@ -3,7 +3,7 @@
 Запускается из репозитория — в npm ничего не публиковалось:
 
 ```bash
-node adapters/packages/installer/bin/gate.js <команда>
+node adapters/packages/installer/bin/openmagi.js <команда>
 ```
 
 После первой установки та же программа лежит в `~/.local/bin/gate`, дальше просто `gate`.
@@ -13,13 +13,13 @@ node adapters/packages/installer/bin/gate.js <команда>
 **Гард уже где-то поднят** — самый частый случай:
 
 ```bash
-gate install --guard-url https://ваш-гард --token <ключ> --level medium --yes
+openmagi install --guard-url https://ваш-гард --token <ключ> --level medium --yes
 ```
 
 **Поднять гард заодно** — локально, через docker compose:
 
 ```bash
-gate install --start-guard \
+openmagi install --start-guard \
   --llm-url https://api.example/v1 --llm-model my-model --llm-key <ключ> \
   --level medium --yes
 ```
@@ -32,11 +32,11 @@ gate install --start-guard \
 
 | Команда | Зачем |
 |---|---|
-| `gate install` | Найти агентов и поставить каждому команду `<агент>-gate` |
-| `gate status` | Что установлено, какой режим, жив ли гард |
-| `gate doctor` | Что сломано и как чинить |
-| `gate mode <режим>` | Сменить строгость: `auto`, `ask`, `allow`, `off` |
-| `gate uninstall` | Снять всё; рабочие агенты вернутся как были |
+| `openmagi install` | Найти агентов и поставить каждому команду `<агент>-gate` |
+| `openmagi status` | Что установлено, какой режим, жив ли гард |
+| `openmagi doctor` | Что сломано и как чинить |
+| `openmagi mode <режим>` | Сменить строгость: `auto`, `ask`, `allow`, `off` |
+| `openmagi uninstall` | Снять всё; рабочие агенты вернутся как были |
 
 ## Флаги установки
 
@@ -78,7 +78,7 @@ kilo-gate     он же, но каждый тулкол через гард
 ## После установки
 
 ```bash
-gate status
+openmagi status
 ```
 
 Проверить, что гейтит:
@@ -91,12 +91,12 @@ kilo-gate run "покажи содержимое файла .env"
 файл прочитает.
 
 **Для Codex нужен один разовый шаг:** запустите `codex-gate`, на экране Hooks нажмите `t`.
-Codex не запускает неподтверждённые хуки и молчит об этом — `gate doctor` предупредит.
+Codex не запускает неподтверждённые хуки и молчит об этом — `openmagi doctor` предупредит.
 
 ## Если что-то не так
 
 ```bash
-gate doctor
+openmagi doctor
 ```
 
 Три частые причины: `~/.local/bin` не в `PATH`; неподтверждённые хуки Codex; залипший

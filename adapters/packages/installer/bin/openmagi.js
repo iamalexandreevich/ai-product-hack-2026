@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * The gate CLI.
+ * The OPENMAGI CLI.
  *
  * A plain Node CLI with no Bun dependency, so it runs anywhere node does even
  * though the plugin it installs is loaded by the harness's Bun runtime. Run it
@@ -9,6 +9,7 @@
  */
 import { install, uninstall, status, doctor, setModeCommand } from "../src/commands.ts"
 import { runWizard } from "../src/wizard.ts"
+import { mark, wordmark } from "../src/brand.ts"
 
 function parseArgs(argv) {
   const options = {}
@@ -26,7 +27,7 @@ function parseArgs(argv) {
     else if (arg === "--level") {
       options.level = argv[++i]
       if (!["low", "medium", "high"].includes(options.level)) {
-        console.error(`gate: unknown level "${options.level}"; use low, medium or high`)
+        console.error(`openmagi: unknown level "${options.level}"; use low, medium or high`)
         process.exit(2)
       }
     }
@@ -35,7 +36,7 @@ function parseArgs(argv) {
       const unknown = options.only.filter((id) => !HARNESSES.includes(id))
       // Silently installing nothing because of a typo is worse than refusing.
       if (unknown.length) {
-        console.error(`gate: unknown harness ${unknown.join(", ")}\n  known: ${HARNESSES.join(", ")}`)
+        console.error(`openmagi: unknown harness ${unknown.join(", ")}\n  known: ${HARNESSES.join(", ")}`)
         process.exit(2)
       }
     }
@@ -46,10 +47,10 @@ function parseArgs(argv) {
 
 const HARNESSES = ["opencode", "kilo", "opencode2", "pi", "codex", "dsh"]
 
-const USAGE = `gate — auto mode for open-source coding agents
+const USAGE = `OPENMAGI — auto mode for open-source coding agents
 
-  node adapters/packages/installer/bin/gate.js <command>
-  after the first install the same CLI is on PATH as: gate <command>
+  node adapters/packages/installer/bin/openmagi.js <command>
+  after the first install the same CLI is on PATH as: openmagi <command>
 
   install [--only <harnesses>] [--level low|medium|high]
 
@@ -76,6 +77,11 @@ async function main() {
 
   switch (command) {
     case "install": {
+      // The wordmark first. An install writes into other people's config, and
+      // whoever runs it should see whose installer this is before it starts.
+      // Ahead of the wizard, so backing out still leaves a screen that makes
+      // sense.
+      console.log(`\n${wordmark()}\n`)
       // The wizard asks only what the flags did not already answer, and returns
       // null when the user backs out — so nothing is touched on a cancel.
       const answers = await runWizard(options)
@@ -98,7 +104,7 @@ async function main() {
       break
     case "status": {
       const report = await status(options)
-      console.log(`gate mode: ${report.mode}`)
+      console.log(`openmagi mode: ${report.mode}`)
       console.log(`guard: ${report.guardHealthy ? "reachable" : "unreachable"} (${report.guardUrl})`)
       for (const t of report.targets) {
         console.log(`  ${t.id} ${t.version}: ${t.installed ? "installed" : "not installed"} (${t.mode})`)
@@ -108,8 +114,8 @@ async function main() {
     case "doctor": {
       const findings = await doctor(options)
       for (const f of findings) {
-        const mark = f.level === "ok" ? "✓" : f.level === "warn" ? "!" : "✗"
-        console.log(`${mark} ${f.message}`)
+        const glyph = f.level === "ok" ? mark.ok() : f.level === "warn" ? mark.warn() : mark.bad()
+        console.log(`${glyph} ${f.message}`)
       }
       break
     }
@@ -123,6 +129,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(`gate: ${error.message}`)
+  console.error(`openmagi: ${error.message}`)
   process.exit(1)
 })

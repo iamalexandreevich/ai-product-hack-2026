@@ -74,7 +74,7 @@ npm test                        # 112 тестов на моках, без се�
 # живой прогон одного харнесса:
 node packages/mock-guard/src/server.ts --port 8400 &     # гард
 node recon/mock-llm.mjs --port 8899 --scenario sweep &   # скриптованная модель
-node packages/installer/bin/gate.js status --guard-url http://127.0.0.1:8400
+node packages/installer/bin/openmagi.js status --guard-url http://127.0.0.1:8400
 ```
 
 Полный сквозной прогон каждого харнесса — в [docs/MANUAL-TESTING.md](docs/MANUAL-TESTING.md).

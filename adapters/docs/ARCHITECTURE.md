@@ -73,7 +73,7 @@ TUI. Читается с кэшем по mtime, поэтому переключ�
 Пишется атомарно (временный файл + rename).
 
 Переключение: **Shift+Tab** циклит `auto → ask → allow` (в `off` только явно, чтобы случайным
-нажатием не снять защиту), `/gate <mode>` — во всех харнессах, `gate mode <m>` — из CLI и
+нажатием не снять защиту), `/gate <mode>` — во всех харнессах, `openmagi mode <m>` — из CLI и
 только при TTY, иначе агент выключил бы себе защиту через `bash`.
 
 В режимах `allow` и `ask` гард по `out` **не опрашивается вообще**: решение принимается локально.
@@ -185,8 +185,8 @@ Permission-домена в API нет — `ask` деградирует в бло
 
 ## Инсталлер
 
-`gate install [--guard-url URL] [--token T] [--only …] [--yes]` (запуск из репозитория:
-`node packages/installer/bin/gate.js`), плюс `status`,
+`openmagi install [--guard-url URL] [--token T] [--only …] [--yes]` (запуск из репозитория:
+`node packages/installer/bin/openmagi.js`), плюс `status`,
 `doctor`, `mode <m>`, `uninstall`.
 
 Детектит бинарники и конфиг-каталоги, выбирает режим установки (`patched` / `fallback` / `v2` /
@@ -241,7 +241,7 @@ TypeScript, исполняется нативно Node ≥ 22.6 и Bun — бе�
 
 ## Установка гарда
 
-`gate install` умеет два пути:
+`openmagi install` умеет два пути:
 
 - **подключиться к уже поднятому** — `--guard-url` и `--token`;
 - **поднять свой** — `--start-guard`, тогда нужны `--llm-url`, `--llm-model`,
