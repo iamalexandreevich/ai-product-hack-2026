@@ -9,7 +9,7 @@
  */
 import { install, uninstall, status, doctor, setModeCommand } from "../src/commands.ts"
 import { runWizard } from "../src/wizard.ts"
-import { mark, serviceLine, wordmark } from "../src/brand.ts"
+import { mark, wordmark } from "../src/brand.ts"
 
 function parseArgs(argv) {
   const options = {}
@@ -82,7 +82,6 @@ async function main() {
       // Ahead of the wizard, so backing out still leaves a screen that makes
       // sense.
       console.log(`\n${wordmark()}\n`)
-      console.log(serviceLine(["nerv", "tokyo-3", "project openmagi"]) + "\n")
       // The wizard asks only what the flags did not already answer, and returns
       // null when the user backs out — so nothing is touched on a cancel.
       const answers = await runWizard(options)

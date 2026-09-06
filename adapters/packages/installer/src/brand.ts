@@ -56,22 +56,53 @@ export function plaque(ink: Ink, text: string): string {
  * Splitting it here is what makes the two halves colourable at all: joined into
  * single lines, `OPEN` and `MAGI` could only be separated by counting columns,
  * and a column count silently rots the first time a glyph changes width.
+ *
+ * The face is ANSI Shadow: a solid body in `█` with a raised edge drawn in box
+ * characters. That edge is why the two-tone treatment below exists -- painted
+ * flat, the letters lose the depth the face is built around.
  */
 const OPEN = [
-  " ██████  ██████  ███████ ███    ██",
-  "██    ██ ██   ██ ██      ████   ██",
-  "██    ██ ██████  █████   ██ ██  ██",
-  "██    ██ ██      ██      ██  ██ ██",
-  " ██████  ██      ███████ ██   ████",
+  " ██████╗ ██████╗ ███████╗███╗   ██╗",
+  "██╔═══██╗██╔══██╗██╔════╝████╗  ██║",
+  "██║   ██║██████╔╝█████╗  ██╔██╗ ██║",
+  "██║   ██║██╔═══╝ ██╔══╝  ██║╚██╗██║",
+  "╚██████╔╝██║     ███████╗██║ ╚████║",
+  " ╚═════╝ ╚═╝     ╚══════╝╚═╝  ╚═══╝",
 ]
 
 const MAGI = [
-  "███    ███  █████   ██████  ██",
-  "████  ████ ██   ██ ██       ██",
-  "██ ████ ██ ███████ ██   ███ ██",
-  "██  ██  ██ ██   ██ ██    ██ ██",
-  "██      ██ ██   ██  ██████  ██",
+  "███╗   ███╗ █████╗  ██████╗ ██╗",
+  "████╗ ████║██╔══██╗██╔════╝ ██║",
+  "██╔████╔██║███████║██║  ███╗██║",
+  "██║╚██╔╝██║██╔══██║██║   ██║██║",
+  "██║ ╚═╝ ██║██║  ██║╚██████╔╝██║",
+  "╚═╝     ╚═╝╚═╝  ╚═╝ ╚═════╝ ╚═╝",
 ]
+
+/** The body of a glyph against its raised edge. */
+const BODY = "█"
+
+/**
+ * Dimmer companions, same hue. The edge sits behind the body, so giving it the
+ * body's colour flattens the face into a silhouette.
+ */
+const SHADE: Record<string, number> = { lime: 100, brand: 61 }
+
+/** Paints one line, switching between body and edge as the characters change. */
+function twoTone(line: string, ink: Ink): string {
+  if (!COLOUR) return line
+  let out = ""
+  let current: "body" | "edge" | null = null
+  for (const ch of line) {
+    const want = ch === BODY ? "body" : ch === " " ? current : "edge"
+    if (want !== current && want !== null) {
+      out += want === "body" ? `${ESC}[38;5;${CODE[ink]}m` : `${ESC}[38;5;${SHADE[ink]}m`
+      current = want
+    }
+    out += ch
+  }
+  return out + `${ESC}[0m`
+}
 
 /**
  * `OPEN` in lime, `MAGI` in brand purple.
@@ -81,12 +112,7 @@ const MAGI = [
  */
 export function wordmark(): string {
   if (!COLOUR) return "OPENMAGI"
-  return OPEN.map((line, i) => `${paint("lime", line)} ${paint("brand", MAGI[i])}`).join("\n")
-}
-
-/** `NERV · TOKYO-3`-style service line: spaced caps, never the loudest thing. */
-export function serviceLine(parts: string[]): string {
-  return paint("grey", parts.join(" · ").toUpperCase())
+  return OPEN.map((line, i) => `${twoTone(line, "lime")} ${twoTone(MAGI[i], "brand")}`).join("\n")
 }
 
 export const mark = {
