@@ -9,7 +9,10 @@
  * Every answer has a flag, and every flag skips its question. `--yes` or a
  * non-interactive shell takes the defaults and asks nothing.
  */
+import fs from "node:fs"
+
 import { detectAll, type Detected } from "./detect.ts"
+import { gatePaths } from "./paths.ts"
 import { ask, confirm, isInteractive, multiSelect, select, ui } from "./prompt.ts"
 import { mark, paint } from "./brand.ts"
 
@@ -109,9 +112,20 @@ export async function runWizard(options: WizardOptions): Promise<WizardAnswers |
     console.log("")
   }
 
-  // Stage 1 policy.
-  if (!answers.level && !silent) {
+  // Stage 1 policy. An existing ruleset is never overwritten -- surviving an
+  // install is what makes it a file rather than a flag -- so asking for a level
+  // when one is already on disk collects an answer only to discard it. The
+  // first person outside the team to run this picked "средний", was told
+  // "keeping your rules.json (level: low)", and had no way to see why.
+  const rulesPath = gatePaths().rulesPath
+  const rulesExist = fs.existsSync(rulesPath)
+  if (!answers.level && !silent && !rulesExist) {
     answers.level = await select("Уровень защиты", LEVELS, 1)
+    console.log("")
+  }
+  if (rulesExist && !silent) {
+    console.log(`${paint("lime", "◆")} ${ui.bold("Уровень защиты")}`)
+    console.log(`  ${ui.dim(`ваш ${rulesPath} остаётся как есть — правьте файл, install его не трогает`)}`)
     console.log("")
   }
   answers.level = answers.level ?? "medium"

@@ -6,9 +6,13 @@
 # job: pack the part of the tree the installer actually reads, next to a sha256
 # the script checks before unpacking anything.
 #
-# Only `adapters/` travels. The service, the benchmark and the site itself are
-# not needed to install a plugin into a harness, and shipping them would mean a
-# download five times the size for nothing.
+# `adapters/` and `service/` travel. The first is the plugin and the installer;
+# the second is there because the wizard offers to bring a guard up locally, and
+# that path runs `docker compose up --build` against `service/docker-compose.yml`.
+# Shipping without it meant the offer was made and then failed on a missing file
+# -- which is what happened on the first real install by someone else.
+#
+# The benchmark and the site do not travel: neither is needed to gate a harness.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -21,8 +25,13 @@ OUT="$HERE/site"
 bash "$ROOT/adapters/packages/plugin-codex/sync-core.sh" >/dev/null
 
 cd "$ROOT"
+# `tar` does not read .gitignore, so every secret is excluded by name here. An
+# archive built from a checkout that has `service/.env` would otherwise publish
+# a working guard token and an LLM key on a public site.
 tar --exclude='node_modules' --exclude='.DS_Store' --exclude='*.map' \
-    -czf "$OUT/openmagi-src.tar.gz" adapters
+    --exclude='.env' --exclude='*.env' --exclude='.venv' \
+    --exclude='__pycache__' --exclude='*.pyc' --exclude='runs' \
+    -czf "$OUT/openmagi-src.tar.gz" adapters service
 shasum -a 256 "$OUT/openmagi-src.tar.gz" | cut -d' ' -f1 > "$OUT/openmagi-src.tar.gz.sha256"
 
 printf 'собрано: %s (%s)\n' "$OUT/openmagi-src.tar.gz" "$(du -h "$OUT/openmagi-src.tar.gz" | cut -f1)"
