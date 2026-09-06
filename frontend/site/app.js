@@ -36,6 +36,7 @@ function applyLang(lang) {
   $$('[data-i18n-aria]').forEach(el => { el.setAttribute('aria-label', dict[el.dataset.i18nAria]); });
   $$('[data-i18n-placeholder]').forEach(el => { el.placeholder = dict[el.dataset.i18nPlaceholder]; });
   renderTerminal();
+  perchPenPen();
   renderRules();
   renderProbe();
   renderHarnesses();
@@ -50,6 +51,25 @@ function applyLinks() {
   $$('[data-cmd]').forEach(el => { el.textContent = CONFIG.installCommand; });
   $$('[data-copy]').forEach(button => { button.hidden = !CONFIG.installCommand; });
 }
+
+// --- Pen-Pen on the headline ---------------------------------------------
+
+// The headline wraps differently per viewport and language, so the end of its
+// first visual line is measured from the text range rather than assumed.
+function perchPenPen() {
+  const perch = $('.hero__line--perch'); const img = $('.penpen');
+  if (!perch || !img) return;
+  const range = document.createRange(); range.selectNodeContents(perch.firstElementChild);
+  const line = range.getClientRects()[0]; if (!line) return;
+  const base = perch.getBoundingClientRect();
+  const capTop = line.top + line.height * 0.3;
+  img.style.left = `${line.right - base.left - img.offsetWidth * 0.6}px`;
+  img.style.top = `${capTop - base.top - img.offsetHeight}px`;
+  img.classList.add('is-perched');
+}
+window.addEventListener('resize', perchPenPen);
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(perchPenPen);
+$('.penpen').addEventListener('load', perchPenPen);
 
 // --- copy buttons ---------------------------------------------------------
 

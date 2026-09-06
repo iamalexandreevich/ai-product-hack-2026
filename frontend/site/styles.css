@@ -65,6 +65,7 @@ html[data-lang="en"] .lang-toggle__en, html[data-lang="ru"] .lang-toggle__ru { c
 .hero__inner { position: relative; max-width: 1120px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 30px; }
 .hero__title { margin: 0; font-family: var(--font-display); font-size: clamp(56px, 9vw, 132px); font-weight: 900; letter-spacing: .01em; line-height: .9; text-transform: uppercase; }
 .hero__line { display: block; }
+.hero__line--perch { position: relative; width: fit-content; margin: 0 auto; }
 .hero__line--dim { color: var(--text-2); }
 .hero__accent { font-style: normal; font-family: inherit; color: var(--brand); }
 .hero__lead { margin: 0; font-size: clamp(17px, 1.5vw, 20px); line-height: 1.55; color: var(--text-2); max-width: 640px; }
@@ -238,8 +239,18 @@ html[data-lang="en"] .lang-toggle__en, html[data-lang="ru"] .lang-toggle__ru { c
   pointer-events: none; user-select: none; z-index: 0;
 }
 .deco--low { top: 62%; }
+.deco--foot { top: 0; bottom: 0; height: 100%; transform: none; }
 .deco--l { left: clamp(-140px, -6vw, -40px); }
 .deco--r { right: clamp(-140px, -6vw, -40px); }
 .deco--hero-l { left: clamp(-80px, -1vw, 0px); height: min(80vh, 700px); }
 .deco--hero-r { right: clamp(-80px, -1vw, 0px); height: min(80vh, 700px); }
 @media (max-width: 1100px) { .deco { display: none; } }
+
+/* Pen-Pen stands on the first visual line of the headline; the line's end
+   depends on wrapping, so app.js measures it and sets top/left. */
+.penpen {
+  position: absolute; top: 0; left: 0; height: clamp(64px, 8vw, 120px); width: auto;
+  pointer-events: none; user-select: none; visibility: hidden;
+}
+.penpen.is-perched { visibility: visible;
+}
