@@ -87,20 +87,7 @@ check-clean:
 #
 # Nothing here carries a secret: ssh/rsync resolve $(DEPLOY_HOST) purely
 # through the operator's ~/.ssh/config alias.
-# `pack-site` before `check-clean` would dirty the tree it checks, so the order
-# matters: verify first, then build the artifact the site serves.
-#
-# The archive the one-line installer downloads is not in git -- it is derived,
-# and a derived file in git drifts from its source the first time someone
-# commits without rebuilding. Building it here instead means the step cannot be
-# skipped, which is the failure this hook exists for: a deploy went out with an
-# archive from the previous version, the installer checked its sha256, found it
-# valid, and installed the old code. Nothing looked wrong.
-pack-site:
-	@echo "==> packing the installer archive"
-	bash ../frontend/pack-install.sh
-
-deploy: check-clean pack-site
+deploy: check-clean
 	@echo "==> syncing service/ to $(DEPLOY_HOST):$(DEPLOY_DIR)"
 	rsync -az --delete \
 		--filter=':- .gitignore' \
