@@ -56,7 +56,7 @@ Viewport: fluid, 1120px content max-width, side padding `clamp(24px,4vw,48px)`. 
 
 ### 5. Harnesses
 - Label "04 — ХАРНЕССЫ", H2, sub 17px #A397C2, all centered.
-- Grid `repeat(auto-fit,minmax(220px,1fr))`, gap 24px. Tile = link: column, padding 32px 20px, border 1px #2A1F45, color #A397C2; hover color+border #7B4FD6. Content: monogram Big Shoulders 900 40px (KI / OC / PI), name 9px uppercase ls .2em #7D7391 (Kilo Code / OpenCode / Pi), then mono 13px path line — currently placeholder "путь к хуку: уточняется" (replace with real hook config paths when known). No third-party logos.
+- Grid `repeat(auto-fit,minmax(220px,1fr))`, gap 24px. Tile = link with the harness logo (CSS mask, currentColor) and name; no hook paths — install is a single command. Third-party logos are used deliberately (owner decision, 2026-09-06).
 
 ### 6. Footer
 - Centered column gap 40px: the same install-command button as hero (second copy target), then a row (border-top 1px #2A1F45, padding-top 24px, 13px #A397C2, gap 8px 24px): GitHub · Лицензия MIT · Сделано командой AgentGate · © 2026.
