@@ -9,6 +9,7 @@
  */
 import { install, uninstall, status, doctor, setModeCommand } from "../src/commands.ts"
 import { runWizard } from "../src/wizard.ts"
+import { mark, serviceLine, wordmark } from "../src/brand.ts"
 
 function parseArgs(argv) {
   const options = {}
@@ -46,7 +47,7 @@ function parseArgs(argv) {
 
 const HARNESSES = ["opencode", "kilo", "opencode2", "pi", "codex", "dsh"]
 
-const USAGE = `gate — auto mode for open-source coding agents
+const USAGE = `OPENMAGI — auto mode for open-source coding agents
 
   node adapters/packages/installer/bin/gate.js <command>
   after the first install the same CLI is on PATH as: gate <command>
@@ -76,6 +77,12 @@ async function main() {
 
   switch (command) {
     case "install": {
+      // The wordmark first. An install writes into other people's config, and
+      // whoever runs it should see whose installer this is before it starts.
+      // Ahead of the wizard, so backing out still leaves a screen that makes
+      // sense.
+      console.log(`\n${wordmark()}\n`)
+      console.log(serviceLine(["nerv", "tokyo-3", "project openmagi"]) + "\n")
       // The wizard asks only what the flags did not already answer, and returns
       // null when the user backs out — so nothing is touched on a cancel.
       const answers = await runWizard(options)
@@ -108,8 +115,8 @@ async function main() {
     case "doctor": {
       const findings = await doctor(options)
       for (const f of findings) {
-        const mark = f.level === "ok" ? "✓" : f.level === "warn" ? "!" : "✗"
-        console.log(`${mark} ${f.message}`)
+        const glyph = f.level === "ok" ? mark.ok() : f.level === "warn" ? mark.warn() : mark.bad()
+        console.log(`${glyph} ${f.message}`)
       }
       break
     }

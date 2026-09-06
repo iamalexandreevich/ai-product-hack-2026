@@ -11,6 +11,7 @@
  */
 import { detectAll, type Detected } from "./detect.ts"
 import { ask, confirm, isInteractive, multiSelect, select, ui } from "./prompt.ts"
+import { mark, paint } from "./brand.ts"
 
 export type WizardAnswers = {
   targets: string[]
@@ -61,7 +62,7 @@ export async function runWizard(options: WizardOptions): Promise<WizardAnswers |
   }
 
   console.log("")
-  console.log(`${ui.green("●")} Найдено агентов: ${ui.bold(String(found.length))} — ` +
+  console.log(`${paint("lime", "●")} Найдено агентов: ${ui.bold(String(found.length))} — ` +
     found.map((t) => `${TITLES[t.id] ?? t.id} ${ui.dim(t.version)}`).join(", "))
   console.log("")
 
@@ -118,15 +119,15 @@ export async function runWizard(options: WizardOptions): Promise<WizardAnswers |
   if (silent) return answers
 
   // Everything the run is about to do, before it does any of it.
-  console.log(`${ui.cyan("◆")} ${ui.bold("Что будет сделано")}`)
+  console.log(`${paint("lime", "◆")} ${ui.bold("Что будет сделано")}`)
   for (const id of targets) {
-    console.log(`  ${ui.green("→")} ${TITLES[id] ?? id}: команда ${ui.bold(`${id}-gate`)}, ваш ${id} не тронут`)
+    console.log(`  ${mark.next()} ${TITLES[id] ?? id}: команда ${ui.bold(`${id}-gate`)}, ваш ${id} не тронут`)
   }
-  console.log(`  ${ui.green("→")} правила уровня ${ui.bold(answers.level)} → ~/.config/gate/rules.json`)
+  console.log(`  ${mark.next()} правила уровня ${ui.bold(answers.level)} → ~/.config/gate/rules.json`)
   console.log(
     answers.startGuard
-      ? `  ${ui.green("→")} поднять гард локально (docker compose)`
-      : `  ${ui.green("→")} гард: ${answers.guardUrl}`,
+      ? `  ${mark.next()} поднять гард локально (docker compose)`
+      : `  ${mark.next()} гард: ${answers.guardUrl}`,
   )
   console.log("")
 
