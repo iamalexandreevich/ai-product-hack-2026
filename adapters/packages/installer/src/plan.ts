@@ -100,13 +100,15 @@ export function planInstall(
     buildBinary: patched
       ? `${paths.buildsDir}/${target.id}/${target.version}/${target.id}`
       : null,
-    wrapper: patched ? wrapperPath(paths.binDir, target.id) : null,
+    // A wrapper in both modes. Without one, `fallback` gated the user's own
+    // `kilo` by editing their config -- the opposite of the rule this installer
+    // lives by, which is that the original command keeps working untouched and
+    // the gated one gets a name of its own.
+    wrapper: wrapperPath(paths.binDir, target.id),
     pluginSpec: PLUGIN_SPEC,
     tuiSpec: PLUGIN_TUI_SPEC,
     configKey: "plugin",
     needsPermissionBaseline: !patched,
-    restartHint: patched
-      ? `restart the harness, then run: ${target.id}-gate`
-      : "restart the harness (the plugin loads from your config)",
+    restartHint: `restart the harness, then run: ${target.id}-gate`,
   }
 }

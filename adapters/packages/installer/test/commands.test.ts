@@ -57,27 +57,46 @@ after(() => {
 })
 
 describe("install (fallback, no build)", () => {
-  it("adds the plugin, baseline permission and keybind override", async () => {
+  // Without a patched build the gate used to be installed by editing the
+  // user's own config, which quietly changed how their untouched `opencode`
+  // behaved and left them no separate command to run. The contract now is the
+  // same in both modes: their config is not ours to write in, and the gated
+  // harness has a name of its own.
+  it("writes an <id>-gate wrapper and leaves the user's config untouched", async () => {
     const target = makeTarget("opencode")
+    const before = fs.readFileSync(target.configFile, "utf8")
     await install({ detected: [target], paths, manifestFile, guardUrl: "http://g:1", log: () => {} })
 
-    const config = parseJsonc(fs.readFileSync(target.configFile, "utf8"))
-    assert.ok(Array.isArray(config.plugin), "plugin array should exist")
-    // The spec must be something the harness can actually resolve. An npm name
-    // that is not published loads nothing and fails silently, which is exactly
-    // how this went wrong once: the config looked right and the plugin never ran.
-    const spec = config.plugin[0][0] as string
+    const wrapper = path.join(paths.binDir, "opencode-gate")
+    assert.ok(fs.existsSync(wrapper), "a wrapper must exist even without a patched build")
+    const script = fs.readFileSync(wrapper, "utf8")
+
+    // It runs the user's own binary, not a build of ours.
+    assert.match(script, /exec '\/usr\/local\/bin\/opencode'/)
+    assert.match(script, /AGENTGATE_URL="\$\{AGENTGATE_URL:-http:\/\/g:1\}"/)
+
+    // Plugin and baseline rules travel in the overlay, not in their file.
+    const overlay = JSON.parse(script.match(/OPENCODE_CONFIG_CONTENT='(.*)'/)![1])
+    const spec = overlay.plugin[0][0] as string
     assert.ok(path.isAbsolute(spec), `plugin spec should be a path, got ${spec}`)
     assert.ok(fs.existsSync(spec), `plugin bundle should exist at ${spec}`)
-    // `url` is the key the plugin config actually reads.
-    assert.equal(config.plugin[0][1].url, "http://g:1")
-    assert.equal(config.permission.bash, "ask", "baseline permission needed for ask mode on stock")
+    assert.equal(overlay.permission.bash, "ask", "baseline permission needed for ask mode on stock")
 
-    const tui = parseJsonc(fs.readFileSync(target.tuiConfigFile, "utf8"))
-    assert.ok(tui.plugin.some((p: string) => fs.existsSync(p)), "tui plugin bundle should exist")
-    assert.equal(tui.keybinds.agent_cycle_reverse, "none")
-
+    assert.equal(fs.readFileSync(target.configFile, "utf8"), before, "their config must be byte-identical")
     assert.equal(parseJsonc(fs.readFileSync(paths.statePath, "utf8")).mode, "auto")
+  })
+
+  it("gives the badge only to the wrapper, never to the stock binary", async () => {
+    const target = makeTarget("opencode")
+    await install({ detected: [target], paths, manifestFile, log: () => {} })
+    const script = fs.readFileSync(path.join(paths.binDir, "opencode-gate"), "utf8")
+    // Our TUI config is handed to the wrapper by env; the shared one stays clean,
+    // so an ungated run cannot claim to be protected.
+    assert.match(script, /OPENCODE_TUI_CONFIG=/)
+    assert.ok(
+      !fs.existsSync(target.tuiConfigFile),
+      "the user's tui config must not be created just to hold our badge",
+    )
   })
 
   it("keeps the user's comments and existing keys", async () => {
@@ -89,42 +108,37 @@ describe("install (fallback, no build)", () => {
     assert.match(text, /"\$schema"/)
   })
 
-  it("takes a .bak before the first edit", async () => {
+  it("takes no .bak, because there is nothing to back up", async () => {
     const target = makeTarget("opencode")
     await install({ detected: [target], paths, manifestFile, log: () => {} })
-    assert.ok(fs.existsSync(`${target.configFile}.bak`), "a backup must exist")
-    assert.doesNotMatch(fs.readFileSync(`${target.configFile}.bak`, "utf8"), /gate-plugin/)
+    assert.ok(
+      !fs.existsSync(`${target.configFile}.bak`),
+      "a backup would mean we edited a file we promised not to touch",
+    )
   })
 
-  it("is idempotent: installing twice does not duplicate entries", async () => {
+  it("is idempotent: installing twice leaves the same wrapper", async () => {
     const target = makeTarget("opencode")
     await install({ detected: [target], paths, manifestFile, log: () => {} })
-    const afterFirst = fs.readFileSync(target.configFile, "utf8")
+    const wrapper = path.join(paths.binDir, "opencode-gate")
+    const afterFirst = fs.readFileSync(wrapper, "utf8")
     await install({ detected: [target], paths, manifestFile, log: () => {} })
-    const afterSecond = fs.readFileSync(target.configFile, "utf8")
-    assert.equal(afterFirst, afterSecond, "second install must be a no-op")
-    const config = parseJsonc(afterSecond)
-    assert.equal(config.plugin.length, 1, "plugin must appear once")
+    assert.equal(fs.readFileSync(wrapper, "utf8"), afterFirst, "second install must be a no-op")
   })
 })
 
 describe("uninstall", () => {
-  it("removes our entries and restores the freed keybind", async () => {
+  it("removes the wrapper and still leaves the user's config alone", async () => {
     const target = makeTarget("opencode")
+    const before = fs.readFileSync(target.configFile, "utf8")
     await install({ detected: [target], paths, manifestFile, log: () => {} })
     await uninstall({ detected: [target], paths, manifestFile, log: () => {} })
 
-    const config = parseJsonc(fs.readFileSync(target.configFile, "utf8"))
-    assert.ok(!config.plugin || config.plugin.length === 0, "our plugin must be gone")
-    assert.ok(!config.permission, "our baseline permission must be gone")
-
-    const tui = parseJsonc(fs.readFileSync(target.tuiConfigFile, "utf8"))
-    assert.ok(!tui.keybinds, "the freed keybind override must be removed")
-
-    // The user's original content survives.
-    const text = fs.readFileSync(target.configFile, "utf8")
-    assert.match(text, /keep this comment/)
-    assert.match(text, /"theme": "dark"/)
+    assert.ok(
+      !fs.existsSync(path.join(paths.binDir, "opencode-gate")),
+      "the wrapper is the whole install, so removing it is the whole uninstall",
+    )
+    assert.equal(fs.readFileSync(target.configFile, "utf8"), before, "their config must be byte-identical")
   })
 
   it("leaves a user's own permission rules alone", async () => {

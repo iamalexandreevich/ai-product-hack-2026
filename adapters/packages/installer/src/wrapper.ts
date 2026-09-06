@@ -13,6 +13,8 @@ import type { Detected } from "./detect.ts"
 import { PLUGIN_SPEC } from "./paths.ts"
 
 export type WrapperOptions = {
+  /** Baseline ask-rules, used when there is no patched build. */
+  permissionBaseline?: Record<string, string>
   binDir: string
   /** Path (or npm spec) the harness loads the plugin from. */
   pluginSpec?: string
@@ -47,6 +49,11 @@ export function renderWrapper(target: Detected, options: WrapperOptions): string
   const overlay: Record<string, unknown> = {
     plugin: [[options.pluginSpec ?? PLUGIN_SPEC, {}]],
   }
+  // Without a patched build the harness shows a prompt only for tools it is
+  // already set to ask about, so the baseline travels in the overlay too. In
+  // the user's own config it would outlive the gate and change how their
+  // untouched binary behaves; here it exists only while the wrapper runs.
+  if (options.permissionBaseline) overlay.permission = options.permissionBaseline
   const contentVar = `${target.envPrefix}_CONFIG_CONTENT`
   const disableVar = `${target.envPrefix}_DISABLE_AUTOUPDATE`
   const tuiVar = `${target.envPrefix}_TUI_CONFIG`

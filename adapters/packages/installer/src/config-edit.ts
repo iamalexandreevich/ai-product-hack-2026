@@ -8,7 +8,31 @@ import { parseJsonc, removeTopLevelKey, setTopLevelKey } from "./jsonc.ts"
 
 export function backup(file: string): void {
   const bak = `${file}.bak`
-  if (fs.existsSync(file) && !fs.existsSync(bak)) fs.copyFileSync(file, bak)
+  if (fs.existsSync(file) && !fs.existsSync(bak)) {
+    fs.copyFileSync(file, bak)
+    restrict(bak)
+  }
+}
+
+/**
+ * The guard token is written into the harness's own config, because that is
+ * where the plugin reads its options from. That file was being left at the
+ * mode it already had -- 0644 on a fresh install -- so a bearer good for every
+ * decision the guard makes was readable by any local account, and carried into
+ * the dotfiles repositories people keep these configs in.
+ *
+ * Narrowing it here rather than at each call site: every path that writes a
+ * config goes through this module, and a mode that depends on which function
+ * you used is a mode nobody can reason about.
+ */
+function restrict(file: string): void {
+  try {
+    fs.chmodSync(file, 0o600)
+  } catch {
+    // Windows and some network mounts have no POSIX modes. Failing the whole
+    // install over a permission we cannot express would be worse than the
+    // exposure we are narrowing.
+  }
 }
 
 function read(file: string): string {
@@ -18,6 +42,7 @@ function read(file: string): string {
 function write(file: string, text: string): void {
   fs.mkdirSync(path.dirname(file), { recursive: true })
   fs.writeFileSync(file, text)
+  restrict(file)
 }
 
 /** Appends a value to a top-level array key, only if it is not already there. */

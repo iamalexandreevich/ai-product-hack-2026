@@ -6,6 +6,7 @@
  * plugins", so gating is a profile rather than a relocated home: the user's
  * profiles are never touched and `dsh-gate` just boots ours.
  */
+import { execFileSync } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
 import { adaptersRoot } from "./bundle.ts"
@@ -66,9 +67,25 @@ export function installDsh(target: Detected, paths: GatePaths, options: DshInsta
   const profile = path.join(profilesDir, PROFILE_NAME)
 
   if (!fs.existsSync(path.join(profile, "cordis.yml"))) {
-    const donor = pickDonorProfile(profilesDir)
+    let donor = pickDonorProfile(profilesDir)
     if (!donor) {
-      options.log("  ! no dsh profile to copy from — run `dsh --profile headless --help` once, then retry")
+      // A fresh install has no profile yet, and asking the user to run one
+      // command and start over is a poor first impression when we can ask for
+      // the same thing ourselves. This is still dsh scaffolding its own
+      // profile -- `--help` makes it materialise one and exit -- which is what
+      // the comment above forbids us from faking, not from requesting.
+      try {
+        execFileSync(target.binary, ["--profile", "headless", "--help"], {
+          stdio: "ignore",
+          timeout: 60_000,
+        })
+      } catch {
+        // Nothing to add: the retry below reports the outcome either way.
+      }
+      donor = pickDonorProfile(profilesDir)
+    }
+    if (!donor) {
+      options.log("  ! dsh has no profile to copy from, and `dsh --profile headless --help` did not create one")
       return null
     }
     fs.mkdirSync(profile, { recursive: true })

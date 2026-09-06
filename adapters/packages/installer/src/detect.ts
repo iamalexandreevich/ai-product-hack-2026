@@ -144,7 +144,14 @@ export function detectAll(env = process.env): Detected[] {
   if (dshBin) {
     // dsh composes its runtime from a named profile, so gating is a profile of
     // its own; the user's profiles stay as they were.
-    const dir = path.join(HOME, ".dsh", "profiles")
+    //
+    // Where those profiles live is dsh's decision, and `DSH_HOME` is how it is
+    // told. Reading only `~/.dsh` meant that on a machine where the variable is
+    // set -- our own benchmark image sets `DSH_HOME=/dsh` -- the installer
+    // looked in an empty directory, found no profile to copy, and refused to
+    // install, while dsh itself was working out of a populated one next door.
+    const dshHome = process.env.DSH_HOME || path.join(HOME, ".dsh")
+    const dir = path.join(dshHome, "profiles")
     found.push({
       id: "dsh",
       binary: dshBin,
