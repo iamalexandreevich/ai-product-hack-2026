@@ -79,6 +79,7 @@ html[data-lang="en"] .lang-toggle__en, html[data-lang="ru"] .lang-toggle__ru { c
   transition: border-color .2s;
 }
 .cmd:hover { border-color: var(--lime); }
+.cmd[hidden] { display: none; }
 .cmd__prompt { color: var(--text-2); user-select: none; }
 .cmd__text { font-family: inherit; white-space: nowrap; overflow-x: auto; max-width: calc(100vw - 140px); }
 .cmd__icon { flex: none; }
@@ -183,13 +184,24 @@ html[data-lang="en"] .lang-toggle__en, html[data-lang="ru"] .lang-toggle__ru { c
 .verdict__key { color: var(--text-2); }
 .verdict__val { color: var(--text); }
 
+/* Context Guard: injections + secrets */
+.guard__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 24px; }
+.guard__card { display: flex; flex-direction: column; gap: 14px; padding: clamp(24px, 3vw, 36px); border: 1px solid var(--line); background: var(--panel); }
+.guard__kicker { font-size: 11px; letter-spacing: .2em; text-transform: uppercase; color: var(--lime); }
+.guard__kicker .kanji { font-size: 14px; letter-spacing: 0; margin-right: 6px; }
+.guard__title { margin: 0; font-family: var(--font-display); font-weight: 900; font-size: clamp(26px, 2.6vw, 34px); line-height: .95; text-transform: uppercase; }
+.guard__text { margin: 0; font-size: 15px; line-height: 1.6; color: var(--text-2); }
+.guard__sample { margin: auto 0 0; padding: 18px 20px; background: var(--bg); border: 1px solid var(--line); font-size: 13px; line-height: 1.7; color: var(--text-2); overflow-x: auto; }
+.guard__line { white-space: pre; }
+.guard__line--masked { color: var(--bg); background: var(--ask); padding: 0 6px; }
+.guard__redact { color: var(--bg); background: var(--deny); padding: 0 6px; }
+
 /* Harnesses */
 .harnesses__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 24px; }
 .harness { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 32px 20px; border: 1px solid var(--line); color: var(--text-2); transition: color .2s, border-color .2s; }
 .harness:hover { color: var(--brand); border-color: var(--brand); }
-.harness__mono { font-family: var(--font-display); font-weight: 900; font-size: 40px; line-height: 1; }
-.harness__name { font-size: 9px; letter-spacing: .2em; text-transform: uppercase; color: var(--text-3); }
-.harness__path { font-size: 13px; color: var(--text-2); }
+.harness__logo { width: 40px; height: 40px; background: currentColor; -webkit-mask: var(--logo) center / contain no-repeat; mask: var(--logo) center / contain no-repeat; }
+.harness__name { font-size: 11px; letter-spacing: .2em; text-transform: uppercase; color: var(--text-3); }
 
 /* Footer */
 .footer { padding: var(--section-gap) var(--pad-x) 48px; }
@@ -212,3 +224,16 @@ html[data-lang="en"] .lang-toggle__en, html[data-lang="ru"] .lang-toggle__ru { c
   .term__inner { position: relative; height: auto; }
   .line { opacity: 1; transform: none; }
 }
+
+/* Supported-harness strip: one row of logos, duplicated, scrolling left. */
+.strip { padding: 28px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); overflow: hidden;
+  -webkit-mask: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent); mask: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent); }
+.strip__track { display: flex; width: max-content; animation: strip-scroll 32s linear infinite; }
+.strip:hover .strip__track { animation-play-state: paused; }
+.strip__row { display: flex; flex-shrink: 0; }
+.strip__item { display: flex; align-items: center; gap: 14px; padding: 0 clamp(28px, 4vw, 56px); color: var(--text-2); transition: color .2s; }
+.strip__item:hover { color: var(--lime); }
+.strip__logo { width: 28px; height: 28px; flex-shrink: 0; background: currentColor; -webkit-mask: var(--logo) center / contain no-repeat; mask: var(--logo) center / contain no-repeat; }
+.strip__name { font-family: var(--font-display); font-weight: 900; font-size: 26px; line-height: 1; letter-spacing: .02em; text-transform: uppercase; white-space: nowrap; }
+@keyframes strip-scroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+@media (prefers-reduced-motion: reduce) { .strip__track { animation: none; } }

@@ -4,27 +4,33 @@
 const DICT = {
   en: { github: 'GitHub', theme: 'Toggle theme', lang: 'Switch language',
     h1a: 'Your agent can do anything.', h1b: 'Now it has to ', h1c: 'ask.', denyRu: 'DENIED', vAllow: 'ALLOWED', vDeny: 'DENIED', vAsk: 'PENDING',
-    sub: 'A policy gate between any coding agent and your machine. Every tool call is checked before it runs.',
-    note: 'Detects Kilo Code, OpenCode and Pi automatically.', copy: 'Copy install command', copied: 'Copied',
+    sub: 'A policy gate between open-source coding agents and your machine. Every tool call is checked before it runs.',
+    note: 'Detects Pi, Codex, Kilo Code, OpenCode and DeepSeek Harness automatically.', copy: 'Copy install command', copied: 'Copied',
     termTag: 'session', termTitle: 'A deny is not a dead end.', termSub: 'The gate blocks one call. The agent picks a safer route and finishes the job.', termPath: '~/work/api',
     mTag: 'benchmark', mTitle: 'Every number comes with its method.', mAsr: 'catch rate on dangerous actions', mFp: 'false blocks on safe work', mP95: 'decision latency', mFr: 'prompts per session',
     mNote: 'Method, sample size and run date: ', mLink: 'benchmark/', mPending: 'no run yet, numbers appear after the first benchmark.',
     rTag: 'policy', rTitle: 'What the gate stops by default.', rSub: 'Click a pattern or type your own command. The demo runs offline.',
     gDestructive: 'Destructive', gExfil: 'Exfiltration', gScope: 'Scope', gIrrev: 'Irreversible',
     placeholder: 'try a command…', idle: 'The verdict appears here.', unknown: 'This offline demo knows ~30 commands. The real gate evaluates anything.', tryThese: 'Try',
-    hTag: 'harnesses', hTitle: 'Works where your agent already runs.', hSub: 'One install. The hook is written to:', pathTbd: 'hook path: to be confirmed',
+    gTag: 'context', gTitle: 'Not just the command. What the agent reads, too.', gSub: 'Every tool result passes through the gate before it reaches the model context.',
+    gInjTag: 'injections', gInjTitle: 'Prompt-injection masking', gInjText: 'Instructions hidden in files, web pages and command output are cut out line by line. The model sees the data, not someone else\'s orders.', gInjMasked: '[masked · 3 lines]',
+    gSecTag: 'secrets', gSecTitle: 'Secret redaction', gSecText: 'Tokens, keys and passwords are hidden before the model sees them. The variable name stays, the value does not. Not in context, not in logs.',
+    hTag: 'harnesses', hStrip: 'Supported harnesses', hTitle: 'Built for the tools you already use.', hSub: 'One command. No hook paths, no config to edit.',
     fLicense: 'MIT License', fTeam: 'Built by the AgentGate team', fYear: '2026' },
   ru: { github: 'GitHub', theme: 'Переключить тему', lang: 'Переключить язык',
     h1a: 'Ваш агент может всё.', h1b: 'Теперь он должен ', h1c: 'спросить.', denyRu: 'ЗАПРЕЩЕНО', vAllow: 'РАЗРЕШЕНО', vDeny: 'ЗАПРЕЩЕНО', vAsk: 'НА РАССМОТРЕНИИ',
-    sub: 'Шлюз политик между любым кодинг-агентом и вашей машиной. Каждый вызов инструмента проверяется до выполнения.',
-    note: 'Kilo Code, OpenCode и Pi определяются автоматически.', copy: 'Скопировать команду установки', copied: 'Скопировано',
+    sub: 'Шлюз политик между открытыми кодинг-агентами и вашей машиной. Каждый вызов инструмента проверяется до выполнения.',
+    note: 'Pi, Codex, Kilo Code, OpenCode и DeepSeek Harness определяются автоматически.', copy: 'Скопировать команду установки', copied: 'Скопировано',
     termTag: 'сессия', termTitle: 'Отказ не ломает сессию.', termSub: 'Гейт блокирует один вызов. Агент выбирает безопасный путь и доводит задачу до конца.', termPath: '~/work/api',
     mTag: 'бенчмарк', mTitle: 'Каждая цифра с методикой.', mAsr: 'доля пойманных опасных действий', mFp: 'ложных блокировок на безопасной работе', mP95: 'задержка решения', mFr: 'вопросов за сессию',
     mNote: 'Методика, размер выборки и дата прогона: ', mLink: 'benchmark/', mPending: 'прогона ещё нет, цифры появятся после первого бенчмарка.',
     rTag: 'политика', rTitle: 'Что гейт останавливает по умолчанию.', rSub: 'Нажмите на паттерн или введите свою команду. Демо работает офлайн.',
     gDestructive: 'Разрушительные', gExfil: 'Утечка данных', gScope: 'Выход за область', gIrrev: 'Необратимые',
     placeholder: 'попробуйте команду…', idle: 'Здесь появится вердикт.', unknown: 'Это офлайн-демо знает ~30 команд. Настоящий гейт оценивает любую.', tryThese: 'Попробуйте',
-    hTag: 'харнессы', hTitle: 'Работает там, где уже работает ваш агент.', hSub: 'Одна установка. Хук записывается сюда:', pathTbd: 'путь к хуку: уточняется',
+    gTag: 'контекст', gTitle: 'Проверяется не только команда. Проверяется и то, что читает агент.', gSub: 'Результат каждого инструмента проходит через гейт до того, как попадёт в контекст модели.',
+    gInjTag: 'инъекции', gInjTitle: 'Маскирование промпт-инъекций', gInjText: 'Инструкции, спрятанные в файлах, страницах и выводе команд, вырезаются построчно. Модель видит данные, но не чужие приказы.', gInjMasked: '[masked · 3 lines]',
+    gSecTag: 'секреты', gSecTitle: 'Редакция секретов', gSecText: 'Токены, ключи и пароли скрываются до того, как модель их увидит. Имя переменной остаётся, значение — нет. Ни в контексте, ни в логах.',
+    hTag: 'харнессы', hStrip: 'Поддерживаемые харнессы', hTitle: 'Разработали для привычных вам инструментов.', hSub: 'Одна команда. Никаких путей к хукам и правок конфигов.',
     fLicense: 'Лицензия MIT', fTeam: 'Сделано командой AgentGate', fYear: '2026' }
 };
 
@@ -72,7 +78,13 @@ const LINES = [
 
 const METRICS = [{ key: 'ASR', l: 'mAsr', value: null, fmt: v => v.toFixed(1) + '%' }, { key: 'FP', l: 'mFp', value: null, fmt: v => v.toFixed(1) + '%' }, { key: 'p95', l: 'mP95', value: null, fmt: v => Math.round(v) + 'ms' }, { key: 'Friction', l: 'mFr', value: null, fmt: v => v.toFixed(1) }];
 
-const HARNESSES = [{ name: 'Kilo Code', mono: 'KI', url: 'https://kilocode.ai' }, { name: 'OpenCode', mono: 'OC', url: 'https://opencode.ai' }, { name: 'Pi', mono: 'PI', url: 'https://github.com/earendil-works/pi' }];
+const HARNESSES = [
+  { name: 'Pi', mono: 'PI', url: 'https://pi.dev', logo: './logos/pi.svg' },
+  { name: 'Codex', mono: 'CX', url: 'https://github.com/openai/codex', logo: './logos/codex.svg' },
+  { name: 'Kilo Code', mono: 'KI', url: 'https://kilocode.ai', logo: './logos/kilocode.svg' },
+  { name: 'OpenCode', mono: 'OC', url: 'https://opencode.ai', logo: './logos/opencode.svg' },
+  { name: 'DeepSeek Harness', mono: 'DS', url: 'https://github.com/deepseek-ai', logo: './logos/deepseek.svg' },
+];
 
 const KANJI = { allow: '承認', deny: '否定', ask: '審議中' }; const RUKEY = { allow: 'vAllow', deny: 'vDeny', ask: 'vAsk' };
 export { DICT, RULES, LINES, METRICS, HARNESSES, KANJI, RUKEY };

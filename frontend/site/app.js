@@ -40,6 +40,7 @@ function applyLang(lang) {
   renderRules();
   renderProbe();
   renderHarnesses();
+  renderStrip();
 }
 
 // --- static links from config -------------------------------------------
@@ -48,6 +49,7 @@ function applyLinks() {
   const urls = { github: CONFIG.githubUrl, benchmark: CONFIG.benchmarkUrl };
   $$('[data-link]').forEach(a => { a.href = urls[a.dataset.link]; });
   $$('[data-cmd]').forEach(el => { el.textContent = CONFIG.installCommand; });
+  $$('[data-copy]').forEach(button => { button.hidden = !CONFIG.installCommand; });
   $('#metrics').hidden = !CONFIG.showMetrics;
 }
 
@@ -230,11 +232,18 @@ function initProbe() {
 // --- harnesses ------------------------------------------------------------
 
 function renderHarnesses() {
-  const dict = t();
-  $('#harnesses-grid').innerHTML = HARNESSES.map(h => {
-    const path = CONFIG.hookPaths[h.name] || dict.pathTbd;
-    return `<a class="harness" href="${escAttr(h.url)}" target="_blank" rel="noopener"><span class="harness__mono">${h.mono}</span><span class="harness__name">${esc(h.name)}</span><code class="harness__path">${esc(path)}</code></a>`;
-  }).join('');
+  $('#harnesses-grid').innerHTML = HARNESSES.map(h =>
+    `<a class="harness" href="${escAttr(h.url)}" target="_blank" rel="noopener"><span class="harness__logo" style="--logo:url('${escAttr(h.logo)}')"></span><span class="harness__name">${esc(h.name)}</span></a>`
+  ).join('');
+}
+
+// Logos are inlined as CSS masks so they take the text color; the row is
+// duplicated so the marquee loops without a visible seam.
+function renderStrip() {
+  const items = HARNESSES.map(h =>
+    `<a class="strip__item" href="${escAttr(h.url)}" target="_blank" rel="noopener"><span class="strip__logo" style="--logo:url('${escAttr(h.logo)}')"></span><span class="strip__name">${esc(h.name)}</span></a>`
+  ).join('');
+  $('#strip-track').innerHTML = `<div class="strip__row">${items}</div><div class="strip__row" aria-hidden="true">${items}</div>`;
 }
 
 // --- helpers --------------------------------------------------------------

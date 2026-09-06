@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>OPENMAGI — шлюз политик для кодинг-агентов</title>
-<meta name="description" content="Шлюз политик между любым кодинг-агентом и вашей машиной. Каждый вызов инструмента проверяется до выполнения.">
+<meta name="description" content="Шлюз политик между открытыми кодинг-агентами и вашей машиной. Каждый вызов инструмента проверяется до выполнения.">
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#0B0714">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%230B0714'/%3E%3Cpath d='M16 3l11 6.5v13L16 29 5 22.5v-13z' fill='none' stroke='%237B4FD6' stroke-width='2.5'/%3E%3Ccircle cx='16' cy='16' r='3.5' fill='%23B6FF2E'/%3E%3C/svg%3E">
@@ -30,7 +30,7 @@
 <section class="hero">
   <div class="hero__inner">
     <h1 class="hero__title" data-appear style="--delay:0s"><span class="hero__line" data-i18n="h1a">Ваш агент может всё.</span><span class="hero__line hero__line--dim"><span data-i18n="h1b">Теперь он должен </span><em class="hero__accent" data-i18n="h1c">спросить.</em></span></h1>
-    <p class="hero__lead" data-appear style="--delay:.08s" data-i18n="sub">Шлюз политик между любым кодинг-агентом и вашей машиной. Каждый вызов инструмента проверяется до выполнения.</p>
+    <p class="hero__lead" data-appear style="--delay:.08s" data-i18n="sub">Шлюз политик между открытыми кодинг-агентами и вашей машиной. Каждый вызов инструмента проверяется до выполнения.</p>
     <div class="hero__cta" data-appear style="--delay:.16s">
       <button type="button" class="cmd" data-copy data-i18n-aria="copy" aria-label="Скопировать команду установки">
         <span class="cmd__prompt" aria-hidden="true">$</span>
@@ -41,6 +41,11 @@
       <p class="hero__note" data-i18n="note">Kilo Code, OpenCode и Pi определяются автоматически.</p>
     </div>
   </div>
+</section>
+
+<section class="strip" aria-labelledby="strip-title">
+  <h2 id="strip-title" class="sr-only" data-i18n="hStrip">Поддерживаемые харнессы</h2>
+  <div class="strip__track" id="strip-track"></div>
 </section>
 
 <section class="term" id="term">
@@ -93,12 +98,42 @@
   </div>
 </section>
 
+<section class="section guard" id="guard">
+  <div class="section__inner guard__inner" data-appear>
+    <div class="section-head">
+      <span class="section-tag">04 — <span data-i18n="gTag">контекст</span></span>
+      <h2 class="section-title" data-i18n="gTitle">Проверяется не только команда. Проверяется и то, что читает агент.</h2>
+      <p class="section-sub section-sub--wide" data-i18n="gSub">Результат каждого инструмента проходит через гейт до того, как попадёт в контекст модели.</p>
+    </div>
+    <div class="guard__grid">
+      <article class="guard__card">
+        <span class="guard__kicker"><span class="kanji">遮断</span> <span data-i18n="gInjTag">инъекции</span></span>
+        <h3 class="guard__title" data-i18n="gInjTitle">Маскирование промпт-инъекций</h3>
+        <p class="guard__text" data-i18n="gInjText">Инструкции, спрятанные в файлах, страницах и выводе команд, вырезаются построчно. Модель видит данные, но не чужие приказы.</p>
+        <pre class="guard__sample"><code><span class="guard__line">README.md · 42 lines</span>
+<span class="guard__line">## Install</span>
+<span class="guard__line guard__line--masked" data-i18n="gInjMasked">[masked · 3 lines]</span>
+<span class="guard__line">npm install</span></code></pre>
+      </article>
+      <article class="guard__card">
+        <span class="guard__kicker"><span class="kanji">秘匿</span> <span data-i18n="gSecTag">секреты</span></span>
+        <h3 class="guard__title" data-i18n="gSecTitle">Редакция секретов</h3>
+        <p class="guard__text" data-i18n="gSecText">Токены, ключи и пароли скрываются до того, как модель их увидит. Имя переменной остаётся, значение — нет. Ни в контексте, ни в логах.</p>
+        <pre class="guard__sample"><code><span class="guard__line">$ printenv | grep API</span>
+<span class="guard__line">OPENAI_API_KEY=<span class="guard__redact">[redacted]</span></span>
+<span class="guard__line">DB_PASSWORD=<span class="guard__redact">[redacted]</span></span>
+<span class="guard__line">API_TIMEOUT=30</span></code></pre>
+      </article>
+    </div>
+  </div>
+</section>
+
 <section class="section harnesses" id="harnesses">
   <div class="section__inner harnesses__inner" data-appear>
     <div class="section-head">
-      <span class="section-tag">04 — <span data-i18n="hTag">харнессы</span></span>
-      <h2 class="section-title" data-i18n="hTitle">Работает там, где уже работает ваш агент.</h2>
-      <p class="section-sub section-sub--wide" data-i18n="hSub">Одна установка. Хук записывается сюда:</p>
+      <span class="section-tag">05 — <span data-i18n="hTag">харнессы</span></span>
+      <h2 class="section-title" data-i18n="hTitle">Разработали для привычных вам инструментов.</h2>
+      <p class="section-sub section-sub--wide" data-i18n="hSub">Одна команда. Никаких путей к хукам и правок конфигов.</p>
     </div>
     <div class="harnesses__grid" id="harnesses-grid"></div>
   </div>
