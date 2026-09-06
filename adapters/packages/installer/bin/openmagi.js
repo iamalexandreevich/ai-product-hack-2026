@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * The gate CLI.
+ * The OPENMAGI CLI.
  *
  * A plain Node CLI with no Bun dependency, so it runs anywhere node does even
  * though the plugin it installs is loaded by the harness's Bun runtime. Run it
@@ -27,7 +27,7 @@ function parseArgs(argv) {
     else if (arg === "--level") {
       options.level = argv[++i]
       if (!["low", "medium", "high"].includes(options.level)) {
-        console.error(`gate: unknown level "${options.level}"; use low, medium or high`)
+        console.error(`openmagi: unknown level "${options.level}"; use low, medium or high`)
         process.exit(2)
       }
     }
@@ -36,7 +36,7 @@ function parseArgs(argv) {
       const unknown = options.only.filter((id) => !HARNESSES.includes(id))
       // Silently installing nothing because of a typo is worse than refusing.
       if (unknown.length) {
-        console.error(`gate: unknown harness ${unknown.join(", ")}\n  known: ${HARNESSES.join(", ")}`)
+        console.error(`openmagi: unknown harness ${unknown.join(", ")}\n  known: ${HARNESSES.join(", ")}`)
         process.exit(2)
       }
     }
@@ -49,8 +49,8 @@ const HARNESSES = ["opencode", "kilo", "opencode2", "pi", "codex", "dsh"]
 
 const USAGE = `OPENMAGI — auto mode for open-source coding agents
 
-  node adapters/packages/installer/bin/gate.js <command>
-  after the first install the same CLI is on PATH as: gate <command>
+  node adapters/packages/installer/bin/openmagi.js <command>
+  after the first install the same CLI is on PATH as: openmagi <command>
 
   install [--only <harnesses>] [--level low|medium|high]
 
@@ -105,7 +105,7 @@ async function main() {
       break
     case "status": {
       const report = await status(options)
-      console.log(`gate mode: ${report.mode}`)
+      console.log(`openmagi mode: ${report.mode}`)
       console.log(`guard: ${report.guardHealthy ? "reachable" : "unreachable"} (${report.guardUrl})`)
       for (const t of report.targets) {
         console.log(`  ${t.id} ${t.version}: ${t.installed ? "installed" : "not installed"} (${t.mode})`)
@@ -130,6 +130,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(`gate: ${error.message}`)
+  console.error(`openmagi: ${error.message}`)
   process.exit(1)
 })

@@ -2,6 +2,10 @@
   "name": "@agentgate/gate",
   "version": "0.1.0",
   "type": "module",
-  "bin": { "gate": "./bin/gate.js" },
-  "engines": { "node": ">=22.6" }
+  "bin": {
+    "openmagi": "./bin/openmagi.js"
+  },
+  "engines": {
+    "node": ">=22.6"
+  }
 }
