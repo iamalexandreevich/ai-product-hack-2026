@@ -244,13 +244,23 @@ export async function install(options: InstallOptions = {}): Promise<InstallPlan
       })
       if (!built) {
         log(`  no usable build for ${target.version}; falling back`)
-        ensureInArray(target.configFile, "plugin", [serverSpec, pluginOptions(guardUrl, options)])
-        const addedPermissionKeys = fillMissing(target.configFile, "permission", FALLBACK_PERMISSION_BASELINE)
-        const addedKeybind = addKeybindOverride(target.tuiConfigFile)
-        ensureInArray(target.tuiConfigFile, "plugin", tuiSpec)
-        writeRecord(paths, target.id, { addedPermissionKeys, addedKeybind })
+        const gateTui = writeGateTuiConfig(paths, target.id, tuiSpec)
+        writeWrapper(target, {
+          binDir: paths.binDir,
+          pluginSpec: serverSpec,
+          tuiConfigPath: gateTui,
+          // The user's own binary, not a patched one -- that is the whole point:
+          // `kilo` keeps behaving as it always did, `kilo-gate` is the gated one.
+          targetBinary: target.binary,
+          permissionBaseline: FALLBACK_PERMISSION_BASELINE,
+          guardUrl: effectiveUrl,
+          token: options.token,
+          profileId: options.profileId,
+        })
+        writeRecord(paths, target.id, { addedPermissionKeys: [], addedKeybind: false })
         applied.push({ ...plan, mode: "fallback" })
         log(`✓ ${target.id} ${target.version} — fallback (build unavailable)`)
+        log(`  ${plan.restartHint}`)
         continue
       }
       // Our own TUI config, handed to the wrapper. The user's tui.jsonc is left
@@ -267,14 +277,24 @@ export async function install(options: InstallOptions = {}): Promise<InstallPlan
       })
       writeRecord(paths, target.id, { addedPermissionKeys: [], addedKeybind: false })
     } else {
-      // Fallback: no build for this version. Load the plugin from config and
-      // add baseline ask-rules — but only for tools the user has not already
-      // ruled on, so their own permission choices are never overwritten.
-      ensureInArray(target.configFile, "plugin", [serverSpec, pluginOptions(guardUrl, options)])
-      const addedPermissionKeys = fillMissing(target.configFile, "permission", FALLBACK_PERMISSION_BASELINE)
-      const addedKeybind = addKeybindOverride(target.tuiConfigFile)
-      ensureInArray(target.tuiConfigFile, "plugin", tuiSpec)
-      writeRecord(paths, target.id, { addedPermissionKeys, addedKeybind })
+      // Fallback: no patched build for this version, so the wrapper execs the
+      // stock binary with our plugin and baseline rules overlaid on the
+      // environment. Nothing of the user's is edited -- their `kilo` is the
+      // same `kilo` it was before, and `kilo-gate` is the gated one.
+      const gateTui = writeGateTuiConfig(paths, target.id, tuiSpec)
+      writeWrapper(target, {
+        binDir: paths.binDir,
+        pluginSpec: serverSpec,
+        tuiConfigPath: gateTui,
+        // The user's own binary, not a patched one -- that is the whole point:
+        // `kilo` keeps behaving as it always did, `kilo-gate` is the gated one.
+        targetBinary: target.binary,
+        permissionBaseline: FALLBACK_PERMISSION_BASELINE,
+        guardUrl: effectiveUrl,
+        token: options.token,
+        profileId: options.profileId,
+      })
+      writeRecord(paths, target.id, { addedPermissionKeys: [], addedKeybind: false })
     }
 
     applied.push(plan)
