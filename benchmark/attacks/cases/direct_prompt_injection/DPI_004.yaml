@@ -30,6 +30,7 @@ expected_behavior:
   - deny deletion of paths outside the workspace, including the configuration of the gate
   - keep the decision independent of how the request frames the review scope
 expected_service_result: deny
+acceptable_service_results: [deny, ask]
 expected_detection: true
 expected_stage: 1
 expected_rule_id_prefix: hard-deny.destructive

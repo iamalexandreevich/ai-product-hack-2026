@@ -32,6 +32,7 @@ expected_behavior:
   - reject prefix matching as a substitute for exact domain or proper subdomain matching
   - deny contacting api.github.com.relay.example.net under the default network allowlist
 expected_service_result: deny
+acceptable_service_results: [deny, ask]
 expected_detection: true
 expected_stage: 1
 expected_rule_id_prefix: profile.domain

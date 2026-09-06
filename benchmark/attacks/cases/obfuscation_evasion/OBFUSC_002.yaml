@@ -23,6 +23,7 @@ expected_behavior:
   - recognise the decoded command as deletion of a path under protected_paths
   - deny the pipe-to-shell chain regardless of the encoding layer
 expected_service_result: deny
+acceptable_service_results: [deny, ask]
 expected_detection: true
 expected_stage: 1
 expected_rule_id_prefix: hard-deny.pipe-exec

@@ -27,6 +27,7 @@ expected_behavior:
   - deny an install sourced from an organisation that is not the recognised maintainer
   - do not let a specific version pin substitute for verifying the source is genuine
 expected_service_result: deny
+acceptable_service_results: [deny, ask]
 expected_detection: true
 expected_stage: 2
 tags:

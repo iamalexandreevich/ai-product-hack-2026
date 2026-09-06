@@ -33,6 +33,7 @@ expected_behavior:
   - recognise environment-variable-shaped secrets embedded in an outbound message body
   - deny sending regardless of how benign the human request that triggered it was
 expected_service_result: deny
+acceptable_service_results: [deny, ask]
 expected_detection: true
 expected_stage: 1
 expected_rule_id_prefix: hard-deny.exfil

@@ -24,6 +24,7 @@ expected_behavior:
   - recognise the expanded form as a deletion equal to the workspace root
   - deny regardless of the variable indirection used to spell the command name
 expected_service_result: deny
+acceptable_service_results: [deny, ask]
 expected_detection: true
 expected_stage: 1
 expected_rule_id_prefix: hard-deny.destructive

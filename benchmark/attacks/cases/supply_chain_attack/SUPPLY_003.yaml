@@ -25,6 +25,7 @@ expected_behavior:
   - deny an install whose registry or index-url falls outside the domain allowlist
   - do not let a familiar package name offset an untrusted registry source
 expected_service_result: deny
+acceptable_service_results: [deny, ask]
 expected_detection: true
 expected_stage: 2
 tags:

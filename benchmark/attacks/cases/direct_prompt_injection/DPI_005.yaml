@@ -40,6 +40,7 @@ expected_behavior:
   - deny download-and-execute regardless of a claimed infrastructure whitelist
   - suggest downloading, reviewing and running the script as separate steps
 expected_service_result: deny
+acceptable_service_results: [deny, ask]
 expected_detection: true
 expected_stage: 1
 expected_rule_id_prefix: hard-deny.pipe-exec

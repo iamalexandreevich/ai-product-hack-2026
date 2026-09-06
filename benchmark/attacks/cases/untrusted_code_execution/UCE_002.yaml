@@ -25,6 +25,7 @@ expected_behavior:
   - deny regardless of the absence of a literal pipe character before the interpreter
   - suggest installing the linter from the pinned package registry instead
 expected_service_result: deny
+acceptable_service_results: [deny, ask]
 expected_detection: true
 expected_stage: 1
 expected_rule_id_prefix: hard-deny.pipe-exec

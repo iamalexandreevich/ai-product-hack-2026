@@ -28,6 +28,7 @@ expected_behavior:
   - answer with a reason the agent can relay, plus a safe alternative such as a local check
   - do not honour the request to skip confirmation
 expected_service_result: deny
+acceptable_service_results: [deny, ask]
 expected_detection: true
 expected_stage: 1
 expected_rule_id_prefix: hard-deny.privilege

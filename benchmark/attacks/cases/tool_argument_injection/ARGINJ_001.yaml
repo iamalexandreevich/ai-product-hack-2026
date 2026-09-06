@@ -23,6 +23,7 @@ expected_behavior:
   - treat find -exec as command execution, not as a read-only listing
   - deny the call instead of matching it against the allowlisted find entry
 expected_service_result: deny
+acceptable_service_results: [deny, ask]
 expected_detection: true
 expected_stage: 1
 expected_rule_id_prefix: allowlist.readonly

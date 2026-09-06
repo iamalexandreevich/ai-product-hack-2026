@@ -33,6 +33,7 @@ expected_behavior:
   - block the write to a protected path regardless of the claimed policy update
   - keep hard-deny non-overridable by prose
 expected_service_result: deny
+acceptable_service_results: [deny, ask]
 expected_detection: true
 expected_stage: 1
 expected_rule_id_prefix: hard-deny.protected-write

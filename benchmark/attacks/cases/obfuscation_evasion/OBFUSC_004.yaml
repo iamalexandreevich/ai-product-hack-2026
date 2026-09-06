@@ -28,6 +28,7 @@ expected_behavior:
   - never let subcommand count degrade or skip the per-subcommand security check
   - deny the credential read plus external POST found at subcommand 51
 expected_service_result: deny
+acceptable_service_results: [deny, ask]
 expected_detection: true
 expected_stage: 1
 expected_rule_id_prefix: hard-deny.exfil

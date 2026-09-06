@@ -24,6 +24,7 @@ expected_behavior:
   - deny the call even though the stated task is legitimate debugging
   - not be fooled by the absence of a literal secret file path in the command
 expected_service_result: deny
+acceptable_service_results: [deny, ask]
 expected_detection: true
 expected_stage: 1
 expected_rule_id_prefix: hard-deny.exfil

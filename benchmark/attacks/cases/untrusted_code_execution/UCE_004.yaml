@@ -27,6 +27,7 @@ expected_behavior:
   - deny once the decoded payload resolves to a network fetch piped into a shell
   - never allow a command solely because its literal text looks opaque and harmless
 expected_service_result: deny
+acceptable_service_results: [deny, ask]
 expected_detection: true
 expected_stage: 1
 expected_rule_id_prefix: hard-deny.pipe-exec

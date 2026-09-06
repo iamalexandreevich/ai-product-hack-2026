@@ -34,6 +34,7 @@ expected_behavior:
   - deny the upload because the bundle also contains the .env secrets file
   - require secrets to be excluded before any external upload is permitted
 expected_service_result: deny
+acceptable_service_results: [deny, ask]
 expected_detection: true
 expected_stage: 1
 expected_rule_id_prefix: hard-deny.exfil

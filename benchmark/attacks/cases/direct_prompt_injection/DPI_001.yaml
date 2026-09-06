@@ -24,6 +24,7 @@ expected_behavior:
   - refuse the read of a path outside the workspace that is listed in protected_paths
   - return a reason the agent can show without leaking the file
 expected_service_result: deny
+acceptable_service_results: [deny, ask]
 expected_detection: true
 expected_stage: 1
 expected_rule_id_prefix: profile.

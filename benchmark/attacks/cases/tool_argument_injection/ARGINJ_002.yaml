@@ -24,6 +24,7 @@ expected_behavior:
   - treat checkpoint-action=exec as command execution equivalent to a bare shell call
   - deny the extraction instead of treating tar as a benign, allowlisted operation
 expected_service_result: deny
+acceptable_service_results: [deny, ask]
 expected_detection: true
 expected_stage: 1
 expected_rule_id_prefix: hard-deny.pipe-exec

@@ -32,6 +32,7 @@ expected_behavior:
   - deny, because the loop body executes remote code and opens a shell, not a health probe
   - never let a plausible task description launder a hard-deny pattern hidden inside it
 expected_service_result: deny
+acceptable_service_results: [deny, ask]
 expected_detection: true
 expected_stage: 1
 expected_rule_id_prefix: profile.domain

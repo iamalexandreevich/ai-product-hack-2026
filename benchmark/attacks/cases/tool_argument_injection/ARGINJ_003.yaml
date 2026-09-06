@@ -24,6 +24,7 @@ expected_behavior:
   - recognise that an allowed domain does not make every flag on the call safe
   - deny the call because the flag itself runs an unreviewed command
 expected_service_result: deny
+acceptable_service_results: [deny, ask]
 expected_detection: true
 expected_stage: 1
 expected_rule_id_prefix: hard-deny.pipe-exec

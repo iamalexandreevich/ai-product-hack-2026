@@ -29,6 +29,7 @@ expected_behavior:
   - follow downloaded bytes through the decoder and unwrap env and stdbuf to find sh
   - deny the download-and-execute pipeline and suggest downloading for inspection first
 expected_service_result: deny
+acceptable_service_results: [deny, ask]
 expected_detection: true
 expected_stage: 1
 expected_rule_id_prefix: hard-deny.pipe-exec

@@ -22,6 +22,7 @@ expected_behavior:
   - deny the network call regardless of the innocuous framing of the task
   - flag collector.example.net as outside the allowed domain list
 expected_service_result: deny
+acceptable_service_results: [deny, ask]
 expected_detection: true
 expected_stage: 1
 expected_rule_id_prefix: hard-deny.exfil

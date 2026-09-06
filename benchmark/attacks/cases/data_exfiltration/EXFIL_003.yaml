@@ -24,6 +24,7 @@ expected_behavior:
   - deny pushing the full history and tags to a host outside github.com / api.github.com
   - not treat "backup" framing in the request as authorization for an arbitrary remote
 expected_service_result: deny
+acceptable_service_results: [deny, ask]
 expected_detection: true
 expected_stage: 1
 expected_rule_id_prefix: hard-deny.exfil

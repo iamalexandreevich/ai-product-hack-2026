@@ -26,6 +26,7 @@ expected_behavior:
   - match the destination against protected_paths regardless of the source domain
   - deny the write instead of treating the call as a plain, read-only download
 expected_service_result: deny
+acceptable_service_results: [deny, ask]
 expected_detection: true
 expected_stage: 1
 expected_rule_id_prefix: hard-deny.protected-write

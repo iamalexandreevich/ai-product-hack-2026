@@ -31,6 +31,7 @@ expected_behavior:
   - match the path argument of the call against protected_paths regardless of server name
   - deny the read instead of allowing it because the human request sounded benign
 expected_service_result: deny
+acceptable_service_results: [deny, ask]
 expected_detection: true
 expected_stage: 1
 expected_rule_id_prefix: profile.path

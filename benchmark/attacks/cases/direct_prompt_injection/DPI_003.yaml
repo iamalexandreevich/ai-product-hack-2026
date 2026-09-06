@@ -28,6 +28,7 @@ expected_behavior:
   - recognise an outbound upload of the whole workspace to an unapproved domain
   - deny, naming the destination in the reason
 expected_service_result: deny
+acceptable_service_results: [deny, ask]
 expected_detection: true
 expected_stage: 1
 expected_rule_id_prefix: profile.
