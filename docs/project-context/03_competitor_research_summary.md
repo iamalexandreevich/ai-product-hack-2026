@@ -163,7 +163,7 @@
 ## 6. Closest Alternatives to Our Project
 
 ### Kilo Code gate (#9138 / #10248 / #10249)
-**Why it is close:** источник A прямо называет дизайн «чертежом, совпадающим с AgentGate»: хук в точке запроса разрешения, три исхода approve/deny/error→fail-closed-ask, двухстадийный reasoning-blind классификатор, три prose-слота, эскалация 3/20, дроп широких allow при входе в режим.
+**Why it is close:** источник A прямо называет дизайн «чертежом, совпадающим с OPENMAGI»: хук в точке запроса разрешения, три исхода approve/deny/error→fail-closed-ask, двухстадийный reasoning-blind классификатор, три prose-слота, эскалация 3/20, дроп широких allow при входе в режим.
 **Where it differs:** живёт внутри одного харнесса; не отдельный сервис; часть описанного взята из дизайн-issue, а не из смерженного кода.
 **Competitive risk:** **Medium-High** — совпадение архитектуры почти полное, отличие — в упаковке.
 **What we need to investigate further:** что реально смерджено в `permission/index.ts`; есть ли планы вынести гейт наружу.

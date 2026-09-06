@@ -78,9 +78,9 @@ Status: Intermediate / Work in Progress. Сверено 6 сентября 2026.
 
 * разработка механизмов перехвата данных на входе AI-агента;
 * разработка механизмов перехвата данных на выходе AI-агента;
-* интеграция AgentGate с различными AI-agent harnesses;
+* интеграция OPENMAGI с различными AI-agent harnesses;
 * разработка integration layer между harness и decision-making service;
-* определение способа применения решения AgentGate к фактическому выполнению действий агентом;
+* определение способа применения решения OPENMAGI к фактическому выполнению действий агентом;
 * участие в общей архитектуре AI-системы;
 * участие в продуктовых и технических обсуждениях команды.
 
@@ -90,7 +90,7 @@ Status: Intermediate / Work in Progress. Сверено 6 сентября 2026.
 
 Он активно вовлечён в обсуждение:
 
-* общей архитектуры AgentGate;
+* общей архитектуры OPENMAGI;
 * состава контекста, необходимого для принятия решения;
 * взаимодействия различных компонентов;
 * ограничений существующих agent harnesses;
@@ -101,7 +101,7 @@ Status: Intermediate / Work in Progress. Сверено 6 сентября 2026.
 
 **Harness integration / interception layer**
 
-Алексей является основным владельцем конкретной инженерной реализации слоя интеграции AgentGate с AI-agent harnesses.
+Алексей является основным владельцем конкретной инженерной реализации слоя интеграции OPENMAGI с AI-agent harnesses.
 
 ## Current involvement
 
@@ -117,7 +117,7 @@ Status: Intermediate / Work in Progress. Сверено 6 сентября 2026.
 
 ## Primary responsibilities
 
-* разработка benchmark для проверки AgentGate;
+* разработка benchmark для проверки OPENMAGI;
 * определение структуры benchmark и необходимых метрик;
 * разработка верхнеуровневой целевой архитектуры продукта без фиксации конкретного инженерного способа реализации;
 * формализация пользовательской проблемы и продуктовых требований;
@@ -167,7 +167,7 @@ Benchmark рассматривается не только как техниче
 * целевой пользователь;
 * value proposition;
 * общий пользовательский сценарий;
-* верхнеуровневая архитектура AgentGate;
+* верхнеуровневая архитектура OPENMAGI;
 * архитектура взаимодействия компонентов;
 * требования к decision-making service;
 * требования к harness integrations;
@@ -247,7 +247,7 @@ Primary implementation owner: **Александр Иванов**
 
 Primary implementation owner: **Алексей Балашов**
 
-Отвечает за получение необходимого контекста из AI-agent harnesses и интеграцию решений AgentGate в execution flow агента.
+Отвечает за получение необходимого контекста из AI-agent harnesses и интеграцию решений OPENMAGI в execution flow агента.
 
 ### Evaluation and product layer
 
@@ -259,7 +259,7 @@ Primary implementation owner: **Тимур Полищук**
 
 Конечный продукт проектируется всей командой как единая система:
 
-**AI Agent / Harness → Context Interception → AgentGate Decision Service → Decision → Agent Action**
+**AI Agent / Harness → Context Interception → OPENMAGI Decision Service → Decision → Agent Action**
 
 Benchmark проверяет работу всей этой системы end-to-end.
 

@@ -51,7 +51,7 @@ Status: реализован и однажды прогнан против ра�
 | `server` (по умолчанию) | наш сервис по HTTP: `POST /v1/decide` | URL и токен; не-локальный хост требует `--allow-remote` |
 | `claude-code` | родной auto mode Claude Code (`permission_mode: auto`) | одноразовая песочница, флаги `--sandbox` и `--i-have-a-sandbox` |
 | `claude-sdk` | обычные права Claude Code без классификатора | то же |
-| `claude-agentgate` | наше TypeScript-ядро из `adapters/packages/core` в хуках `PreToolUse`/`PostToolUse` сессии Claude Code | то же плюс живой AgentGate и Node 24 либо Docker |
+| `claude-agentgate` | наше TypeScript-ядро из `adapters/packages/core` в хуках `PreToolUse`/`PostToolUse` сессии Claude Code | то же плюс живой OPENMAGI и Node 24 либо Docker |
 
 Три конфигурации Claude требуют `execution_mode=single_decision` и `session_mode=per_case`, а
 `claude-agentgate` дополнительно проходит preflight: проверяется, что установленный
@@ -396,7 +396,7 @@ MCP-SafetyBench и подобные в коде не встречаются: п�
 | `test_adapter_contracts.py`, `test_policy_dataset.py` | 1 каждый |
 
 **Важное разграничение.** Тесты проверяют бенчмарк — его схемы, скоринг, агрегацию, клиент,
-хранилище, адаптеры. Они **не** проверяют AgentGate и **не** валидируют содержательное
+хранилище, адаптеры. Они **не** проверяют OPENMAGI и **не** валидируют содержательное
 качество кейсов. Единственный тест, проверяющий стык с чужим кодом, —
 `test_adapter_contracts.py`: он исполняет настоящие TypeScript-сборщики запросов через Node
 или Docker и валидирует все построенные запросы по JSON-схемам из `contracts/`. При аудите он

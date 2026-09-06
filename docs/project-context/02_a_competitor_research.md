@@ -1,6 +1,6 @@
 # Auto mode и автоматическое одобрение действий в кодинг-агентах — обзор индустрии
 
-*Исходный материал: инженерное исследование, полученное 3 сентября 2026. Этот документ — редакция отчёта для репозитория: структура и факты сохранены, добавлены только ссылки на наши документы. Выводы «что берём в AgentGate» вынесены в отдельный файл [best-practices.md](../best-practices.md), чтобы обзор оставался обзором.*
+*Исходный материал: инженерное исследование, полученное 3 сентября 2026. Этот документ — редакция отчёта для репозитория: структура и факты сохранены, добавлены только ссылки на наши документы. Выводы «что берём в OPENMAGI» вынесены в отдельный файл [best-practices.md](../best-practices.md), чтобы обзор оставался обзором.*
 
 *Файл — посимвольная копия [docs/auto-mode-industry-review-2026.md](../auto-mode-industry-review-2026.md) (сверено 6 сентября 2026). Правки следует вносить в оба файла либо ни в один; здесь исправлены только относительные ссылки, которые из каталога `project-context/` не разрешались.*
 
@@ -82,7 +82,7 @@ FNR 17 % на реальных overeager назван «the honest number»: в 
 
 **Настройки и известные проблемы.** `permissions.defaultMode`, `permissions.disableAutoMode: "disable"` (убрать режим из Shift+Tab). Классификатор по умолчанию использует активную модель сессии (issue #69002 просит отдельную переменную окружения). Слабость: недоступность модели или 429 приводит к жёсткой блокировке Bash (#63959, litellm #30365) — цена fail-closed.
 
-**Контракт хуков (важен для адаптеров AgentGate).**
+**Контракт хуков (важен для адаптеров OPENMAGI).**
 - `PreToolUse` получает на stdin: `session_id`, `prompt_id`, `transcript_path`, `cwd`, `permission_mode` (`default` / `plan` / `acceptEdits` / `auto` / `dontAsk` / `bypassPermissions`), `hook_event_name`, `tool_name`, `tool_input` (объект), `tool_use_id`.
 - `PreToolUse` возвращает: `hookSpecificOutput.permissionDecision` = `allow` / `deny` / `ask` / `defer` (`defer` — для headless `-p`), `permissionDecisionReason` и `updatedInput` (заменяет аргументы инструмента перед запуском). Приоритет при нескольких хуках: `deny` > `defer` > `ask` > `allow`. Устаревшее: top-level `decision` (`approve` / `block`) плюс `reason`. Код выхода 2 = блокировка, сильнее чем JSON `allow`.
 - `PostToolUse` получает общие поля плюс `tool_name`, `tool_input`, `tool_response`. Возвращает top-level `decision: "block"` плюс `reason` (единственное допустимое значение; отсутствие поля = allow), `hookSpecificOutput.additionalContext` (добавить контекст) и `updatedToolOutput` (заменить результат). Сам вызов заблокировать не может — он уже выполнен.
@@ -143,7 +143,7 @@ FNR 17 % на реальных overeager назван «the honest number»: в 
 
 ### 2.5. OSS-харнессы
 
-**Kilo Code** (#9138 — дизайн-документ; #10248 — rollout, #10249 — runtime). Фактически чертёж, совпадающий с AgentGate: хук в `Permission.ask`; три исхода — approve (молча), deny (ошибка инструмента, deny-and-continue), error → fail closed с откатом к `ask` (legacy-гейткипер был approve-on-error). Двухстадийный reasoning-blind (Stage 1 single-token на модели класса Haiku, Stage 2 CoT, кэш префикса). Три prose-слота, модель «скопировать дефолт и править» (замена целиком, не merge). Три подряд или 20 всего → эскалация, сброс на ход пользователя. Short-circuit: safe-tool allowlist (read, grep, glob, list, codesearch, websearch, todoread) и правки внутри проекта; при включении режима дропаются blanket-разрешения (`bash:*`, `python *`, `npm run *`). Legacy-гейткипер (388 строк, `gatekeeper.ts`): парсинг первого слова ответа (yes / approve / allow), детекция путей через git-tracked, approve-on-error — значимый провал.
+**Kilo Code** (#9138 — дизайн-документ; #10248 — rollout, #10249 — runtime). Фактически чертёж, совпадающий с OPENMAGI: хук в `Permission.ask`; три исхода — approve (молча), deny (ошибка инструмента, deny-and-continue), error → fail closed с откатом к `ask` (legacy-гейткипер был approve-on-error). Двухстадийный reasoning-blind (Stage 1 single-token на модели класса Haiku, Stage 2 CoT, кэш префикса). Три prose-слота, модель «скопировать дефолт и править» (замена целиком, не merge). Три подряд или 20 всего → эскалация, сброс на ход пользователя. Short-circuit: safe-tool allowlist (read, grep, glob, list, codesearch, websearch, todoread) и правки внутри проекта; при включении режима дропаются blanket-разрешения (`bash:*`, `python *`, `npm run *`). Legacy-гейткипер (388 строк, `gatekeeper.ts`): парсинг первого слова ответа (yes / approve / allow), детекция путей через git-tracked, approve-on-error — значимый провал.
 
 **OpenCode (sst):** #33585 (LLM-классификатор), #20298 (auto-approve через tree-sitter).
 

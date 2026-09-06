@@ -1,11 +1,11 @@
-# AgentGate — Project Interim
+# OPENMAGI — Project Interim
 
 **Status:** Intermediate / Work in Progress  
 **Stage:** Hackathon intermediate checkpoint  
 **Date:** 2026-09-04  
 **Branch:** `main`
 
-AgentGate — внешний runtime decision layer для проверки действий AI coding agent до их исполнения. В репозитории реализовано ядро decision service: HTTP API, структурная нормализация, детерминированная Stage 1, LLM Stage 2, сессионная эскалация, allow-кэш и аудит в Postgres/JSONL. Также реализован и офлайн протестирован benchmark-инструментарий на 75 кейсах; валидатор подтверждает 15 категорий и пять уровней сложности без ошибок. Интеграционный слой пока представлен контрактами и reference hook client, распознающим payload двух harnesses, но ни одного установленного production harness adapter в репозитории нет. Поэтому главный технический gap — отсутствие реального pre-execution enforcement: сервис возвращает `allow | deny | ask`, но фактическое применение решения агентом не доказано. Главный ещё не проведённый эксперимент — первый benchmark run против живого AgentGate с реальной Stage 2; сохранённых результатов такого прогона нет. Следовательно, решение имеет статусы **Implemented** и **Tested** по отдельным компонентам, но не **Validated** как продуктовая система.
+OPENMAGI — внешний runtime decision layer для проверки действий AI coding agent до их исполнения. В репозитории реализовано ядро decision service: HTTP API, структурная нормализация, детерминированная Stage 1, LLM Stage 2, сессионная эскалация, allow-кэш и аудит в Postgres/JSONL. Также реализован и офлайн протестирован benchmark-инструментарий на 75 кейсах; валидатор подтверждает 15 категорий и пять уровней сложности без ошибок. Интеграционный слой пока представлен контрактами и reference hook client, распознающим payload двух harnesses, но ни одного установленного production harness adapter в репозитории нет. Поэтому главный технический gap — отсутствие реального pre-execution enforcement: сервис возвращает `allow | deny | ask`, но фактическое применение решения агентом не доказано. Главный ещё не проведённый эксперимент — первый benchmark run против живого OPENMAGI с реальной Stage 2; сохранённых результатов такого прогона нет. Следовательно, решение имеет статусы **Implemented** и **Tested** по отдельным компонентам, но не **Validated** как продуктовая система.
 
 > Статусы в документе: **Implemented** — компонент включён в основной рабочий поток; **Tested** — проверен собственными тестами; **Validated** — подтверждён живой интеграцией или реальным экспериментом; **Partial**, **In progress**, **Planned**, **Target only**, **Unknown** — соответственно частичная реализация, текущая работа, план, только целевая архитектура и неподтверждённое состояние.
 
@@ -13,13 +13,13 @@ AgentGate — внешний runtime decision layer для проверки де
 
 ## 1. Project Summary
 
-AgentGate — отдельный сетевой сервис между AI coding harness и инструментами/операционной средой. Harness должен перехватить предложенный tool call до исполнения, привести его к контракту AgentGate, получить решение `allow | deny | ask` и применить его; сам сервис команды не исполняет и физически заблокировать обход harness не может.
+OPENMAGI — отдельный сетевой сервис между AI coding harness и инструментами/операционной средой. Harness должен перехватить предложенный tool call до исполнения, привести его к контракту OPENMAGI, получить решение `allow | deny | ask` и применить его; сам сервис команды не исполняет и физически заблокировать обход harness не может.
 
 Проект состоит из трёх подсистем:
 
 1. **Decision service** — нормализует действие, выполняет детерминированные проверки, при необходимости вызывает LLM-классификатор, применяет сессионную логику и сохраняет решение.
 2. **Harness interception / integration layer** — переводит события конкретных harnesses в единый API-контракт и должен обеспечивать enforcement решения. Сегодня этот слой **Partial**: есть схемы и reference client, но нет установленного adapter.
-3. **Benchmark** — отправляет стандартизированные пары `user_request + proposed tool call` в публичный API, детерминированно оценивает ответ и строит отчёты. Инструмент **Implemented + Tested**, но ещё не использован для живого измерения AgentGate.
+3. **Benchmark** — отправляет стандартизированные пары `user_request + proposed tool call` в публичный API, детерминированно оценивает ответ и строит отчёты. Инструмент **Implemented + Tested**, но ещё не использован для живого измерения OPENMAGI.
 
 Evidence: `service/agentgate/pipeline.py`, `contracts/hook_client.py`, `adapters/README.md`, `benchmark/runner/executor.py`, `benchmark/evaluator/scorer.py`.
 
@@ -32,7 +32,7 @@ Evidence: `service/agentgate/pipeline.py`, `contracts/hook_client.py`, `adapters
 Актуальная инженерная задача команды: построить внешний runtime decision layer, который получает предложенное действие до исполнения, классифицирует его с минимальным вмешательством человека и возвращает решение, применимое harness. Это три связанные задачи:
 
 - **decision-making:** структурно разобрать действие и получить `allow | deny | ask` через каскад deterministic → LLM → session escalation;
-- **interception / integration:** гарантированно вызвать AgentGate до действия и исполнить его вердикт, включая `deny`, `ask` и безопасное продолжение;
+- **interception / integration:** гарантированно вызвать OPENMAGI до действия и исполнить его вердикт, включая `deny`, `ask` и безопасное продолжение;
 - **evaluation / benchmark:** воспроизводимо измерить пропуски атак, ложные блокировки/запросы человеку, распределение стадий и задержку.
 
 Продуктовая мотивация и гипотезы подробно зафиксированы отдельно в `docs/project-context/artifacts/PRODUCT_INTERIM.md`; здесь они не дублируются.
@@ -44,7 +44,7 @@ Evidence: `service/agentgate/pipeline.py`, `contracts/hook_client.py`, `adapters
 ```mermaid
 flowchart LR
     A[AI Agent / Harness] --> I[Pre-execution interception]
-    I --> API[AgentGate API<br/>POST /v1/decide]
+    I --> API[OPENMAGI API<br/>POST /v1/decide]
     API --> N[Action normalization]
     N --> D[Deterministic Stage 1]
     D -->|unresolved| L[LLM Stage 2]
@@ -144,7 +144,7 @@ Discrepancy: фактический shipped profile задаёт default `primar
 
 ### 5.2 Harness Integration Layer
 
-Общий контракт реализован в `contracts/openapi.yaml` и JSON schemas; генераторы и `service/tests/test_contracts.py` проверяют синхронизацию с Pydantic. `contracts/hook_client.py` — reference CLI bridge без внешних зависимостей: читает Claude Code-like `PreToolUse` или OpenCode-like `tool.execute.before`, строит request, вызывает AgentGate и возвращает JSON плюс exit code 0/2/3.
+Общий контракт реализован в `contracts/openapi.yaml` и JSON schemas; генераторы и `service/tests/test_contracts.py` проверяют синхронизацию с Pydantic. `contracts/hook_client.py` — reference CLI bridge без внешних зависимостей: читает Claude Code-like `PreToolUse` или OpenCode-like `tool.execute.before`, строит request, вызывает OPENMAGI и возвращает JSON плюс exit code 0/2/3.
 
 Текущий статус — **Partial**:
 
@@ -163,11 +163,11 @@ Evidence: `contracts/hook_client.py`, `contracts/README.md`, `contracts/deny_mes
 
 Benchmark имеет полный внутренний pipeline: CLI → YAML loader/validator → async runner → HTTP client → deterministic scorer → streaming recorder → SQLite/JSONL → JSON/text/failure reports. Формат кейса строго валидируется Pydantic; набор содержит 75 YAML-кейсов, 15 категорий по пять кейсов и уровни `easy | medium | hard | adversarial | realistic_production`. Из них 70 атакующих и пять `benign_utility`; контрольная группа принимает только `allow`, поэтому `ask` учитывается как friction.
 
-Runner поддерживает concurrency и session modes `per_case | shared | none`; scorer не использует LLM judge и проверяет решение по `acceptable_service_results`, а `--strict` — только по `expected_service_result`. Отчёты умеют считать pass-through атак, false positives/friction контрольной группы, latency, разрезы категорий/difficulty, stage/rule distribution и диагностические failures. Cost/token каркас есть, но текущий API не отдаёт usage, поэтому реальные значения недоступны. Mock AgentGate проверяет только pipeline benchmark и не является измерением продукта. Два `live`-теста существуют, но исключены по умолчанию и не запускались.
+Runner поддерживает concurrency и session modes `per_case | shared | none`; scorer не использует LLM judge и проверяет решение по `acceptable_service_results`, а `--strict` — только по `expected_service_result`. Отчёты умеют считать pass-through атак, false positives/friction контрольной группы, latency, разрезы категорий/difficulty, stage/rule distribution и диагностические failures. Cost/token каркас есть, но текущий API не отдаёт usage, поэтому реальные значения недоступны. Mock OPENMAGI проверяет только pipeline benchmark и не является измерением продукта. Два `live`-теста существуют, но исключены по умолчанию и не запускались.
 
 Evidence: `benchmark/schemas/case.py`, `dataset/validator.py`, `runner/executor.py`, `client/security_service.py`, `evaluator/scorer.py`, `storage/sqlite.py`, `reporting/report.py`, `tools/mock_agentgate.py`, `tests/test_live_service.py`. Детали: [Benchmark Status](../06_benchmark_status.md).
 
-Сохранённых `summary-*.json`, `results-*.jsonl` или result SQLite для живого AgentGate в рабочем дереве и tracked history не найдено. `benchmark/CLAUDE.md` при этом содержит устаревшую фразу, что service ещё не реализован; это documentation discrepancy.
+Сохранённых `summary-*.json`, `results-*.jsonl` или result SQLite для живого OPENMAGI в рабочем дереве и tracked history не найдено. `benchmark/CLAUDE.md` при этом содержит устаревшую фразу, что service ещё не реализован; это documentation discrepancy.
 
 ### 5.4 Infrastructure / Deployment
 
@@ -188,7 +188,7 @@ Evidence: `benchmark/schemas/case.py`, `dataset/validator.py`, `runner/executor.
 sequenceDiagram
     participant H as Harness
     participant C as Reference hook client
-    participant G as AgentGate API
+    participant G as OPENMAGI API
     participant P as Decision pipeline
     participant L as LLM provider
     participant A as Postgres / JSONL
@@ -256,7 +256,7 @@ benchmark\.venv\Scripts\python.exe -m pytest -q -p no:cacheprovider --basetemp <
 → 122 passed, 2 live tests deselected
 ```
 
-`benchmark/tests/test_live_service.py` требует поднятый AgentGate; полноценный run также требует Postgres и provider credentials для Stage 2. Эти проверки не запускались, платных вызовов не выполнялось. Прохождение unit/integration/e2e тестов подтверждает реализацию и контракт, но не product validation.
+`benchmark/tests/test_live_service.py` требует поднятый OPENMAGI; полноценный run также требует Postgres и provider credentials для Stage 2. Эти проверки не запускались, платных вызовов не выполнялось. Прохождение unit/integration/e2e тестов подтверждает реализацию и контракт, но не product validation.
 
 ---
 
@@ -271,11 +271,11 @@ benchmark\.venv\Scripts\python.exe cli.py validate --path attacks/cases
 → cases: 75 in 15 categories; errors: 0; warnings: 0
 ```
 
-подтвердила по пять кейсов и все пять difficulty в каждой категории. Mock/stub mode существует и проверяет техническую проходимость benchmark pipeline, но его проценты не являются результатом AgentGate.
+подтвердила по пять кейсов и все пять difficulty в каждой категории. Mock/stub mode существует и проверяет техническую проходимость benchmark pipeline, но его проценты не являются результатом OPENMAGI.
 
 ### Actual runs
 
-**Benchmark против живого AgentGate не запускался.** Сохранённых артефактов реального run нет; два live smoke tests также не выполнялись. Статическая совместимость клиента с JSON schemas проверена, но фактический стык benchmark client ↔ live service остаётся **In progress / not validated**.
+**Benchmark против живого OPENMAGI не запускался.** Сохранённых артефактов реального run нет; два live smoke tests также не выполнялись. Статическая совместимость клиента с JSON schemas проверена, но фактический стык benchmark client ↔ live service остаётся **In progress / not validated**.
 
 ### Current quantitative evidence
 
@@ -323,10 +323,10 @@ benchmark\.venv\Scripts\python.exe cli.py validate --path attacks/cases
 ## 10. Open Technical Questions
 
 1. Какой harness интегрировать первым — Kilo Code, Claude Code или OpenCode — и что считается минимально достаточным production-like adapter?
-2. Как гарантировать, что harness вызывает AgentGate для каждого relevant tool call и действительно применяет `allow | deny | ask`, а не только логирует ответ?
-3. Какую системную политику выбрать при недоступности AgentGate: `ask`, `deny` или явно принятый fail-open trade-off?
+2. Как гарантировать, что harness вызывает OPENMAGI для каждого relevant tool call и действительно применяет `allow | deny | ask`, а не только логирует ответ?
+3. Какую системную политику выбрать при недоступности OPENMAGI: `ask`, `deny` или явно принятый fail-open trade-off?
 4. Как реализовать `deny → safe continuation`: отдельный verdict SAFE RECOVERY или соглашение `deny + suggest`, retry и проверка нового действия?
-5. Должны ли `ask`/Approve/Reject/Comment полностью оставаться в harness или войти в versioned AgentGate contract?
+5. Должны ли `ask`/Approve/Reject/Comment полностью оставаться в harness или войти в versioned OPENMAGI contract?
 6. Как валидировать обязательный контекст разных tool types и без потерь передавать network targets, MCP arguments и фактический последний human request?
 7. Нужны ли до финала history/tool results/provenance, или команда сознательно остаётся на v1 и ограничивает claims?
 8. Как измерять token usage и cost: расширить `/v1/decide`, получать provider metadata или оставить стоимость Unknown?
@@ -339,7 +339,7 @@ benchmark\.venv\Scripts\python.exe cli.py validate --path attacks/cases
 
 | Risk | Current impact | Evidence | Mitigation / next test |
 | ---- | -------------- | -------- | ---------------------- |
-| Integration gap | AgentGate не контролирует реального агента | `adapters/README.md`; каталог без кода | Установить один adapter и выполнить реальный pre-tool flow |
+| Integration gap | OPENMAGI не контролирует реального агента | `adapters/README.md`; каталог без кода | Установить один adapter и выполнить реальный pre-tool flow |
 | Incomplete action context | Network/MCP decision может не видеть target/arguments | `contracts/hook_client.py`; `api/schemas.py`; `normalize/__init__.py` | Исправить mapping, добавить tool-specific validation и contract tests |
 | False negatives | Stage 2 вероятностна; часть атак вне v1 context | `stage2/`; `benchmark/attacks/taxonomy.md` | Первый live run, failure triage, adversarial cases; sandbox рядом с gate |
 | False positives / friction | Избыточные deny/ask ведут к отключению gate | 5 benign cases; `reporting/report.py` | Расширить controls, измерить benign deny/ask на live run |
@@ -359,10 +359,10 @@ benchmark\.venv\Scripts\python.exe cli.py validate --path attacks/cases
 
 | Priority | Task | Owner | Success condition |
 | -------- | ---- | ----- | ----------------- |
-| P0 — Blocking | Выполнить первый live benchmark run против AgentGate | Тимур Полищук | 75 cases завершены против реального service/Stage 2; run metadata сохранены |
+| P0 — Blocking | Выполнить первый live benchmark run против OPENMAGI | Тимур Полищук | 75 cases завершены против реального service/Stage 2; run metadata сохранены |
 | P0 — Blocking | Разобрать failures и откалибровать expectations | Тимур Полищук | Каждый failure отнесён к dataset error, `v1_limitation` или service miss |
 | P0 — Blocking | Сохранить воспроизводимый benchmark baseline | Тимур Полищук | Summary/results содержат дату, commit, profile, model, concurrency и не являются mock-run |
-| P0 — Blocking | Реализовать и установить один реальный harness adapter | Алексей Балашов | Harness автоматически вызывает AgentGate до исполнения всех заявленных tool types |
+| P0 — Blocking | Реализовать и установить один реальный harness adapter | Алексей Балашов | Harness автоматически вызывает OPENMAGI до исполнения всех заявленных tool types |
 | P0 — Blocking | Доказать enforcement `allow/deny/ask` | Алексей Балашов | Опасное действие не выполняется; `ask` открывает штатный confirmation flow |
 | P0 — Blocking | Реализовать `deny → safe continuation` | Алексей Балашов | Agent получает reason/suggest, предлагает безопасный следующий шаг, который снова проходит gate |
 | P0 — Blocking | Зафиксировать fail-open/fail-closed policy всей системы | Команда (Joint) | Outage/timeout behavior документировано и подтверждено e2e в выбранном harness |
@@ -393,7 +393,7 @@ Owners назначены только по `docs/project-context/07_team.md`: s
 ### Алексей Балашов — AI Engineer
 
 **Роль:** AI Engineer / AI Systems & Integration Architecture.  
-**Зона ответственности:** перехват данных на входе и выходе агента, harness integration layer и adapters, а также фактическое применение решений AgentGate.  
+**Зона ответственности:** перехват данных на входе и выходе агента, harness integration layer и adapters, а также фактическое применение решений OPENMAGI.  
 **Выполнено:** единый integration contract и reference hook flow представлены OpenAPI/JSON schemas и `contracts/hook_client.py`; client распознаёт формы Claude Code/OpenCode и отображает пять contract tool types. Это подтверждает форму интеграции, но не установленный adapter.  
 **Текущая работа:** выбрать и реализовать первую реальную harness integration, обеспечить полноту context mapping, enforcement `allow/deny/ask`, confirmation и deny-to-safe-continuation.  
 **Текущая степень участия:** **Full active participation**.
