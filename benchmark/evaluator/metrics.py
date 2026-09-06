@@ -432,6 +432,10 @@ def compare_runs(
             "profile_id",
             "profile_snapshot_digest",
             "model",
+            "agent_model",
+            "claude_permission_mode",
+            "sandbox_path",
+            "bridge_runtime",
             "service_revision",
             "rules_digest",
         ):

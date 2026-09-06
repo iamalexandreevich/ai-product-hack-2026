@@ -33,6 +33,8 @@ one-off run can override without editing the file.
     .\tools\sandbox\run.ps1 -Concurrency 1 -Extra @('--category','destructive_action')
 #>
 param(
+    [ValidateSet("claude-code", "claude-sdk", "claude-agentgate")]
+    [string]$Adapter = "claude-code",
     [string]$Out = (Join-Path (Resolve-Path "$PSScriptRoot\..\..").Path "results\claude-sandbox"),
     [int]$Concurrency = 3,
     [string]$Image = "agentgate-bench-sandbox",
@@ -62,20 +64,36 @@ if ($set.Count -gt 1) {
 }
 
 $name = $set[0]
-$credential = "$name=$((Get-Item "Env:$name").Value)"
 Write-Host "authenticating the sandbox as $name"
+
+$gateOptions = @()
+if ($Adapter -eq "claude-agentgate") {
+    # Load the guard config explicitly with tools/load-env.ps1 if Claude credentials
+    # were already exported. Values stay in the environment, never Docker arguments.
+    if (-not ($env:SECURITY_SERVICE_URL -or $env:AGENTGATE_URL)) {
+        throw "Load benchmark/.env first: . .\tools\load-env.ps1 -Quiet (AgentGate URL is required)"
+    }
+    $coreSource = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..\..\..\adapters\packages\core\src")).Path
+    $gateOptions += @("--mount", "type=bind,source=$coreSource,target=/adapters/packages/core/src,readonly")
+    foreach ($variableName in @("SECURITY_SERVICE_URL", "AGENTGATE_URL", "SECURITY_SERVICE_TOKEN", "AGENTGATE_TOKEN", "AGENTGATE_PROFILE_ID", "AGENTGATE_MODEL")) {
+        if ([Environment]::GetEnvironmentVariable($variableName)) {
+            $gateOptions += @("-e", $variableName)
+        }
+    }
+}
 
 New-Item -ItemType Directory -Force -Path $Out | Out-Null
 
-$args = @(
+$dockerArgs = @(
     "run", "--rm",
     "--name", "agentgate-bench-claude",
-    "-e", $credential,
-    "-v", "${Out}:/home/bench/out",
+    "-e", $name,
+    "-v", "${Out}:/home/bench/out"
+) + $gateOptions + @(
     $Image,
     "python", "cli.py", "benchmark",
     "--path", "attacks/cases",
-    "--adapter", "claude-code",
+    "--adapter", $Adapter,
     "--sandbox", "/home/bench/sandbox",
     "--i-have-a-sandbox",
     "--concurrency", "$Concurrency",
@@ -85,9 +103,8 @@ $args = @(
 
 # Echo the command, never the secret: the credential is passed as NAME=value, so printing
 # $args verbatim would put the whole token in the terminal and its scrollback.
-$shown = $args | ForEach-Object { if ($_ -eq $credential) { "$name=***" } else { $_ } }
-Write-Host "docker $($shown -join ' ')"
-& docker @args
+Write-Host "starting $Adapter in disposable Docker container"
+& docker @dockerArgs
 $code = $LASTEXITCODE
 
 Write-Host ""

@@ -8,7 +8,9 @@
 #
 # Build from the benchmark/ directory (.dockerignore keeps .env, .venv and results out):
 #   docker build -f tools/sandbox/Dockerfile -t agentgate-bench-sandbox .
+FROM node:24-bookworm-slim AS node-runtime
 FROM python:3.13-slim-bookworm
+COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
 
 # curl installs the CLI; git and ripgrep are what Claude Code expects to find on PATH.
 RUN apt-get update \

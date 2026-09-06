@@ -115,15 +115,21 @@ uv run python cli.py inspect-report --run-id <run-id>
 
 Направление 3. Система под тестом — **реализация automode**: то, что стоит между кодинг-агентом и
 ОС и отвечает `allow | deny | ask`. Бенчмарк обращается к ней через `AutomodeAdapter`
-(`automode/base.py`). Реализаций две: `ServerAutomodeAdapter` (наш сервис AgentGate по HTTP,
-`POST /v1/decide`) — значение по умолчанию; и `ClaudeCodeAutomodeAdapter` (`automode/claude_code.py`)
-— та же пара «запрос + действие» подаётся классификатору родного auto mode у Claude Code через
-Claude Agent SDK. Это сравнение гардрейл-против-гардрейла (как в TraceSafe: pre-action evaluation),
-а не среда-и-исход как в AgentDojo/AgentHarm. Адаптер Claude Code включается флагом
-`--adapter claude-code`, требует одноразовую песочницу без сети (разрешённая команда исполняется) и
-пока воспроизводит только `shell`-кейсы; остальные возвращают «нет решения» с причиной. Бенчмарк
-подаёт пары «запрос пользователя + предлагаемый вызов инструмента» и детерминированно проверяет,
-что решение оказалось правильным.
+(`automode/base.py`). Реализаций четыре, и выбираются они флагом `--adapter`:
+
+| `--adapter` | Кто решает | Режим прав SDK |
+|---|---|---|
+| `server` (по умолчанию) | наш сервис AgentGate по HTTP, `POST /v1/decide` | сессии Claude нет |
+| `claude-code` | родной auto mode Claude Code | `auto` |
+| `claude-sdk` | обычные права Claude, без классификатора auto mode | `default` |
+| `claude-agentgate` | продовое ядро AgentGate в хуке `PreToolUse`, дальше обычные права Claude | `default` |
+
+Три последних — сравнение гардрейл-против-гардрейла (как в TraceSafe: pre-action evaluation), а не
+среда-и-исход как в AgentDojo/AgentHarm: одна и та же пара «запрос + действие» подаётся разным
+защитам в одном и том же харнессе. Все три требуют одноразовую песочницу (разрешённое действие
+**исполняется**) и не воспроизводят кейсы с историей диалога без `--no-history`. Подробности
+`claude-agentgate` — в `docs/claude-agentgate.md`. Бенчмарк подаёт пары «запрос пользователя +
+предлагаемый вызов инструмента» и детерминированно проверяет, что решение оказалось правильным.
 
 Пакет с реализациями называется `automode/`, а не `adapters/`: `adapters/` в корне репозитория —
 это направление 1, плагины харнессов (opencode / claude-code / codex / kilo), которые вызывают наш
@@ -211,6 +217,10 @@ uv run python cli.py report --run-id <uuid> --failures
 uv sync --group claude
 uv run python cli.py benchmark --path attacks/cases --adapter claude-code \
     --sandbox /path/to/disposable/sandbox --i-have-a-sandbox
+
+# 6a. тот же Claude, но решает наш гард: нужен Node 24 (или docker с node:24-alpine)
+uv run python cli.py benchmark --path attacks/cases --adapter claude-agentgate \
+    --sandbox /path/to/disposable/sandbox --i-have-a-sandbox --no-history --allow-remote
 
 # 7. сравнить два прогона (парно, только по кейсам, где оба дали решение)
 uv run python cli.py compare RUN_A RUN_B
@@ -300,8 +310,9 @@ uv run python cli.py benchmark --path attacks/cases --rules rules.example.yaml
 пользователя, не является ошибкой сервиса. Поэтому FP и Friction между прогоном с правилами и без
 сравнивать нельзя — сверьте `rules_digest`, прежде чем приводить эти цифры рядом.
 
-Флаг работает только с адаптером `server`: у адаптера `claude-code` такого поля нет, и CLI
-завершится с кодом 2, а не отбросит политику молча.
+Флаг работает с адаптерами `server` и `claude-agentgate` — у обоих правила уезжают в запрос
+`decide`. У `claude-code` и `claude-sdk` такого поля нет, и CLI завершится с кодом 2, а не
+отбросит политику молча.
 
 **Режим сессии** (`--session-mode`):
 

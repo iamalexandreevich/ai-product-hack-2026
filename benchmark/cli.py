@@ -24,7 +24,9 @@ from collections import Counter
 from pathlib import Path
 from urllib.parse import urlparse
 
+from automode.claude_agentgate import ClaudeAgentGateAdapter
 from automode.claude_code import ClaudeCodeAutomodeAdapter
+from automode.gate_bridge import GateBridge
 from automode.server import ServerAutomodeAdapter
 from client.security_service import SecurityServiceClient
 from config import service_config_from_env
@@ -141,6 +143,7 @@ def _cmd_benchmark(args: argparse.Namespace) -> int:
         print("no cases selected by the given filters", file=sys.stderr)
         return 1
 
+    selected_rules = None
     if args.rules:
         try:
             selected_rules = load_rules(args.rules)
@@ -149,12 +152,12 @@ def _cmd_benchmark(args: argparse.Namespace) -> int:
             return 2
         cases = [case.model_copy(update={"rules": case.rules or selected_rules}) for case in cases]
 
-    if args.adapter == "claude-code" and any(case.rules for case in cases):
-        print("client rules require --adapter server", file=sys.stderr)
+    if args.adapter in ("claude-code", "claude-sdk") and any(case.rules for case in cases):
+        print("client rules require --adapter server or claude-agentgate", file=sys.stderr)
         return 2
 
-    if args.adapter == "claude-code":
-        return _run_claude_code(args, cases, dataset_path)
+    if args.adapter in ("claude-code", "claude-sdk", "claude-agentgate"):
+        return _run_claude_code(args, cases, dataset_path, rules=selected_rules)
 
     service_config = service_config_from_env(
         url=args.url,
@@ -230,13 +233,10 @@ def _cmd_benchmark(args: argparse.Namespace) -> int:
     return _report_and_exit(results, run_config, run_id, out_dir, args, db_shown=store is not None)
 
 
-def _run_claude_code(args: argparse.Namespace, cases: list, dataset_path: Path) -> int:
-    """Composition root for the Claude Code adapter path.
-
-    Kept separate from the server path on purpose: there is no service URL, no health
-    check, and no ``--allow-remote`` gate here; instead there is a hard sandbox gate,
-    because a classifier allow executes the case's command.
-    """
+def _run_claude_code(
+    args: argparse.Namespace, cases: list, dataset_path: Path, *, rules=None
+) -> int:
+    """Run one of the three Claude permission configurations in a sandbox."""
     if not args.sandbox or not args.i_have_a_sandbox:
         print(
             "the claude-code adapter runs real commands when the classifier allows them.\n"
@@ -247,12 +247,41 @@ def _run_claude_code(args: argparse.Namespace, cases: list, dataset_path: Path) 
         )
         return 2
 
+    if args.execution_mode != "single_decision" or args.session_mode != "per_case":
+        print(
+            "Claude adapters require single_decision execution and per_case sessions",
+            file=sys.stderr,
+        )
+        return 2
+    if args.claude_session_timeout <= 0:
+        print("--claude-session-timeout must be positive", file=sys.stderr)
+        return 2
+    service = None
+    if args.adapter == "claude-agentgate":
+        service = service_config_from_env(
+            url=args.url,
+            token=args.token,
+            profile_id=args.profile_id,
+            model=args.model,
+            timeout_s=args.timeout,
+            pricing_table_path=args.pricing_table,
+        )
+        if not _endpoint_allowed(service.url, allow_remote=args.allow_remote):
+            print("remote AgentGate endpoint requires --allow-remote", file=sys.stderr)
+            return 2
+
     run_config = RunConfig(
-        adapter_name=ClaudeCodeAutomodeAdapter.name,
+        adapter_name=args.adapter,
         # RunConfig is still partly server-shaped (service_url has no default); record the
         # sandbox here so the stored run and the report header say what was measured.
-        service_url=f"claude-code-sdk (sandbox: {args.sandbox})",
-        model=args.claude_model,
+        service_url=service.url if service else f"claude-code-sdk (sandbox: {args.sandbox})",
+        model=service.model if service else args.claude_model,
+        agent_model=args.claude_model,
+        claude_permission_mode="auto" if args.adapter == "claude-code" else "default",
+        sandbox_path=args.sandbox,
+        bridge_runtime=args.gate_runtime if service else None,
+        profile_id=service.profile_id if service else None,
+        timeout_s=args.claude_session_timeout,
         harness="claude-code",
         concurrency=args.concurrency,
         strict_scoring=args.strict,
@@ -267,34 +296,72 @@ def _run_claude_code(args: argparse.Namespace, cases: list, dataset_path: Path) 
         service_revision=args.service_revision,
     )
 
+    # A ruled run measures a different thing (see RunConfig.rules): without the digest a
+    # later `compare` would read this run as unruled and put its FP beside an unruled one.
+    if rules is not None:
+        run_config.rules = rules.model_dump(mode="json")
+        run_config.rules_digest = rules.digest()
+
     if args.dry_run:
         print(f"{len(cases)} case(s) selected; dry run, no Claude Code sessions started:")
         for case in cases:
             print(f"  {case.id:<38} {case.attack_category}/{case.difficulty.value}")
         return 0
 
+    options = {
+        "sandbox_confirmed": True,
+        "model": args.claude_model,
+        "send_history": run_config.history_mode is HistoryMode.FULL,
+        "session_timeout_s": args.claude_session_timeout,
+    }
+    if service:
+        bridge = GateBridge(service, runtime=args.gate_runtime)
+        try:
+            from claude_agent_sdk.types import PostToolUseHookSpecificOutput
+
+            if "updatedToolOutput" not in PostToolUseHookSpecificOutput.__annotations__:
+                raise ValueError("Upgrade claude-agent-sdk: updatedToolOutput is required")
+            bridge.preflight()
+        except (ImportError, ValueError, OSError) as exc:
+            print(f"Claude AgentGate preflight: {exc}", file=sys.stderr)
+            return 2
+        adapter = ClaudeAgentGateAdapter(args.sandbox, bridge=bridge, **options)
+    else:
+        adapter = ClaudeCodeAutomodeAdapter(
+            args.sandbox,
+            permission_mode=run_config.claude_permission_mode,
+            **options,
+        )
+
     run_id = args.run_id or str(uuid.uuid4())
     store = None if args.no_db else BenchmarkStore(Path(args.db))
     out_dir = Path(args.out)
-    adapter = ClaudeCodeAutomodeAdapter(
-        args.sandbox,
-        sandbox_confirmed=True,
-        model=args.claude_model,
-        send_history=run_config.history_mode is HistoryMode.FULL,
-    )
+
+    async def execute():
+        if service:
+            async with SecurityServiceClient(service) as client:
+                if not args.no_health_check:
+                    healthy, run_config.service_health = await client.healthz()
+                    if not healthy:
+                        raise ValueError(
+                            "AgentGate health check failed; no Claude sessions started"
+                        )
+                run_config.profile_snapshot_digest = await client.profile_digest()
+        return await _run_with_adapter(
+            adapter=adapter,
+            cases=cases,
+            run_config=run_config,
+            run_id=run_id,
+            store=store,
+            out_dir=out_dir,
+            progress=not args.quiet,
+        )
 
     try:
-        results = asyncio.run(
-            _run_with_adapter(
-                adapter=adapter,
-                cases=cases,
-                run_config=run_config,
-                run_id=run_id,
-                store=store,
-                out_dir=out_dir,
-                progress=not args.quiet,
-            )
-        )
+        results = asyncio.run(execute())
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     finally:
         if store is not None:
             store.close()
@@ -564,25 +631,37 @@ def _build_parser() -> argparse.ArgumentParser:
 def _add_execution_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--adapter",
-        choices=("server", "claude-code"),
+        choices=("server", "claude-code", "claude-sdk", "claude-agentgate"),
         default="server",
-        help="which automode to measure: server (our AgentGate service, default) or "
-        "claude-code (Claude Code's native auto-mode classifier via the Agent SDK)",
+        help="server: direct API; claude-code: native Auto Mode; claude-sdk: default "
+        "permissions; claude-agentgate: default permissions plus AgentGate core hooks",
     )
     parser.add_argument(
         "--sandbox",
-        help="claude-code only: workspace directory for the Claude Code sessions. MUST be a "
+        help="Claude adapters: workspace directory for the Claude Code sessions. MUST be a "
         "disposable sandbox with no secrets and no network egress — an allowed command runs.",
     )
     parser.add_argument(
         "--i-have-a-sandbox",
         action="store_true",
-        help="claude-code only: affirm --sandbox is a disposable, network-isolated sandbox. "
+        help="Claude adapters: affirm --sandbox is a disposable, network-isolated sandbox. "
         "Required, because a classifier allow executes the case's command.",
     )
     parser.add_argument(
         "--claude-model",
-        help="claude-code only: model alias/id for the Claude Code session (default: the SDK's)",
+        help="Claude adapters: model alias/id for the agent session, separate from --model",
+    )
+    parser.add_argument(
+        "--claude-session-timeout",
+        type=float,
+        default=180.0,
+        help="maximum seconds per Claude session (default: 180)",
+    )
+    parser.add_argument(
+        "--gate-runtime",
+        choices=("auto", "node", "docker"),
+        default="auto",
+        help="AgentGate core runtime: Node 24 or cached node:24-alpine via Docker",
     )
     parser.add_argument("--url", help="service base URL (env SECURITY_SERVICE_URL)")
     parser.add_argument("--token", help="bearer token (env SECURITY_SERVICE_TOKEN)")

@@ -6,15 +6,27 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `benchmark/` is direction 3 of AgentGate. The system under test is **an automode implementation** —
 something standing between a coding agent and the OS that answers `allow | deny | ask`. The
-benchmark reaches one through an `AutomodeAdapter` (`automode/base.py`). Two implementations exist:
-`ServerAutomodeAdapter` (our own service over HTTP, `POST /v1/decide`), the default; and
-`ClaudeCodeAutomodeAdapter` (`automode/claude_code.py`), which poses the same `(user_request, action)`
-pair to Claude Code's native auto-mode classifier through the Claude Agent SDK — guardrail-vs-guardrail,
-the methodology guardrail benchmarks use (TraceSafe-style pre-action evaluation), not the
-environment-and-outcome methodology of AgentDojo/AgentHarm. The Claude Code adapter is opt-in
-(`--adapter claude-code`), needs a disposable network-isolated sandbox (a classifier allow executes
-the command), and maps shell, file, network and MCP cases. Cases with dialogue history
-remain unsupported by that adapter and return no decision with a reason.
+benchmark reaches one through an `AutomodeAdapter` (`automode/base.py`). Four implementations exist,
+selected by `--adapter`: `server` (`ServerAutomodeAdapter`, our own service over HTTP,
+`POST /v1/decide`), the default; and three that pose the same `(user_request, action)` pair inside a
+real Claude Code session through the Claude Agent SDK — `claude-code` (native auto mode),
+`claude-sdk` (plain `default` permissions, the control arm) and `claude-agentgate`
+(`automode/claude_agentgate.py`: our production core in a `PreToolUse` hook, then Claude's remaining
+permissions). That is guardrail-vs-guardrail, the methodology guardrail benchmarks use
+(TraceSafe-style pre-action evaluation), not the environment-and-outcome methodology of
+AgentDojo/AgentHarm. All three Claude adapters need a disposable network-isolated sandbox (an allow
+executes the command) and map shell, file, network and MCP cases. Cases with dialogue history remain
+unsupported there and return no decision with a reason.
+
+`claude-agentgate` reaches the core through `automode/gate_bridge.py` → `tools/claude_gate_bridge.ts`
+(Node 24, or `node:24-alpine` in Docker), which imports `../adapters/packages/core/src` directly —
+real mapping, request builders, client, idempotency and policy, no vendored copy. `guard_decision`
+and `effective_decision` are kept apart because Claude's own permission layer can still refuse after
+a guard allow. Two rules this path lives by: a service outage is a measurement error, never a
+successful defence; and a `PostToolUse` mask must keep the tool's output schema, since Claude
+silently discards a mismatched `updatedToolOutput` and the unmasked text would reach the model while
+the run recorded a mask. Details and what has actually been run live in `docs/claude-agentgate.md`;
+why there is no installable Claude plugin yet, and what it would take, in `docs/claude-plugin-plan.md`.
 
 The independent task-outcome baseline is `baselines/`: pinned ActBench, invoked through
 `tools/actbench.py` in Docker. It preserves native task pairs and graders, and never feeds
@@ -134,9 +146,9 @@ branch by branch with no SDK, no network and no spend.
 
 **How to add an adapter:** write a class with `name: str` and
 `async def execute(case, *, run_id) -> AutomodeExecutionResult`, construct it in `cli.py` (the only
-composition root), and add nothing to the runner or the metrics. The `--adapter` flag now exists
-because a second adapter does; adding a third is one `choices=` entry plus a composition branch in
-`cli.py`, never a registry or plugin discovery. Note what the seam still does *not* solve:
+composition root), and add nothing to the runner or the metrics. The seam has held for four:
+`claude-sdk` and `claude-agentgate` were one `choices=` entry and one composition branch each in
+`cli.py` — never a registry or plugin discovery. Note what the seam still does *not* solve:
 `BenchmarkResult` assumes one decision per case (`human_decision_count`, `attack_success`,
 `task_success`), so a whole-task, environment-and-outcome adapter would need work there;
 `ClaudeCodeAutomodeAdapter` fits the one-decision boundary and does not. It also renders no

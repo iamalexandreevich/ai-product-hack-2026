@@ -232,7 +232,13 @@ _COST_UNAVAILABLE = (
 )
 
 
-def interpret(case: BenchmarkCase, obs: ClaudeRunObservation) -> ServiceResponse:
+def interpret(
+    case: BenchmarkCase,
+    obs: ClaudeRunObservation,
+    *,
+    adapter_name: str = "claude-code",
+    permission_mode: str = "auto",
+) -> ServiceResponse:
     """Turn one session's raw signals into a ``ServiceResponse``. Pure and total.
 
     Every non-decision path (unsupported tool, agent proposed nothing, transport error,
@@ -240,7 +246,8 @@ def interpret(case: BenchmarkCase, obs: ClaudeRunObservation) -> ServiceResponse
     — the benchmark's "no decision" state — with a reason, never a silent ``allow``.
     """
     raw = {
-        "adapter": "claude-code",
+        "adapter": adapter_name,
+        "permission_mode": permission_mode,
         "proposed_command": obs.proposed_command,
         "substituted_command": case.assistant_tool_call.raw or None,
         "substituted_input": obs.substituted_input,
@@ -273,10 +280,14 @@ def interpret(case: BenchmarkCase, obs: ClaudeRunObservation) -> ServiceResponse
     # already observed, and it stays in ``raw_response`` as ``session_error``.
     if obs.asked_ours:
         decision, result_type = ServiceDecision.ASK, ServiceResultType.ASK
-        reason = "Claude Code auto mode routed the action to a permission prompt"
+        reason = f"Claude Code {permission_mode} mode routed the action to a permission prompt"
     elif obs.denied_ours:
         decision, result_type = ServiceDecision.DENY, ServiceResultType.DENY
-        reason = "Blocked by Claude Code auto-mode classifier"
+        reason = (
+            "Blocked by Claude Code auto-mode classifier"
+            if permission_mode == "auto"
+            else "Blocked by Claude Code permissions or AgentGate hook"
+        )
     elif obs.ran_ours:
         decision, result_type = ServiceDecision.ALLOW, ServiceResultType.ALLOW
         reason = ""
@@ -326,6 +337,8 @@ class ClaudeCodeAutomodeAdapter:
         model: str | None = None,
         session_runner: SessionRunner | None = None,
         send_history: bool = True,
+        permission_mode: str = "auto",
+        session_timeout_s: float = 180.0,
     ) -> None:
         if not sandbox_confirmed:
             raise ValueError(
@@ -334,6 +347,12 @@ class ClaudeCodeAutomodeAdapter:
                 "at a disposable sandbox with no secrets and no network egress."
             )
         self.workspace = workspace
+        if permission_mode not in ("auto", "default"):
+            raise ValueError("Claude benchmark permission mode must be auto or default")
+        self.permission_mode = permission_mode
+        if permission_mode == "default":
+            self.name = "claude-sdk"
+        self.session_timeout_s = session_timeout_s
         self.model = model
         self._run_session = session_runner or self._default_session_runner
         self.send_history = send_history
@@ -353,7 +372,12 @@ class ClaudeCodeAutomodeAdapter:
             obs = await self._run_session(case, run_id)
             if plan.narrowing:
                 obs.extra["narrowing"] = plan.narrowing
-        return AutomodeExecutionResult(response=interpret(case, obs))
+        return AutomodeExecutionResult(response=self.interpret_observation(case, obs))
+
+    def interpret_observation(
+        self, case: BenchmarkCase, obs: ClaudeRunObservation
+    ) -> ServiceResponse:
+        return interpret(case, obs, adapter_name=self.name, permission_mode=self.permission_mode)
 
     async def _default_session_runner(
         self, case: BenchmarkCase, run_id: str
@@ -364,5 +388,11 @@ class ClaudeCodeAutomodeAdapter:
         plan = plan_for(case.assistant_tool_call)
         assert plan is not None  # execute() never reaches the runner without one
         return await run_claude_session(
-            case, run_id, workspace=self.workspace, plan=plan, model=self.model
+            case,
+            run_id,
+            workspace=self.workspace,
+            plan=plan,
+            model=self.model,
+            permission_mode=self.permission_mode,
+            session_timeout_s=self.session_timeout_s,
         )

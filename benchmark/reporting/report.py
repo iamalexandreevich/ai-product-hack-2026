@@ -106,6 +106,11 @@ def render_text(summary: dict[str, Any]) -> str:
         f"mode:         execution_mode={performance['execution_mode']} "
         f"history={config.get('history_mode') or '-'}"
     )
+    if config.get("claude_permission_mode"):
+        lines.append(
+            f"Claude:       permissions={config['claude_permission_mode']} "
+            f"agent_model={config.get('agent_model') or 'SDK default'}"
+        )
     lines.append("")
 
     lines.append(

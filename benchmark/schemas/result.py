@@ -175,6 +175,10 @@ class RunConfig(BaseModel):
 
     adapter_name: str = "server"
     service_url: str
+    agent_model: str | None = None
+    claude_permission_mode: str | None = None
+    sandbox_path: str | None = None
+    bridge_runtime: str | None = None
     profile_id: str | None = None
     model: str | None = None
     harness: str = "bench"
