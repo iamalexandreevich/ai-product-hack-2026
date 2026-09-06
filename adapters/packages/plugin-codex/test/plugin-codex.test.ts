@@ -44,13 +44,18 @@ async function startGuard(): Promise<number> {
 }
 
 /** Run one hook script exactly as Codex does: JSON on stdin, JSON on stdout. */
-async function hook(script: string, event: Record<string, unknown>): Promise<any> {
+async function hook(
+  script: string,
+  event: Record<string, unknown>,
+  overrides: Record<string, string> = {},
+): Promise<any> {
   const child = execFile(process.execPath, [path.join(SCRIPTS, script)], {
     env: {
       ...process.env,
       AGENTGATE_URL: `http://127.0.0.1:${port}`,
       GATE_STATE_PATH: statePath,
       GATE_LOG_PATH: path.join(tmp, "codex.log"),
+      ...overrides,
     },
   })
   child.stdin!.end(JSON.stringify(event))
@@ -89,6 +94,22 @@ describe("Codex adapter (native hooks, no patch)", () => {
     // Codex 0.146 rejects permissionDecision allow/ask here, so `{}` is the only
     // safe answer; the auto-approve happens in perm.mjs instead.
     assert.deepEqual(await hook("pre.mjs", preEvent("Bash", { command: "git status" })), {})
+  })
+
+  it("refuses from PreToolUse when the guard is gone, because an ask cannot be shown here", async () => {
+    // perm.mjs turns a guard-issued `ask` into Codex's own prompt, but it fires
+    // only where Codex would have prompted anyway. With the guard unreachable
+    // there is no such event on a call Codex would auto-approve, so emitting
+    // `{}` means the command runs. That is what a real install with a wrong
+    // guard URL did: six `pre Bash -> ask (unavailable)` and six commands run.
+    const out = await hook("pre.mjs", preEvent("Bash", { command: "git status" }), {
+      AGENTGATE_URL: "http://127.0.0.1:9",
+    })
+    assert.equal(out.hookSpecificOutput?.permissionDecision, "deny")
+    assert.ok(
+      String(out.hookSpecificOutput.permissionDecisionReason).trim().length > 0,
+      "a refusal with no reason reads as the command being judged, not as the guard being gone",
+    )
   })
 
   it("maps Codex's PascalCase tool names onto the guard's tool enum", async () => {
