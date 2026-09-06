@@ -4,7 +4,7 @@
 export const CONFIG = {
   // Install one-liner shown in the hero and the footer. Empty hides the
   // copy buttons until the real command is decided.
-  installCommand: '',
+  installCommand: 'curl -fsSL https://openmagi.ru/install.sh | sh',
   githubUrl: 'https://github.com/agentgate',
   benchmarkUrl: 'https://github.com/agentgate/agentgate/tree/main/benchmark',
   // Benchmark numbers by metric key (ASR, FP, p95, Friction). null = no run yet.
