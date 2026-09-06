@@ -45,6 +45,7 @@ Status: Intermediate / Work in Progress. Сверено 6 сентября 2026.
 * участие в определении пользовательского happy path;
 * координация последовательности технических работ;
 * синхронизация архитектурных решений между различными частями системы;
+* подготовка презентации и материалов защиты;
 * участие в продуктовых и архитектурных обсуждениях команды.
 
 ## Additional contribution
@@ -57,9 +58,9 @@ Status: Intermediate / Work in Progress. Сверено 6 сентября 2026.
 
 ## Implementation ownership
 
-**Decision-making service / backend infrastructure**
+**Decision-making service / backend infrastructure / presentation**
 
-Александр является основным владельцем конкретной инженерной реализации серверного слоя.
+Александр является основным владельцем конкретной инженерной реализации серверного слоя, а также подготовки презентации и материалов защиты.
 
 ## Current involvement
 
@@ -124,8 +125,8 @@ Status: Intermediate / Work in Progress. Сверено 6 сентября 2026.
 * участие в проектировании пользовательского сценария;
 * конкурентное и продуктовое исследование;
 * создание необходимых промежуточных и финальных артефактов проекта;
-* подготовка Markdown-документации;
-* подготовка презентации и материалов для защиты.
+* подготовка Markdown-документации проекта — кроме презентации и материалов защиты, которые
+  готовит Александр.
 
 ## Additional contribution
 
@@ -144,9 +145,9 @@ Benchmark рассматривается не только как техниче
 
 ## Implementation ownership
 
-**Benchmark / evaluation tooling / project artifacts**
+**Benchmark / evaluation tooling / project documentation**
 
-Тимур является основным владельцем конкретной реализации benchmark и подготовки проектных материалов.
+Тимур является основным владельцем конкретной реализации benchmark и подготовки проектной документации и артефактов. Презентация и материалы защиты в эту зону не входят — см. раздел Александра.
 
 ## Current involvement
 
@@ -186,14 +187,15 @@ Benchmark рассматривается не только как техниче
 
 # Implementation ownership
 
-| Component                          | Primary implementation owner |
-| ---------------------------------- | ---------------------------- |
-| Decision-making service            | Александр Иванов             |
-| Server architecture and deployment | Александр Иванов             |
-| Harness interception layer         | Алексей Балашов              |
-| Harness integrations               | Алексей Балашов              |
-| Benchmark implementation           | Тимур Полищук                |
-| Project artifacts and presentation | Тимур Полищук                |
+| Component                            | Primary implementation owner |
+| ------------------------------------ | ---------------------------- |
+| Decision-making service              | Александр Иванов             |
+| Server architecture and deployment   | Александр Иванов             |
+| Harness interception layer           | Алексей Балашов              |
+| Harness integrations                 | Алексей Балашов              |
+| Benchmark implementation             | Тимур Полищук                |
+| Project documentation and artifacts  | Тимур Полищук                |
+| Presentation and defense materials   | Александр Иванов             |
 
 Это распределение означает ответственность за непосредственную реализацию, но не исключает участия остальных членов команды в проектировании, review, обсуждении и принятии решений.
 
@@ -203,28 +205,31 @@ Benchmark рассматривается не только как техниче
 
 | Area                           | Александр Иванов       | Алексей Балашов | Тимур Полищук           |
 | ------------------------------ | ---------------------- | --------------- | ----------------------- |
-| Product problem definition     | Joint                  | Joint           | Joint / Product lead    |
-| Product hypothesis             | Joint                  | Joint           | Joint / Product lead    |
-| Target product architecture    | Joint                  | Joint           | Joint / Product lead    |
+| Product problem definition     | Joint                  | Joint           | Joint                   |
+| Product hypothesis             | Joint                  | Joint           | Joint                   |
+| Target product architecture    | Joint                  | Joint           | Joint                   |
 | Technical architecture         | Joint / Technical lead | Joint           | Joint                   |
 | Project coordination           | Lead                   | Active          | Active                  |
 | Decision server architecture   | Lead                   | Active          | Active                  |
 | Decision server implementation | **Owner**              | Review / input  | Requirements / review   |
 | Server deployment              | **Owner**              | Support         | —                       |
-| Harness architecture           | Active                 | Lead            | Active                  |
+| Harness architecture           | Active                 | Lead            | Joint                   |
 | Harness implementation         | Review / input         | **Owner**       | Requirements / review   |
-| AI-agent interception          | Active                 | **Owner**       | Active                  |
-| User happy path                | Joint                  | Joint           | Joint / Product lead    |
+| AI-agent interception          | Active                 | Lead            | Joint                   |
+| User happy path                | Joint                  | Joint           | Joint                   |
 | Benchmark architecture         | Joint                  | Joint           | Joint / Evaluation lead |
 | Benchmark implementation       | Review / input         | Review / input  | **Owner**               |
-| Evaluation metrics             | Joint                  | Joint           | Joint / Product lead    |
+| Evaluation metrics             | Joint                  | Joint           | Lead                    |
 | Competitive research           | Active                 | Active          | Lead                    |
 | Product research               | Active                 | Active          | Lead                    |
 | Risk analysis                  | Joint                  | Joint           | Joint                   |
-| MVP scope                      | Joint                  | Joint           | Joint / Product lead    |
+| MVP scope                      | Joint                  | Joint           | Joint                   |
 | Demo scenario                  | Joint                  | Joint           | Joint                   |
 | Project documentation          | Review / input         | Review / input  | **Owner**               |
-| Presentation / defense         | Joint input            | Joint input     | **Owner**               |
+| Presentation / defense         | **Owner**              | Joint input     | Joint input             |
+
+**Не зафиксировано:** кто именно выступает на защите. Подготовка презентации и материалов —
+за Александром; сам формат выступления (один человек или вся команда) команда пока не решила.
 
 ---
 
@@ -236,7 +241,7 @@ Benchmark рассматривается не только как техниче
 
 Primary implementation owner: **Александр Иванов**
 
-Отвечает за архитектуру и реализацию сервиса, принимающего решение относительно действия AI-агента.
+Отвечает за архитектуру и реализацию сервиса, принимающего решение относительно действия AI-агента, а также за подготовку презентации и материалов защиты.
 
 ### Integration layer
 
@@ -248,7 +253,7 @@ Primary implementation owner: **Алексей Балашов**
 
 Primary implementation owner: **Тимур Полищук**
 
-Отвечает за benchmark, продуктовую формализацию, критерии эффективности и проектные артефакты.
+Отвечает за benchmark, продуктовую формализацию, критерии эффективности и проектную документацию.
 
 При этом эти направления не являются независимыми.
 
