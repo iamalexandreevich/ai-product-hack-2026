@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 400" width="1200" height="400" role="img" aria-label="OPENMAGI — гейт между кодинг-агентом и вашей машиной">
+  <style>
+    .disp { font-family: Impact, "Arial Narrow", "Helvetica Neue", Arial, sans-serif; font-weight: 900; }
+    .mono { font-family: "JetBrains Mono", "SFMono-Regular", Menlo, Consolas, monospace; }
+    .cursor { animation: blink 1s steps(2, start) infinite; }
+    .chip { animation: rise .8s ease-out both; }
+    .chip.c1 { animation-delay: .3s } .chip.c2 { animation-delay: .6s } .chip.c3 { animation-delay: .9s }
+    .online { animation: pulse 2.4s ease-in-out infinite; }
+    .scan { animation: scan 6s linear infinite; }
+    @keyframes blink { to { visibility: hidden } }
+    @keyframes rise { from { opacity: .2; transform: translateY(10px) } to { opacity: 1; transform: translateY(0) } }
+    @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .55 } }
+    @keyframes scan { from { transform: translateY(-40px) } to { transform: translateY(420px) } }
+  </style>
+  <defs>
+    <pattern id="hex" width="56" height="100" patternUnits="userSpaceOnUse">
+      <path d="M28 66L0 50L0 16L28 0L56 16L56 50L28 66L28 100" fill="none" stroke="#7b4fd6" stroke-opacity="0.16"/>
+      <path d="M28 0L28 34L0 50L0 84L28 100L56 84L56 50L28 34" fill="none" stroke="#7b4fd6" stroke-opacity="0.16"/>
+    </pattern>
+    <clipPath id="frame"><rect width="1200" height="400"/></clipPath>
+  </defs>
+  <rect width="1200" height="400" fill="#0B0714"/>
+  <rect width="1200" height="400" fill="url(#hex)"/>
+  <g clip-path="url(#frame)"><rect class="scan" x="0" y="0" width="1200" height="28" fill="#B6FF2E" fill-opacity="0.04"/></g>
+
+  <text class="mono" x="64" y="56" font-size="12" letter-spacing="3" fill="#B6FF2E">NERV · TOKYO-3 · PROJECT OPENMAGI · AUTO MODE FOR OPEN-SOURCE HARNESSES</text>
+
+  <text class="disp" x="60" y="190" font-size="150" fill="#F2EEFB" letter-spacing="2">OPEN<tspan fill="#7B4FD6">MAGI</tspan></text>
+
+  <text class="mono" x="64" y="232" font-size="17" fill="#A397C2">Гейт между кодинг-агентом и вашей машиной.</text>
+  <text class="mono" x="64" y="258" font-size="17" fill="#A397C2">Вердикт до исполнения. Фильтр результата до попадания в контекст модели.</text>
+
+  <g transform="translate(64,290)"><g class="chip c1">
+    <rect width="230" height="56" fill="#B6FF2E"/>
+    <text class="disp" x="14" y="38" font-size="26" fill="#0B0714">承認</text>
+    <text class="disp" x="74" y="27" font-size="20" fill="#0B0714" letter-spacing="1">РАЗРЕШЕНО</text>
+    <text class="mono" x="74" y="45" font-size="10.5" fill="#0B0714">allow · кэш на сессию</text>
+  </g></g>
+  <g transform="translate(310,290)"><g class="chip c2">
+    <rect width="230" height="56" fill="#FF2E4A"/>
+    <text class="disp" x="14" y="38" font-size="26" fill="#0B0714">否定</text>
+    <text class="disp" x="74" y="27" font-size="20" fill="#0B0714" letter-spacing="1">ЗАПРЕЩЕНО</text>
+    <text class="mono" x="74" y="45" font-size="10.5" fill="#0B0714">deny · причина агенту</text>
+  </g></g>
+  <g transform="translate(556,290)"><g class="chip c3">
+    <rect width="300" height="56" fill="#FFC93A"/>
+    <text class="disp" x="14" y="38" font-size="26" fill="#0B0714">審議中</text>
+    <text class="disp" x="94" y="27" font-size="18" fill="#0B0714" letter-spacing="1">НА РАССМОТРЕНИИ</text>
+    <text class="mono" x="94" y="45" font-size="10.5" fill="#0B0714">ask · спросить пилота</text>
+  </g></g>
+
+  <g transform="translate(866,72)">
+    <rect x="0" y="0" width="270" height="140" fill="#17102A" stroke="#2A1F45"/>
+    <text class="mono" x="14" y="24" font-size="10" letter-spacing="2" fill="#7D7391">MAGI SYSTEM</text>
+    <text class="disp" x="14" y="56" font-size="18" fill="#F2EEFB">MELCHIOR·1 <tspan class="mono" font-size="10" dx="6" fill="#7D7391">ступень 1 · правила</tspan></text>
+    <text class="disp" x="14" y="84" font-size="18" fill="#F2EEFB">BALTHASAR·2 <tspan class="mono" font-size="10" dx="6" fill="#7D7391">ступень 2 · модель</tspan></text>
+    <text class="disp" x="14" y="112" font-size="18" fill="#7D7391">CASPER·3 <tspan class="mono" font-size="10" dx="6" fill="#7D7391">standby</tspan></text>
+    <rect class="online" x="14" y="122" width="10" height="10" fill="#B6FF2E"/>
+    <text class="mono online" x="30" y="131" font-size="11" letter-spacing="2" fill="#B6FF2E">ONLINE</text>
+  </g>
+
+  <text class="mono" x="866" y="250" font-size="13" fill="#7D7391">$ <tspan fill="#F2EEFB">curl -fsSL openmagi.ru/install.sh | sh</tspan><tspan class="cursor" fill="#B6FF2E">▌</tspan></text>
+
+  <rect x="0" y="394" width="1200" height="6" fill="#7B4FD6"/>
+</svg>

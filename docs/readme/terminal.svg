@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 470" width="900" height="470" role="img" aria-label="Терминал: установка OPENMAGI одной командой">
+  <style>
+    .mono { font-family: "JetBrains Mono", "SFMono-Regular", Menlo, Consolas, monospace; font-size: 13px; }
+    .l { opacity: 0; animation: show .01s linear forwards; }
+    .l1{animation-delay:.4s}.l2{animation-delay:1.4s}.l3{animation-delay:1.5s}.l4{animation-delay:1.6s}.l5{animation-delay:1.7s}.l6{animation-delay:1.8s}
+    .l7{animation-delay:2.2s}.l8{animation-delay:2.8s}.l9{animation-delay:3.1s}.l10{animation-delay:3.4s}.l11{animation-delay:4.0s}.l12{animation-delay:4.4s}.l13{animation-delay:4.8s}
+    .l14{animation-delay:5.4s}.l15{animation-delay:5.9s}.l16{animation-delay:6.6s}
+    .cursor { animation: blink 1s steps(2,start) infinite; }
+    @keyframes show { to { opacity: 1 } }
+    @keyframes blink { to { visibility: hidden } }
+  </style>
+  <rect width="900" height="470" fill="#0B0714" stroke="#2A1F45"/>
+  <rect width="900" height="30" fill="#17102A"/>
+  <circle cx="18" cy="15" r="5" fill="#2A1F45"/><circle cx="34" cy="15" r="5" fill="#2A1F45"/><circle cx="50" cy="15" r="5" fill="#2A1F45"/>
+  <text class="mono" x="450" y="19" font-size="11" fill="#7D7391" text-anchor="middle">zsh — openmagi install</text>
+  <g class="mono" transform="translate(24,58)" xml:space="preserve">
+    <text class="l l1" y="0"><tspan fill="#7D7391">$ </tspan><tspan fill="#F2EEFB">curl -fsSL https://openmagi.ru/install.sh | sh</tspan></text>
+    <text class="l l2" y="34" fill="#7B4FD6" font-size="12"> ██████  ██████  ███████ ███    ██ <tspan fill="#B6FF2E">███    ███  █████   ██████  ██</tspan></text>
+    <text class="l l3" y="48" fill="#7B4FD6" font-size="12">██    ██ ██   ██ ██      ████   ██ <tspan fill="#B6FF2E">████  ████ ██   ██ ██       ██</tspan></text>
+    <text class="l l4" y="62" fill="#7B4FD6" font-size="12">██    ██ ██████  █████   ██ ██  ██ <tspan fill="#B6FF2E">██ ████ ██ ███████ ██   ███ ██</tspan></text>
+    <text class="l l5" y="76" fill="#7B4FD6" font-size="12">██    ██ ██      ██      ██  ██ ██ <tspan fill="#B6FF2E">██  ██  ██ ██   ██ ██    ██ ██</tspan></text>
+    <text class="l l6" y="90" fill="#7B4FD6" font-size="12"> ██████  ██      ███████ ██   ████ <tspan fill="#B6FF2E">██      ██ ██   ██  ██████  ██</tspan></text>
+    <text class="l l7" y="118" fill="#7D7391">v0.1.0 · гейт для кодинг-агентов · fail-closed · профиль default-dev</text>
+    <text class="l l8" y="150"><tspan fill="#0B0714" style="paint-order:stroke" font-weight="700">▌</tspan><tspan fill="#D9CCFF">MELCHIOR·1 </tspan><tspan fill="#A397C2">ступень 1 · правила, профиль, allowlist · ~1 мс   </tspan><tspan fill="#B6FF2E">■ ONLINE</tspan></text>
+    <text class="l l9" y="170"><tspan fill="#D9CCFF"> BALTHASAR·2 </tspan><tspan fill="#A397C2">ступень 2 · модель через OpenAI-совместимый API  </tspan><tspan fill="#B6FF2E">■ ONLINE</tspan></text>
+    <text class="l l10" y="190"><tspan fill="#7D7391"> CASPER·3 </tspan><tspan fill="#7D7391">ступень 3 · облако, опция                            □ STANDBY</tspan></text>
+    <text class="l l11" y="222"><tspan fill="#B6FF2E">✔</tspan><tspan fill="#F2EEFB"> найдены харнессы: kilo · opencode · codex · pi · dsh</tspan></text>
+    <text class="l l12" y="242"><tspan fill="#B6FF2E">✔</tspan><tspan fill="#F2EEFB"> установлены обёртки: ~/.local/bin/kilo-gate  codex-gate  pi-gate  …</tspan></text>
+    <text class="l l13" y="262"><tspan fill="#B6FF2E">✔</tspan><tspan fill="#F2EEFB"> гард отвечает: https://api.openmagi.ru/healthz → ok</tspan></text>
+    <text class="l l14" y="294"><tspan fill="#FF6A00">→</tspan><tspan fill="#F2EEFB"> kilo-gate            запустить Kilo Code под гейтом</tspan></text>
+    <text class="l l15" y="314"><tspan fill="#FF6A00">→</tspan><tspan fill="#F2EEFB"> openmagi mode ask    строже · Shift+Tab в TUI циклит auto → ask → allow</tspan></text>
+    <g class="l l16" transform="translate(0,340)">
+      <rect x="0" y="-14" width="196" height="22" fill="#B6FF2E"/>
+      <text x="8" y="2" fill="#0B0714" font-weight="700"> MAGI SYSTEM ONLINE </text>
+      <text x="214" y="2"><tspan fill="#B6FF2E">承認 allow</tspan><tspan fill="#7D7391"> · </tspan><tspan fill="#FF2E4A">否定 deny</tspan><tspan fill="#7D7391"> · </tspan><tspan fill="#FFC93A">審議中 ask</tspan><tspan class="cursor" fill="#B6FF2E"> ▌</tspan></text>
+    </g>
+  </g>
+</svg>

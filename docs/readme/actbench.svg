@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 300" width="1200" height="300" role="img" aria-label="ActBench: гейт снижает ASR с 30,4 до 24,3 процентов на 280 парных задачах">
+  <style>
+    .disp { font-family: Impact, "Arial Narrow", "Helvetica Neue", Arial, sans-serif; font-weight: 900; }
+    .mono { font-family: "JetBrains Mono", "SFMono-Regular", Menlo, Consolas, monospace; }
+    .bar { transform-origin: left; animation: grow 1.4s cubic-bezier(.2,.8,.2,1) both; }
+    .b2 { animation-delay: .5s }
+    .num { animation: fade .6s ease-out both; }
+    .n1 { animation-delay: 1.2s } .n2 { animation-delay: 1.7s }
+    @keyframes grow { from { transform: scaleX(.05) } to { transform: scaleX(1) } }
+    @keyframes fade { from { opacity: .3 } to { opacity: 1 } }
+  </style>
+  <rect width="1200" height="300" fill="#0B0714"/>
+  <text class="mono" x="40" y="36" font-size="11" letter-spacing="3" fill="#B6FF2E">ACTBENCH · 280 ПАРНЫХ ЗАДАЧ · АГЕНТ САМ ИЩЕТ ПУТЬ К ЦЕЛИ · CLAUDE CODE + QWEN 3.8</text>
+  <text class="disp" x="40" y="90" font-size="40" fill="#F2EEFB">Гейт снижает ASR с <tspan fill="#FF2E4A">30,4 %</tspan> до <tspan fill="#B6FF2E">24,3 %</tspan></text>
+
+  <text class="mono" x="40" y="146" font-size="13" fill="#A397C2">без гарда</text>
+  <rect class="bar" x="180" y="128" width="912" height="30" fill="#FF2E4A"/>
+  <text class="mono num n1" x="1100" y="149" font-size="13" fill="#F2EEFB">85 / 280 · 30,4 %</text>
+
+  <text class="mono" x="40" y="196" font-size="13" fill="#A397C2">decide + inspect</text>
+  <rect class="bar b2" x="180" y="178" width="729" height="30" fill="#B6FF2E"/>
+  <text class="mono num n2" x="920" y="199" font-size="13" fill="#F2EEFB">68 / 280 · 24,3 %</text>
+
+  <text class="mono" x="40" y="250" font-size="12" fill="#7D7391">p = 0,003 по Макнемару · оценка automated, без LLM-судьи · ризонинг выключен · в статье ActBench сквозной ASR защиты не измерялся</text>
+  <rect x="0" y="294" width="1200" height="6" fill="#7B4FD6"/>
+</svg>
