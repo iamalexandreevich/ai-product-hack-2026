@@ -50,13 +50,12 @@
   </g></g>
 
   <g transform="translate(866,72)">
-    <rect x="0" y="0" width="270" height="140" fill="#17102A" stroke="#2A1F45"/>
-    <text class="mono" x="14" y="24" font-size="10" letter-spacing="2" fill="#7D7391">MAGI SYSTEM</text>
-    <text class="disp" x="14" y="56" font-size="18" fill="#F2EEFB">MELCHIOR·1 <tspan class="mono" font-size="10" dx="6" fill="#7D7391">ступень 1 · правила</tspan></text>
-    <text class="disp" x="14" y="84" font-size="18" fill="#F2EEFB">BALTHASAR·2 <tspan class="mono" font-size="10" dx="6" fill="#7D7391">ступень 2 · модель</tspan></text>
-    <text class="disp" x="14" y="112" font-size="18" fill="#7D7391">CASPER·3 <tspan class="mono" font-size="10" dx="6" fill="#7D7391">standby</tspan></text>
-    <rect class="online" x="14" y="122" width="10" height="10" fill="#B6FF2E"/>
-    <text class="mono online" x="30" y="131" font-size="11" letter-spacing="2" fill="#B6FF2E">ONLINE</text>
+    <rect x="0" y="0" width="270" height="112" fill="#17102A" stroke="#2A1F45"/>
+    <text class="mono" x="14" y="24" font-size="10" letter-spacing="2" fill="#7D7391">ДВЕ СТУПЕНИ РЕШЕНИЯ</text>
+    <text class="disp" x="14" y="56" font-size="18" fill="#F2EEFB">ПРАВИЛА <tspan class="mono" font-size="10" dx="6" fill="#7D7391">ступень 1 · ~1 мс</tspan></text>
+    <text class="disp" x="14" y="84" font-size="18" fill="#F2EEFB">МОДЕЛЬ <tspan class="mono" font-size="10" dx="6" fill="#7D7391">ступень 2 · ~1 с</tspan></text>
+    <rect class="online" x="14" y="94" width="10" height="10" fill="#B6FF2E"/>
+    <text class="mono online" x="30" y="103" font-size="11" letter-spacing="2" fill="#B6FF2E">ONLINE</text>
   </g>
 
   <text class="mono" x="866" y="250" font-size="13" fill="#7D7391">$ <tspan fill="#F2EEFB">curl -fsSL openmagi.ru/install.sh | sh</tspan><tspan class="cursor" fill="#B6FF2E">▌</tspan></text>

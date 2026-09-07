@@ -81,6 +81,5 @@
     <rect width="12" height="12" x="0" y="20" fill="#FF2E4A"/><text x="20" y="30" fill="#A397C2">hard-deny не переопределяется ни моделью, ни эскалацией, ни правилом пилота</text>
     <rect width="12" height="12" x="0" y="50" fill="#FFC93A"/><text x="20" y="60" fill="#A397C2">fail-closed: ошибка, таймаут, неразобранная команда, недоступный гард → ask</text>
   </g>
-  <text class="mono" x="1070" y="440" font-size="10" fill="#7D7391" text-anchor="end">CASPER·3 · STANDBY</text>
   <rect x="0" y="454" width="1200" height="6" fill="#7B4FD6"/>
 </svg>
