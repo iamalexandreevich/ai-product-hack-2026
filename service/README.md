@@ -261,6 +261,16 @@ uv run python -m agentgate keys list
 uv run python -m agentgate keys revoke <key_id>
 ```
 
+На развёрнутом сервере тот же CLI запускается внутри контейнера `gate` по SSH из `service/Makefile` (спека: `docs/superpowers/service/specs/2026-09-07-remote-key-issuance-design.md`):
+
+```
+make key LABEL=kilo-ci [EXPIRES=90d]   # печатает ключ один раз в stdout
+make keys                              # список ключей без секретов
+make key-revoke ID=<key_id>            # мягкий отзыв, вступает в силу в пределах TTL кэша
+```
+
+`LABEL` подставляется в одинарных кавычках, метка с одинарной кавычкой не поддерживается. Ключ нигде не сохраняется: Makefile не пишет его ни в файл, ни в `echo`.
+
 `create` печатает ключ (`agk_...`) в stdout один раз — он не сохраняется нигде, кроме как в памяти вызвавшего; в базе лежит только его SHA-256. Проверка на горячем пути (`agentgate/api/deps.py`) кэширует результат в памяти процесса на `AGENTGATE_API_KEY_CACHE_TTL_SECONDS` секунд (по умолчанию 45) — отозванный ключ перестаёт приниматься не мгновенно, а в пределах этого окна.
 
 Аддитивно поверх `AGENTGATE_TOKEN`: запрос проходит, если bearer совпадает со статическим токеном **или** с действующим выданным ключом. `AGENTGATE_TOKEN` для non-localhost bind по-прежнему обязателен (`validate_token_for_bind()` не менялся) — более строгий вариант спеки, где non-localhost принимает только ключи, в v1 сознательно не реализован.

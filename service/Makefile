@@ -45,7 +45,7 @@ DEPLOY_REF ?=
 # `docker compose` on the server with only half the stack.
 COMPOSE := docker compose -f docker-compose.yml -f docker-compose.deploy.yml
 
-.PHONY: deploy deploy-main logs ps rollback check-clean
+.PHONY: deploy deploy-main logs ps rollback check-clean key keys key-revoke
 
 # Refuse to ship anything but a clean checkout of $(DEPLOY_BRANCH):
 # `make deploy` deploys committed code from the release branch only. Scoped to `service/` and `../frontend/`, since that is
@@ -167,3 +167,24 @@ rollback:
 		$(COMPOSE) up -d --no-build gate'
 	@echo "==> rollback applied, checking health"
 	ssh $(DEPLOY_HOST) 'curl -fsS http://localhost:$(HEALTHZ_PORT)/healthz'
+
+# API keys on the deployed server. The `keys` CLI needs Postgres, so it only
+# runs inside the `gate` container; these targets run it there over the same
+# SSH alias `deploy` uses. `-T` keeps stdout clean: `make key` prints the
+# plaintext key once, exactly as the CLI does, and nothing here echoes or
+# stores it. Design: docs/superpowers/service/specs/2026-09-07-remote-key-issuance-design.md
+KEYS_CLI := $(COMPOSE) exec -T gate uv run python -m agentgate keys
+
+# make key LABEL=<who> [EXPIRES=90d]
+key:
+	$(if $(LABEL),,$(error LABEL is required, e.g. make key LABEL=kilo-ci [EXPIRES=90d]))
+	@ssh $(DEPLOY_HOST) "cd $(DEPLOY_DIR) && $(KEYS_CLI) create --label '$(LABEL)'$(if $(EXPIRES), --expires $(EXPIRES))"
+
+# List issued keys (ids and metadata only; the CLI never shows a key or its hash).
+keys:
+	@ssh $(DEPLOY_HOST) "cd $(DEPLOY_DIR) && $(KEYS_CLI) list"
+
+# make key-revoke ID=<key_id>; revocation takes effect within the key-check cache TTL.
+key-revoke:
+	$(if $(ID),,$(error ID is required, e.g. make key-revoke ID=<key_id> (see make keys)))
+	@ssh $(DEPLOY_HOST) "cd $(DEPLOY_DIR) && $(KEYS_CLI) revoke $(ID)"
